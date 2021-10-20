@@ -57,6 +57,7 @@ use std::{
     time::Duration,
     time::Instant,
 };
+use solana_sdk::deepmind::deepmind_enabled;
 
 /// (packets, valid_indexes, forwarded)
 /// Set of packets with a list of which are valid and if this batch has been forwarded.
@@ -794,7 +795,9 @@ impl BankingStage {
         };
 
         let mut execute_timings = ExecuteTimings::default();
-
+        if deepmind_enabled() {
+            println!("DMLOG HALT tpu code path. only consider tvu codepath");
+        }
         let (
             mut loaded_accounts,
             results,
@@ -809,6 +812,7 @@ impl BankingStage {
             transaction_status_sender.is_some(),
             transaction_status_sender.is_some(),
             &mut execute_timings,
+            &None,
         );
         load_execute_time.stop();
 

@@ -3088,6 +3088,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "protobuf"
+version = "2.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73f72884896d22e0da0e5b266cb9a780b791f6c3b2f5beab6368d6cd4f0dbb86"
+
+[[package]]
 name = "qstring"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5335,6 +5341,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "pbkdf2 0.6.0",
+ "protobuf",
  "qstring",
  "rand 0.7.3",
  "rand_chacha 0.2.2",

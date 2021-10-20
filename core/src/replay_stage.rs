@@ -69,6 +69,7 @@ use std::{
     thread::{self, Builder, JoinHandle},
     time::{Duration, Instant},
 };
+use solana_sdk::deepmind::deepmind_enabled;
 
 pub const MAX_ENTRY_RECV_PER_ITER: usize = 512;
 pub const SUPERMINORITY_THRESHOLD: f64 = 1f64 / 3f64;
@@ -416,6 +417,11 @@ impl ReplayStage {
                     replay_active_banks_time.stop();
 
                     let forks_root = bank_forks.read().unwrap().root();
+
+                    if deepmind_enabled() {
+                        println!("DMLOG BLOCK_ROOT {}", forks_root);
+                    }
+
                     // Reset any duplicate slots that have been confirmed
                     // by the network in anticipation of the confirmed version of
                     // the slot
