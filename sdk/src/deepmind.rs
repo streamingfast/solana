@@ -28,7 +28,6 @@ pub fn transaction_err_to_i32(error: &TransactionError) -> i32 {
         TransactionError::ProgramAccountNotFound => 3,
         TransactionError::InsufficientFundsForFee => 4,
         TransactionError::InvalidAccountForFee => 5,
-        TransactionError::DuplicateSignature => 6,
         TransactionError::BlockhashNotFound => 7,
         TransactionError::InstructionError(_, _) => 8,
         TransactionError::CallChainTooDeep => 9,
@@ -38,6 +37,11 @@ pub fn transaction_err_to_i32(error: &TransactionError) -> i32 {
         TransactionError::InvalidProgramForExecution => 13,
         TransactionError::SanitizeFailure => 14,
         TransactionError::ClusterMaintenance => 15,
+        TransactionError::AlreadyProcessed => 16,
+        TransactionError::AccountBorrowOutstanding => 17,
+        TransactionError::WouldExceedMaxBlockCostLimit => 18,
+        TransactionError::UnsupportedVersion => 19,
+        TransactionError::InvalidWritableAccount => 20,
     }
 }
 
@@ -87,6 +91,12 @@ pub fn instruction_err_to_i32(error: &InstructionError) -> i32 {
         InstructionError::ProgramFailedToCompile => 41,
         InstructionError::Immutable => 42,
         InstructionError::IncorrectAuthority => 43,
+        InstructionError::BorshIoError(_) => 44,
+        InstructionError::AccountNotRentExempt => 45,
+        InstructionError::InvalidAccountOwner => 46,
+        InstructionError::ArithmeticOverflow => 47,
+        InstructionError::UnsupportedSysvar => 48,
+        InstructionError::IllegalOwner => 49,
     };
 }
 

@@ -178,9 +178,9 @@ impl PreAccount {
         // DMLOG
         //****************************************************************
         if let Some(ctx_ref) = &dmbatch_context {
-            if self.is_writable && (pre.data != post.data) {
+            if is_writable && (pre.data() != post.data()) {
                 let ctx = ctx_ref.deref();
-                ctx.borrow_mut().account_change(self.key, &pre.data, &post.data)
+                ctx.borrow_mut().account_change(self.key, &pre.data(), &post.data())
             }
         }
         //****************************************************************
@@ -349,25 +349,6 @@ impl<'a> ThisInvokeContext<'a> {
             ));
         invoke_context
     }
-
-    //****************************************************************
-    // DMLOG
-    //****************************************************************
-    fn dmbatch_start_instruction(&self, program_id: Pubkey, keyed_accounts: &[String], instruction_data: &[u8]) {
-        if let Some(ctx_ref) = &self.dmbatch_context {
-            let ctx = ctx_ref.deref();
-            ctx.borrow_mut().start_instruction(program_id, keyed_accounts, instruction_data);
-        }
-    }
-
-    fn dmbatch_end_instruction(&self) {
-        if let Some(ctx_ref) = &self.dmbatch_context {
-            let ctx = ctx_ref.deref();
-            ctx.borrow_mut().end_instruction();
-        }
-    }
-    //****************************************************************
-
 }
 impl<'a> InvokeContext for ThisInvokeContext<'a> {
     fn push(
@@ -541,6 +522,23 @@ impl<'a> InvokeContext for ThisInvokeContext<'a> {
             None
         }
     }
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
+    fn dmbatch_start_instruction(&self, program_id: Pubkey, keyed_accounts: &[String], instruction_data: &[u8]) {
+        if let Some(ctx_ref) = &self.dmbatch_context {
+            let ctx = ctx_ref.deref();
+            ctx.borrow_mut().start_instruction(program_id, keyed_accounts, instruction_data);
+        }
+    }
+
+    fn dmbatch_end_instruction(&self) {
+        if let Some(ctx_ref) = &self.dmbatch_context {
+            let ctx = ctx_ref.deref();
+            ctx.borrow_mut().end_instruction();
+        }
+    }
+    //****************************************************************
 }
 pub struct ThisLogger {
     log_collector: Option<Rc<LogCollector>>,
@@ -1143,10 +1141,10 @@ impl MessageProcessor {
                 // DMLOG
                 //****************************************************************
                 let pre_lamports = pre_accounts[unique_index].lamports();
-                let post_lamports = account.lamports;
+                let post_lamports = account.lamports();
                 if let Some(ctx_ref) = dmbatch_context {
                     let ctx = ctx_ref.deref();
-                    ctx.borrow_mut().lamport_change(account.owner, pre_lamports, post_lamports)
+                    ctx.borrow_mut().lamport_change(*account.owner(), pre_lamports, post_lamports)
                 }
                 //****************************************************************
 
@@ -1471,6 +1469,7 @@ mod tests {
             Arc::new(FeatureSet::all_enabled()),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
 
         // Check call depth increases and has a limit
@@ -1655,6 +1654,7 @@ mod tests {
                 &mut ExecuteDetailsTimings::default(),
                 false,
                 true,
+                &None,
             )
         }
     }
@@ -2082,6 +2082,7 @@ mod tests {
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
         assert_eq!(result, Ok(()));
         assert_eq!(accounts[0].1.borrow().lamports(), 100);
@@ -2109,6 +2110,7 @@ mod tests {
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
         assert_eq!(
             result,
@@ -2140,6 +2142,7 @@ mod tests {
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
         assert_eq!(
             result,
@@ -2263,6 +2266,7 @@ mod tests {
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
         assert_eq!(
             result,
@@ -2294,6 +2298,7 @@ mod tests {
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
         assert_eq!(result, Ok(()));
 
@@ -2323,6 +2328,7 @@ mod tests {
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
         assert_eq!(result, Ok(()));
         assert_eq!(accounts[0].1.borrow().lamports(), 80);
@@ -2439,6 +2445,7 @@ mod tests {
             Arc::new(feature_set),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
 
         // not owned account modified by the caller (before the invoke)
@@ -2509,6 +2516,7 @@ mod tests {
                 Arc::new(FeatureSet::all_enabled()),
                 Arc::new(Accounts::default()),
                 &ancestors,
+                &None,
             );
 
             let caller_write_privileges = message
@@ -2661,6 +2669,7 @@ mod tests {
             Arc::new(FeatureSet::all_enabled()),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
 
         // not owned account modified by the invoker
@@ -2727,6 +2736,7 @@ mod tests {
                 Arc::new(FeatureSet::all_enabled()),
                 Arc::new(Accounts::default()),
                 &ancestors,
+                &None,
             );
 
             assert_eq!(

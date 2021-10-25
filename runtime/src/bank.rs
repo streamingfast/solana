@@ -3691,18 +3691,8 @@ impl Bank {
                         &dmbatch_context,
                     );
 
-                    let log_messages: TransactionLogMessages = Self::collect_log_messages(log_collector);
-
-                    //****************************************************************
-                    // DMLOG
-                    //****************************************************************
-                    if let Some(ctx_ref) = &dmbatch_context {
-                        let ctx = ctx_ref.deref();
-                        for log in log_messages.clone() {
-                            ctx.borrow_mut().add_log(log);
-                        }
-                    }
-                    //****************************************************************
+                    let log_messages: Option<TransactionLogMessages> = Self::collect_log_messages(log_collector);
+                    let dm_log_messages = log_messages.clone();
 
                     transaction_log_messages.push(log_messages);
                     inner_instructions.push(Self::compile_recorded_instructions(
@@ -3710,6 +3700,18 @@ impl Bank {
                         &tx.message,
                     ));
 
+                    //****************************************************************
+                    // DMLOG
+                    //****************************************************************
+                    if let Some(ctx_ref) = &dmbatch_context {
+                        let ctx = ctx_ref.deref();
+                        for logs in dm_log_messages.clone() {
+                            for log in logs {
+                                ctx.borrow_mut().add_log(log);
+                            }
+                        }
+                    }
+                    //****************************************************************
                     if let Err(e) = Self::refcells_to_accounts(
                         &mut loaded_transaction.accounts,
                         &mut loaded_transaction.loaders,
@@ -8784,7 +8786,7 @@ pub(crate) mod tests {
                 false,
                 false,
                 &mut ExecuteTimings::default(),
-                None,
+                &None,
             )
             .0
             .fee_collection_results;
@@ -10861,7 +10863,7 @@ pub(crate) mod tests {
                 false,
                 false,
                 &mut ExecuteTimings::default(),
-                None,
+                &None,
             );
 
         assert!(inner_instructions.iter().all(Option::is_none));
@@ -13913,6 +13915,7 @@ pub(crate) mod tests {
                 false,
                 true,
                 &mut ExecuteTimings::default(),
+                &None,
             )
             .3;
         assert_eq!(log_results.len(), 3);

@@ -289,6 +289,9 @@ fn process_entries_with_callback(
     for entry in entries {
         match entry {
             EntryType::Tick(hash) => {
+
+                let dm_hash = hash.clone();
+
                 // If it's a tick, save it for later
                 tick_hashes.push(hash);
 
@@ -319,7 +322,7 @@ fn process_entries_with_callback(
                     // DMLOG
                     //****************************************************************
                     if deepmind_enabled() {
-                        println!("DMLOG SLOT_BOUND {} {}", (upper_tick_height / bank.ticks_per_slot()) - 1, entry.hash);
+                        println!("DMLOG SLOT_BOUND {} {}", (upper_tick_height / bank.ticks_per_slot()) - 1, dm_hash);
                     }
                     //****************************************************************
                 }
@@ -925,7 +928,7 @@ pub fn confirm_slot(
             println!("DMLOG BLOCK_FAILED {} {:#?}", slot, process_result);
         } else {
             if slot_full {
-                println!("DMLOG BLOCK_END {} {} {} {}", slot, entries.last().unwrap().hash, bank.unix_timestamp_from_genesis(), bank.clock().unix_timestamp);
+                println!("DMLOG BLOCK_END {} FIXEDSLOTIDBECAUSEWEDONTNEEDITANDCODECHANGED {} {}", slot, bank.unix_timestamp_from_genesis(), bank.clock().unix_timestamp);
             }
         }
     }
@@ -3300,7 +3303,7 @@ pub mod tests {
             false,
             false,
             &mut ExecuteTimings::default(),
-            None,
+            &None,
         );
         let (err, signature) = get_first_error(&batch, fee_collection_results).unwrap();
         // First error found should be for the 2nd transaction, due to iteration_order
