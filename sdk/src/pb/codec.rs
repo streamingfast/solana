@@ -30,7 +30,7 @@ pub struct Block {
     pub number: u64,
     pub version: u32,
     pub previous_id: ::std::string::String,
-    pub previous_block_slot: u64,
+    pub previous_block: u64,
     pub genesis_unix_timestamp: u64,
     pub clock_unix_timestamp: u64,
     pub root_num: u64,
@@ -137,19 +137,19 @@ impl Block {
         ::std::mem::replace(&mut self.previous_id, ::std::string::String::new())
     }
 
-    // uint64 previous_block_slot = 5;
+    // uint64 previous_block = 5;
 
 
-    pub fn get_previous_block_slot(&self) -> u64 {
-        self.previous_block_slot
+    pub fn get_previous_block(&self) -> u64 {
+        self.previous_block
     }
-    pub fn clear_previous_block_slot(&mut self) {
-        self.previous_block_slot = 0;
+    pub fn clear_previous_block(&mut self) {
+        self.previous_block = 0;
     }
 
     // Param is passed by value, moved
-    pub fn set_previous_block_slot(&mut self, v: u64) {
-        self.previous_block_slot = v;
+    pub fn set_previous_block(&mut self, v: u64) {
+        self.previous_block = v;
     }
 
     // uint64 genesis_unix_timestamp = 6;
@@ -344,7 +344,7 @@ impl ::protobuf::Message for Block {
                         return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
                     }
                     let tmp = is.read_uint64()?;
-                    self.previous_block_slot = tmp;
+                    self.previous_block = tmp;
                 },
                 6 => {
                     if wire_type != ::protobuf::wire_format::WireTypeVarint {
@@ -414,8 +414,8 @@ impl ::protobuf::Message for Block {
         if !self.previous_id.is_empty() {
             my_size += ::protobuf::rt::string_size(4, &self.previous_id);
         }
-        if self.previous_block_slot != 0 {
-            my_size += ::protobuf::rt::value_size(5, self.previous_block_slot, ::protobuf::wire_format::WireTypeVarint);
+        if self.previous_block != 0 {
+            my_size += ::protobuf::rt::value_size(5, self.previous_block, ::protobuf::wire_format::WireTypeVarint);
         }
         if self.genesis_unix_timestamp != 0 {
             my_size += ::protobuf::rt::value_size(6, self.genesis_unix_timestamp, ::protobuf::wire_format::WireTypeVarint);
@@ -460,8 +460,8 @@ impl ::protobuf::Message for Block {
         if !self.previous_id.is_empty() {
             os.write_string(4, &self.previous_id)?;
         }
-        if self.previous_block_slot != 0 {
-            os.write_uint64(5, self.previous_block_slot)?;
+        if self.previous_block != 0 {
+            os.write_uint64(5, self.previous_block)?;
         }
         if self.genesis_unix_timestamp != 0 {
             os.write_uint64(6, self.genesis_unix_timestamp)?;
@@ -548,9 +548,9 @@ impl ::protobuf::Message for Block {
                 |m: &mut Block| { &mut m.previous_id },
             ));
             fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
-                "previous_block_slot",
-                |m: &Block| { &m.previous_block_slot },
-                |m: &mut Block| { &mut m.previous_block_slot },
+                "previous_block",
+                |m: &Block| { &m.previous_block },
+                |m: &mut Block| { &mut m.previous_block },
             ));
             fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
                 "genesis_unix_timestamp",
@@ -612,7 +612,7 @@ impl ::protobuf::Clear for Block {
         self.number = 0;
         self.version = 0;
         self.previous_id.clear();
-        self.previous_block_slot = 0;
+        self.previous_block = 0;
         self.genesis_unix_timestamp = 0;
         self.clock_unix_timestamp = 0;
         self.root_num = 0;
@@ -4207,22 +4207,22 @@ impl ::protobuf::reflect::ProtobufValue for InstructionErrorType {
 
 static file_descriptor_proto_data: &'static [u8] = b"\
     \n\x1esf/solana/codec/v1/codec.proto\x12\x12sf.solana.codec.v1\x1a\x19go\
-    ogle/protobuf/any.proto\"\xab\x04\n\x05Block\x12\x0e\n\x02id\x18\x01\x20\
+    ogle/protobuf/any.proto\"\xa2\x04\n\x05Block\x12\x0e\n\x02id\x18\x01\x20\
     \x01(\tR\x02id\x12\x16\n\x06number\x18\x02\x20\x01(\x04R\x06number\x12\
     \x18\n\x07version\x18\x03\x20\x01(\rR\x07version\x12\x1f\n\x0bprevious_i\
-    d\x18\x04\x20\x01(\tR\npreviousId\x12.\n\x13previous_block_slot\x18\x05\
-    \x20\x01(\x04R\x11previousBlockSlot\x124\n\x16genesis_unix_timestamp\x18\
-    \x06\x20\x01(\x04R\x14genesisUnixTimestamp\x120\n\x14clock_unix_timestam\
-    p\x18\x07\x20\x01(\x04R\x12clockUnixTimestamp\x12\x19\n\x08root_num\x18\
-    \x08\x20\x01(\x04R\x07rootNum\x12&\n\x0flast_entry_hash\x18\t\x20\x01(\t\
-    R\rlastEntryHash\x12C\n\x0ctransactions\x18\n\x20\x03(\x0b2\x1f.sf.solan\
-    a.codec.v1.TransactionR\x0ctransactions\x12+\n\x11transaction_count\x18\
-    \x0b\x20\x01(\rR\x10transactionCount\x129\n\x19has_split_account_changes\
-    \x18\x0c\x20\x01(\x08R\x16hasSplitAccountChanges\x127\n\x18account_chang\
-    es_file_ref\x18\r\x20\x01(\tR\x15accountChangesFileRef\"L\n\x05Batch\x12\
-    C\n\x0ctransactions\x18\x01\x20\x03(\x0b2\x1f.sf.solana.codec.v1.Transac\
-    tionR\x0ctransactions\"i\n\x14AccountChangesBundle\x12Q\n\x0ctransaction\
-    s\x18\x01\x20\x03(\x0b2-.sf.solana.codec.v1.AccountChangesPerTrxIndexR\
+    d\x18\x04\x20\x01(\tR\npreviousId\x12%\n\x0eprevious_block\x18\x05\x20\
+    \x01(\x04R\rpreviousBlock\x124\n\x16genesis_unix_timestamp\x18\x06\x20\
+    \x01(\x04R\x14genesisUnixTimestamp\x120\n\x14clock_unix_timestamp\x18\
+    \x07\x20\x01(\x04R\x12clockUnixTimestamp\x12\x19\n\x08root_num\x18\x08\
+    \x20\x01(\x04R\x07rootNum\x12&\n\x0flast_entry_hash\x18\t\x20\x01(\tR\rl\
+    astEntryHash\x12C\n\x0ctransactions\x18\n\x20\x03(\x0b2\x1f.sf.solana.co\
+    dec.v1.TransactionR\x0ctransactions\x12+\n\x11transaction_count\x18\x0b\
+    \x20\x01(\rR\x10transactionCount\x129\n\x19has_split_account_changes\x18\
+    \x0c\x20\x01(\x08R\x16hasSplitAccountChanges\x127\n\x18account_changes_f\
+    ile_ref\x18\r\x20\x01(\tR\x15accountChangesFileRef\"L\n\x05Batch\x12C\n\
+    \x0ctransactions\x18\x01\x20\x03(\x0b2\x1f.sf.solana.codec.v1.Transactio\
+    nR\x0ctransactions\"i\n\x14AccountChangesBundle\x12Q\n\x0ctransactions\
+    \x18\x01\x20\x03(\x0b2-.sf.solana.codec.v1.AccountChangesPerTrxIndexR\
     \x0ctransactions\"\x87\x01\n\x19AccountChangesPerTrxIndex\x12\x14\n\x05T\
     rxId\x18\x01\x20\x01(\tR\x05TrxId\x12T\n\x0cinstructions\x18\x02\x20\x03\
     (\x0b20.sf.solana.codec.v1.AccountChangesPerInstructionR\x0cinstructions\
@@ -4321,9 +4321,9 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     \x20might\x20skip\x20some\x20slots,\x20so\x20beware\n\n\x0c\n\x05\x04\0\
     \x02\x03\x05\x12\x03\x0c\x02\x08\n\x0c\n\x05\x04\0\x02\x03\x01\x12\x03\
     \x0c\t\x14\n\x0c\n\x05\x04\0\x02\x03\x03\x12\x03\x0c\x17\x18\n\x0b\n\x04\
-    \x04\0\x02\x04\x12\x03\r\x02!\n\x0c\n\x05\x04\0\x02\x04\x05\x12\x03\r\
-    \x02\x08\n\x0c\n\x05\x04\0\x02\x04\x01\x12\x03\r\t\x1c\n\x0c\n\x05\x04\0\
-    \x02\x04\x03\x12\x03\r\x1f\x20\n\x0b\n\x04\x04\0\x02\x05\x12\x03\x0e\x02\
+    \x04\0\x02\x04\x12\x03\r\x02\x1c\n\x0c\n\x05\x04\0\x02\x04\x05\x12\x03\r\
+    \x02\x08\n\x0c\n\x05\x04\0\x02\x04\x01\x12\x03\r\t\x17\n\x0c\n\x05\x04\0\
+    \x02\x04\x03\x12\x03\r\x1a\x1b\n\x0b\n\x04\x04\0\x02\x05\x12\x03\x0e\x02\
     $\n\x0c\n\x05\x04\0\x02\x05\x05\x12\x03\x0e\x02\x08\n\x0c\n\x05\x04\0\
     \x02\x05\x01\x12\x03\x0e\t\x1f\n\x0c\n\x05\x04\0\x02\x05\x03\x12\x03\x0e\
     \"#\n\x0b\n\x04\x04\0\x02\x06\x12\x03\x0f\x02\"\n\x0c\n\x05\x04\0\x02\
