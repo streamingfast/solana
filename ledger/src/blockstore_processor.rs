@@ -317,14 +317,6 @@ fn process_entries_with_callback(
                         bank.register_tick(hash);
                     }
                     tick_hashes.clear();
-
-                    //****************************************************************
-                    // DMLOG
-                    //****************************************************************
-                    if deepmind_enabled() {
-                        println!("DMLOG SLOT_BOUND {} {}", (upper_tick_height / bank.ticks_per_slot()) - 1, dm_hash);
-                    }
-                    //****************************************************************
                 }
             }
             EntryType::Transactions(transactions) => {
@@ -860,12 +852,11 @@ pub fn confirm_slot(
         };
 
         println!(
-            "DMLOG BLOCK_WORK {} {} {} {} {} {} {} {} {} {} {} {} {} T;{}",
+            "DMLOG BLOCK_WORK {} {} {} {} {} {} {} {} {} {} {} {} T;{}",
             bank.parent_slot(),
             slot,
             if slot_full { "full" } else { "partial" },
             bank.last_blockhash(), // previous BLOCK hash, not slot hash (in case we skipped one)
-            bank.block_height(), // total blocks created until this point (OFF BY ONE CHECK HERE)
             num_entries,
             num_txs,
             num_shreds,
