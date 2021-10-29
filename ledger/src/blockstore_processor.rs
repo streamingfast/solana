@@ -31,6 +31,7 @@ use solana_runtime::{
     vote_sender_types::ReplayVoteSender,
 };
 use solana_sdk::{
+    bs58,
     clock::{Slot, MAX_PROCESSING_AGE},
     deepmind::{deepmind_enabled, DMBatchContext},
     genesis_config::GenesisConfig,
@@ -839,7 +840,7 @@ pub fn confirm_slot(
         let mut ids = Vec::<String>::new();
         for entry in &entries {
             for trx in &entry.transactions {
-                ids.push(format!("{}", &trx.signatures[0]));
+                ids.push(bs58::encode(&trx.signatures[0]).into_string());
             }
         }
 
