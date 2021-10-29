@@ -100,13 +100,18 @@ pub trait InvokeContext {
     );
     /// Get sysvar data
     fn get_sysvar_data(&self, id: &Pubkey) -> Option<Rc<Vec<u8>>>;
-    
+
     //****************************************************************
     // DMLOG
     //****************************************************************
-    fn dmbatch_start_instruction(&self, program_id: Pubkey, keyed_accounts: &[String], instruction_data: &[u8]);
+    fn dmbatch_start_instruction(
+        &self,
+        program_id: &Pubkey,
+        keyed_accounts: &mut dyn Iterator<Item = &Pubkey>,
+        instruction_data: &[u8],
+    );
     fn dmbatch_end_instruction(&self);
-    //****************************************************************        
+    //****************************************************************
 }
 
 /// Convenience macro to log a message with an `Rc<RefCell<dyn Logger>>`
@@ -475,13 +480,16 @@ impl<'a> InvokeContext for MockInvokeContext<'a> {
             .find_map(|(key, sysvar)| if id == key { sysvar.clone() } else { None })
     }
 
-
     //****************************************************************
     // DMLOG
     //****************************************************************
-    fn dmbatch_start_instruction(&self, _program_id: Pubkey, _keyed_accounts: &[String], _instruction_data: &[u8]) {
+    fn dmbatch_start_instruction(
+        &self,
+        _program_id: &Pubkey,
+        _keyed_accounts: &mut dyn Iterator<Item = &Pubkey>,
+        _instruction_data: &[u8],
+    ) {
     }
-    fn dmbatch_end_instruction(&self) {
-    }
+    fn dmbatch_end_instruction(&self) {}
     //****************************************************************
 }

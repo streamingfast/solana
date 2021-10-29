@@ -36,7 +36,6 @@ use std::{
     sync::Arc,
 };
 
-
 pub struct Executors {
     pub executors: HashMap<Pubkey, Arc<dyn Executor>>,
     pub is_dirty: bool,
@@ -173,14 +172,14 @@ impl PreAccount {
             }
         }
 
-
         //****************************************************************
         // DMLOG
         //****************************************************************
         if let Some(ctx_ref) = &dmbatch_context {
             if is_writable && (pre.data() != post.data()) {
                 let ctx = ctx_ref.deref();
-                ctx.borrow_mut().account_change(self.key, &pre.data(), &post.data())
+                ctx.borrow_mut()
+                    .account_change(&self.key, pre.data(), post.data())
             }
         }
         //****************************************************************
@@ -292,7 +291,7 @@ pub struct ThisInvokeContext<'a> {
     ancestors: &'a Ancestors,
     #[allow(clippy::type_complexity)]
     sysvars: RefCell<Vec<(Pubkey, Option<Rc<Vec<u8>>>)>>,
-    dmbatch_context: &'a Option<Rc<RefCell<DMBatchContext>>>
+    dmbatch_context: &'a Option<Rc<RefCell<DMBatchContext>>>,
 }
 impl<'a> ThisInvokeContext<'a> {
     #[allow(clippy::too_many_arguments)]
@@ -525,10 +524,16 @@ impl<'a> InvokeContext for ThisInvokeContext<'a> {
     //****************************************************************
     // DMLOG
     //****************************************************************
-    fn dmbatch_start_instruction(&self, program_id: Pubkey, keyed_accounts: &[String], instruction_data: &[u8]) {
+    fn dmbatch_start_instruction(
+        &self,
+        program_id: &Pubkey,
+        keyed_accounts: &mut dyn Iterator<Item = &Pubkey>,
+        instruction_data: &[u8],
+    ) {
         if let Some(ctx_ref) = &self.dmbatch_context {
             let ctx = ctx_ref.deref();
-            ctx.borrow_mut().start_instruction(program_id, keyed_accounts, instruction_data);
+            ctx.borrow_mut()
+                .start_instruction(program_id, keyed_accounts, instruction_data);
         }
     }
 
@@ -1005,16 +1010,16 @@ impl MessageProcessor {
             // 2) The current ordinal number will be the parent for the next calls
             // 3) Increment the ordinal number
 
-            let instruction_accounts: Vec<String> = instruction
+            let mut instruction_accounts = instruction
                 .accounts
                 .iter()
-                .map(|&index| {
-                    let index = index as usize;
-                    let key = &message.account_keys[index];
-                    format!("{}", key)
-                })
-                .collect();
-            invoke_context.dmbatch_start_instruction(*program_id, &instruction_accounts, &instruction.data);
+                .map(|index| &message.account_keys[*index as usize]);
+
+            invoke_context.dmbatch_start_instruction(
+                program_id,
+                &mut instruction_accounts,
+                &instruction.data,
+            );
             //****************************************************************
 
             let mut message_processor = MessageProcessor::default();
@@ -1144,7 +1149,8 @@ impl MessageProcessor {
                 let post_lamports = account.lamports();
                 if let Some(ctx_ref) = dmbatch_context {
                     let ctx = ctx_ref.deref();
-                    ctx.borrow_mut().lamport_change(*account.owner(), pre_lamports, post_lamports)
+                    ctx.borrow_mut()
+                        .lamport_change(account.owner(), pre_lamports, post_lamports)
                 }
                 //****************************************************************
 
@@ -1282,16 +1288,15 @@ impl MessageProcessor {
         //****************************************************************
         if let Some(ctx_ref) = &dmbatch_context {
             let ctx = ctx_ref.deref();
-            let instruction_accounts: Vec<String> = instruction
+            let mut instruction_accounts = instruction
                 .accounts
                 .iter()
-                .map(|&index| {
-                    let index = index as usize;
-                    let key = &message.account_keys[index];
-                    format!("{}", key)
-                })
-                .collect();
-            ctx.borrow_mut().start_instruction(*program_id, &instruction_accounts, &instruction.data);
+                .map(|index| &message.account_keys[*index as usize]);
+            ctx.borrow_mut().start_instruction(
+                program_id,
+                &mut instruction_accounts,
+                instruction.data.as_slice(),
+            );
         }
         //****************************************************************
 
@@ -1329,7 +1334,7 @@ impl MessageProcessor {
         }
 
         if result.is_err() {
-            return result
+            return result;
         }
         //****************************************************************
 

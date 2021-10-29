@@ -44,17 +44,17 @@ use solana_transaction_status::token_balances::{
     collect_token_balances, TransactionTokenBalancesSet,
 };
 
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     path::PathBuf,
+    rc::Rc,
     result,
     sync::Arc,
-    rc::Rc,
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use std::sync::atomic::{Ordering, AtomicUsize, AtomicU64};
 
 pub type BlockstoreProcessorResult =
     result::Result<(BankForks, LeaderScheduleCache), BlockstoreProcessorError>;
@@ -109,7 +109,7 @@ fn execute_batch(
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timings: &mut ExecuteTimings,
-    dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>
+    dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
 ) -> Result<()> {
     let record_token_balances = transaction_status_sender.is_some();
 
@@ -181,11 +181,11 @@ fn execute_batches(
     inc_new_counter_debug!("bank-par_execute_entries-count", batches.len());
     let (results, new_timings): (Vec<Result<()>>, Vec<ExecuteTimings>) =
         PAR_THREAD_POOL.with(|thread_pool| {
-             thread_pool.borrow().install(|| {
+            thread_pool.borrow().install(|| {
                 //****************************************************************
                 // DMLOG
                 //****************************************************************
-                let i:AtomicU64 = AtomicU64::new(0);
+                let i: AtomicU64 = AtomicU64::new(0);
                 //****************************************************************
                 batches
                     .into_par_iter()
@@ -198,7 +198,8 @@ fn execute_batches(
                         let mut dmbatch_ctx_opt: Option<Rc<RefCell<DMBatchContext>>> = None;
                         if deepmind_enabled() {
                             let batch_id = i.fetch_add(1, Ordering::Relaxed);
-                            let file_number = GLOBAL_DEEP_MIND_FILE_NUMBER.fetch_add(1, Ordering::SeqCst);
+                            let file_number =
+                                GLOBAL_DEEP_MIND_FILE_NUMBER.fetch_add(1, Ordering::SeqCst);
                             let ctx = DMBatchContext::new(batch_id, file_number);
                             dmbatch_ctx_opt = Some(Rc::new(RefCell::new(ctx)));
                         }
@@ -289,17 +290,8 @@ fn process_entries_with_callback(
     for entry in entries {
         match entry {
             EntryType::Tick(hash) => {
-
-                let dm_hash = hash.clone();
-
                 // If it's a tick, save it for later
                 tick_hashes.push(hash);
-
-                //****************************************************************
-                // DMLOG
-                //****************************************************************
-                let upper_tick_height = bank.tick_height() + tick_hashes.len() as u64;
-                //****************************************************************
 
                 if bank.is_block_boundary(bank.tick_height() + tick_hashes.len() as u64) {
                     // If it's a tick that will cause a new blockhash to be created,
@@ -848,8 +840,8 @@ pub fn confirm_slot(
         for entry in &entries {
             for trx in &entry.transactions {
                 ids.push(format!("{}", &trx.signatures[0]));
-            };
-        };
+            }
+        }
 
         println!(
             "DMLOG BLOCK_WORK {} {} {} {} {} {} {} {} {} {} {} {} T;{}",
@@ -919,7 +911,12 @@ pub fn confirm_slot(
             println!("DMLOG BLOCK_FAILED {} {:#?}", slot, process_result);
         } else {
             if slot_full {
-                println!("DMLOG BLOCK_END {} FIXEDSLOTIDBECAUSEWEDONTNEEDITANDCODECHANGED {} {}", slot, bank.unix_timestamp_from_genesis(), bank.clock().unix_timestamp);
+                println!(
+                    "DMLOG BLOCK_END {} FIXEDSLOTIDBECAUSEWEDONTNEEDITANDCODECHANGED {} {}",
+                    slot,
+                    bank.unix_timestamp_from_genesis(),
+                    bank.clock().unix_timestamp
+                );
             }
         }
     }

@@ -124,7 +124,7 @@ use std::{
     collections::{HashMap, HashSet},
     convert::{TryFrom, TryInto},
     fmt, mem,
-    ops::{RangeInclusive, Deref},
+    ops::{Deref, RangeInclusive},
     path::PathBuf,
     ptr,
     rc::Rc,
@@ -3568,7 +3568,7 @@ impl Bank {
         enable_cpi_recording: bool,
         enable_log_recording: bool,
         timings: &mut ExecuteTimings,
-        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> (
         Vec<TransactionLoadResult>,
         Vec<TransactionExecutionResult>,
@@ -3665,13 +3665,20 @@ impl Bank {
                     // DMLOG
                     //****************************************************************
                     let msg = tx.message();
-                    let account_keys = msg.account_keys.iter().map(|i| i.to_string()).collect::<Vec<String>>();
-                    let sigs = tx.signatures.iter().map(|i| i.to_string()).collect::<Vec<String>>();
-
+                    let account_keys: Vec<&Pubkey> =
+                        msg.account_keys.iter().map(|key| key).collect();
+                    let sigs: Vec<&Signature> = tx.signatures.iter().map(|i| i).collect();
 
                     if let Some(ctx_ref) = &dmbatch_context {
                         let ctx = ctx_ref.deref();
-                        ctx.borrow_mut().start_trx(sigs, msg.header.num_required_signatures, msg.header.num_readonly_signed_accounts, msg.header.num_readonly_unsigned_accounts, account_keys, msg.recent_blockhash);
+                        ctx.borrow_mut().start_trx(
+                            &sigs,
+                            msg.header.num_required_signatures,
+                            msg.header.num_readonly_signed_accounts,
+                            msg.header.num_readonly_unsigned_accounts,
+                            &account_keys,
+                            &msg.recent_blockhash,
+                        );
                     }
                     //****************************************************************
 
@@ -3691,7 +3698,8 @@ impl Bank {
                         &dmbatch_context,
                     );
 
-                    let log_messages: Option<TransactionLogMessages> = Self::collect_log_messages(log_collector);
+                    let log_messages: Option<TransactionLogMessages> =
+                        Self::collect_log_messages(log_collector);
                     let dm_log_messages = log_messages.clone();
 
                     transaction_log_messages.push(log_messages);
@@ -3740,7 +3748,7 @@ impl Bank {
                     //****************************************************************
 
                     let nonce_rollback =
-                            if let Err(TransactionError::InstructionError(_,_)) = &process_result {
+                        if let Err(TransactionError::InstructionError(_, _)) = &process_result {
                             error_counters.instruction_error += 1;
                             nonce_rollback.clone()
                         } else if process_result.is_err() {
@@ -4578,7 +4586,7 @@ impl Bank {
         enable_cpi_recording: bool,
         enable_log_recording: bool,
         timings: &mut ExecuteTimings,
-        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> (
         TransactionResults,
         TransactionBalancesSet,
