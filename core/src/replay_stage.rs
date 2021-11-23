@@ -1781,6 +1781,7 @@ impl ReplayStage {
                     transaction_status_sender.send_transaction_status_freeze_message(&bank);
                 }
                 bank.freeze();
+
                 let bank_hash = bank.hash();
                 assert_ne!(bank_hash, Hash::default());
                 // Needs to be updated before `check_slot_agrees_with_cluster()` so that
@@ -1821,6 +1822,22 @@ impl ReplayStage {
                     }
                 }
                 Self::record_rewards(&bank, rewards_recorder_sender);
+                //****************************************************************
+                // DMLOG
+                //****************************************************************
+                if deepmind_enabled() {
+                    println!(
+                        "DMLOG BLOCK_END {} {:?} {} {}",
+                        bank.slot(),
+                        bank.hash(),
+                        bank.unix_timestamp_from_genesis(),
+                        bank.clock().unix_timestamp,
+                        // "replay stage",
+                        // bank.last_blockhash(),
+                        // bank.parent_hash()
+                    );
+                }
+                //****************************************************************
             } else {
                 trace!(
                     "bank {} not completed tick_height: {}, max_tick_height: {}",

@@ -849,7 +849,7 @@ pub fn confirm_slot(
             bank.parent_slot(),
             slot,
             if slot_full { "full" } else { "partial" },
-            bank.last_blockhash(), // previous BLOCK hash, not slot hash (in case we skipped one)
+            bank.parent_hash(), // previous BLOCK hash, not slot hash (in case we skipped one)
             num_entries,
             num_txs,
             num_shreds,
@@ -904,24 +904,28 @@ pub fn confirm_slot(
         }
     }
 
-    //****************************************************************
-    // DMLOG
-    //****************************************************************
+    // //****************************************************************
+    // // DMLOG
+    // //****************************************************************
     if deepmind_enabled() {
         if process_result.is_err() {
             println!("DMLOG BLOCK_FAILED {} {:#?}", slot, process_result);
-        } else {
-            if slot_full {
-                println!(
-                    "DMLOG BLOCK_END {} FIXEDSLOTIDBECAUSEWEDONTNEEDITANDCODECHANGED {} {}",
-                    slot,
-                    bank.unix_timestamp_from_genesis(),
-                    bank.clock().unix_timestamp
-                );
-            }
         }
+
+        // else {
+    //         if slot_full {
+    //             bank.freeze();
+    //             println!(
+    //                 "DMLOG BLOCK_END {} {:?} {} {}",
+    //                 slot,
+    //                 bank.hash(),
+    //                 bank.unix_timestamp_from_genesis(),
+    //                 bank.clock().unix_timestamp
+    //             );
+    //         }
+    //     }
     }
-    //****************************************************************
+    // //****************************************************************
 
     process_result?;
 
@@ -957,6 +961,21 @@ fn process_bank_0(
     )
     .expect("processing for bank 0 must succeed");
     bank0.freeze();
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
+    if deepmind_enabled() {
+        println!(
+            "DMLOG BLOCK_END {} {:?} {} {}",
+            bank0.slot(),
+            bank0.hash(),
+            bank0.unix_timestamp_from_genesis(),
+            bank0.clock().unix_timestamp
+        );
+    }
+    //****************************************************************
+
+
     cache_block_meta(bank0, cache_block_meta_sender);
 }
 
@@ -1278,6 +1297,20 @@ fn process_single_slot(
     })?;
 
     bank.freeze(); // all banks handled by this routine are created from complete slots
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
+    if deepmind_enabled() {
+        println!(
+            "DMLOG BLOCK_END {} {:?} {} {}",
+            bank.slot() ,
+            bank.hash(),
+            bank.unix_timestamp_from_genesis(),
+            bank.clock().unix_timestamp
+        );
+    }
+    //****************************************************************
+
     cache_block_meta(bank, cache_block_meta_sender);
 
     Ok(())
