@@ -1,10 +1,8 @@
 use crate::pb::codec::{
     AccountChange, BalanceChange, Batch, Instruction, InstructionError as PbInstructionError,
-    InstructionErrorCustom, InstructionErrorType, MessageHeader, Transaction,
-    TransactionError as PbTransactionError, TransactionErrorType, TransactionInstructionError,
+    MessageHeader, Transaction, TransactionError as PbTransactionError,
 };
 use num_traits::ToPrimitive;
-use protobuf::{Message, ProtobufEnum, RepeatedField, SingularPtrField};
 use solana_program::hash::Hash;
 use solana_program::instruction::InstructionError;
 use solana_sdk::{pubkey::Pubkey, signature::Signature};
@@ -15,7 +13,8 @@ use std::{
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
 };
-// use std::ops::Deref;
+use std::io::Write;
+use prost::Message;
 use crate::transaction::TransactionError;
 
 pub static DEEPMIND_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -23,120 +22,19 @@ pub static DEEPMIND_ENABLED: AtomicBool = AtomicBool::new(false);
 pub fn enable_deepmind() {
     DEEPMIND_ENABLED.store(true, Ordering::Relaxed)
 }
+
 pub fn disable_deepmind() {
     DEEPMIND_ENABLED.store(false, Ordering::Relaxed)
 }
+
 pub fn deepmind_enabled() -> bool {
     return DEEPMIND_ENABLED.load(Ordering::Relaxed);
 }
 
-pub fn transaction_err_to_i32(error: &TransactionError) -> i32 {
-    return match error {
-        TransactionError::AccountInUse => 0,
-        TransactionError::AccountLoadedTwice => 1,
-        TransactionError::AccountNotFound => 2,
-        TransactionError::ProgramAccountNotFound => 3,
-        TransactionError::InsufficientFundsForFee => 4,
-        TransactionError::InvalidAccountForFee => 5,
-        TransactionError::BlockhashNotFound => 7,
-        TransactionError::InstructionError(_, _) => 8,
-        TransactionError::CallChainTooDeep => 9,
-        TransactionError::MissingSignatureForFee => 10,
-        TransactionError::InvalidAccountIndex => 11,
-        TransactionError::SignatureFailure => 12,
-        TransactionError::InvalidProgramForExecution => 13,
-        TransactionError::SanitizeFailure => 14,
-        TransactionError::ClusterMaintenance => 15,
-        TransactionError::AlreadyProcessed => 16,
-        TransactionError::AccountBorrowOutstanding => 17,
-        TransactionError::WouldExceedMaxBlockCostLimit => 18,
-        TransactionError::UnsupportedVersion => 19,
-        TransactionError::InvalidWritableAccount => 20,
-    };
-}
-
-pub fn instruction_err_to_i32(error: &InstructionError) -> i32 {
-    return match error {
-        InstructionError::GenericError => 0,
-        InstructionError::InvalidArgument => 1,
-        InstructionError::InvalidInstructionData => 2,
-        InstructionError::InvalidAccountData => 3,
-        InstructionError::AccountDataTooSmall => 4,
-        InstructionError::InsufficientFunds => 5,
-        InstructionError::IncorrectProgramId => 6,
-        InstructionError::MissingRequiredSignature => 7,
-        InstructionError::AccountAlreadyInitialized => 8,
-        InstructionError::UninitializedAccount => 9,
-        InstructionError::UnbalancedInstruction => 10,
-        InstructionError::ModifiedProgramId => 11,
-        InstructionError::ExternalAccountLamportSpend => 12,
-        InstructionError::ExternalAccountDataModified => 13,
-        InstructionError::ReadonlyLamportChange => 14,
-        InstructionError::ReadonlyDataModified => 15,
-        InstructionError::DuplicateAccountIndex => 16,
-        InstructionError::ExecutableModified => 17,
-        InstructionError::RentEpochModified => 18,
-        InstructionError::NotEnoughAccountKeys => 19,
-        InstructionError::AccountDataSizeChanged => 20,
-        InstructionError::AccountNotExecutable => 21,
-        InstructionError::AccountBorrowFailed => 22,
-        InstructionError::AccountBorrowOutstanding => 23,
-        InstructionError::DuplicateAccountOutOfSync => 24,
-        InstructionError::Custom(_) => 25,
-        InstructionError::InvalidError => 26,
-        InstructionError::ExecutableDataModified => 27,
-        InstructionError::ExecutableLamportChange => 28,
-        InstructionError::ExecutableAccountNotRentExempt => 29,
-        InstructionError::UnsupportedProgramId => 30,
-        InstructionError::CallDepth => 31,
-        InstructionError::MissingAccount => 32,
-        InstructionError::ReentrancyNotAllowed => 33,
-        InstructionError::MaxSeedLengthExceeded => 34,
-        InstructionError::InvalidSeeds => 35,
-        InstructionError::InvalidRealloc => 36,
-        InstructionError::ComputationalBudgetExceeded => 37,
-        InstructionError::PrivilegeEscalation => 38,
-        InstructionError::ProgramEnvironmentSetupFailure => 39,
-        InstructionError::ProgramFailedToComplete => 40,
-        InstructionError::ProgramFailedToCompile => 41,
-        InstructionError::Immutable => 42,
-        InstructionError::IncorrectAuthority => 43,
-        InstructionError::BorshIoError(_) => 44,
-        InstructionError::AccountNotRentExempt => 45,
-        InstructionError::InvalidAccountOwner => 46,
-        InstructionError::ArithmeticOverflow => 47,
-        InstructionError::UnsupportedSysvar => 48,
-        InstructionError::IllegalOwner => 49,
-    };
-}
-
 pub fn inst_err_to_pb(error: &InstructionError) -> Option<PbInstructionError> {
-    let pb_inst_error_type_opt = InstructionErrorType::from_i32(instruction_err_to_i32(error));
-    if let Some(pb_inst_error_type) = pb_inst_error_type_opt {
-        let mut pb_inst_error = PbInstructionError {
-            field_type: pb_inst_error_type,
-            ..Default::default()
-        };
-        if let InstructionError::Custom(error_id) = error {
-            let i = &mut InstructionErrorCustom::new();
-            i.set_id(*error_id);
-            let pb_any_res = protobuf::well_known_types::Any::pack_dyn(i);
-            match pb_any_res {
-                Ok(pb_any) => {
-                    pb_inst_error.set_payload(pb_any);
-                }
-                Err(e) => {
-                    println!(
-                        "Deepmind protobuf error when trying to pack message to Any type: {:?}",
-                        e
-                    )
-                }
-            }
-        }
-        return Some(pb_inst_error);
-    }
-
-    return None;
+    return Some(PbInstructionError {
+        error: error.to_string()
+    });
 }
 
 impl Instruction {
@@ -153,7 +51,7 @@ impl Instruction {
     pub fn error(&mut self, error: &InstructionError) {
         if let Some(pb_error) = inst_err_to_pb(error) {
             self.failed = true;
-            self.error = SingularPtrField::from_option(Some(pb_error))
+            self.error = Some(pb_error)
         } else {
             panic!("unknown instruction error: {:?}", error);
         }
@@ -168,6 +66,7 @@ impl Instruction {
         });
     }
 }
+
 #[derive(Default)]
 pub struct DMTransaction {
     pub pb_transaction: Transaction,
@@ -179,7 +78,7 @@ impl DMTransaction {
     pub fn start_instruction(
         &mut self,
         program_id: &Pubkey,
-        keyed_accounts: &mut dyn Iterator<Item = &Pubkey>,
+        keyed_accounts: &mut dyn Iterator<Item=&Pubkey>,
         instruction_data: &[u8],
     ) {
         let parent_ordinal = *self.call_stack.last().unwrap();
@@ -193,8 +92,8 @@ impl DMTransaction {
             ordinal: inst_ordinal as u32,
             parent_ordinal: parent_ordinal as u32,
             depth: (self.call_stack.len() - 1) as u32,
-            balance_changes: RepeatedField::default(),
-            account_changes: RepeatedField::default(),
+            balance_changes: Vec::new(),
+            account_changes: Vec::new(),
             ..Default::default()
         });
     }
@@ -204,35 +103,11 @@ impl DMTransaction {
     }
 
     pub fn error(&mut self, error: &TransactionError) {
+        let pb_trx_error = PbTransactionError {
+            error: error.to_string()
+        };
         self.pb_transaction.failed = true;
-        let pb_trx_error_type_opt = TransactionErrorType::from_i32(transaction_err_to_i32(error));
-        if let Some(pb_trx_error_type) = pb_trx_error_type_opt {
-            let mut pb_trx_error = PbTransactionError {
-                field_type: pb_trx_error_type,
-                ..Default::default()
-            };
-            if let TransactionError::InstructionError(inst_index, inst_err) = error {
-                if let Some(pb_inst_error) = inst_err_to_pb(&inst_err) {
-                    let i = &mut TransactionInstructionError::new();
-                    i.set_error(pb_inst_error);
-                    i.set_Index(*inst_index as u32);
-                    let pb_any_res = protobuf::well_known_types::Any::pack_dyn(i);
-                    match pb_any_res {
-                        Ok(pb_any) => {
-                            pb_trx_error.set_payload(pb_any);
-                        }
-                        Err(e) => {
-                            panic!("unable to proto pack: {:?}", e);
-                        }
-                    }
-                } else {
-                    panic!("unknown instruction error: {:?}", error);
-                }
-            }
-            self.pb_transaction.error = SingularPtrField::from_option(Some(pb_trx_error))
-        } else {
-            panic!("unknown transaction error: {:?}", error);
-        }
+        self.pb_transaction.error = Some(pb_trx_error)
     }
 
     pub fn add_log(&mut self, log: String) {
@@ -264,7 +139,7 @@ impl<'a> DMBatchContext {
         let fl = File::create(&file_path).unwrap();
         DMBatchContext {
             batch_number: batch_id,
-            filename: filename,
+            filename,
             trxs: Vec::new(),
             file: fl,
             path: file_path,
@@ -292,7 +167,7 @@ impl<'a> DMBatchContext {
             pb_transaction: Transaction {
                 id: sigs[0].as_ref().to_vec(),
                 additional_signatures: sigs[1..].iter().map(|sig| sig.as_ref().to_vec()).collect(),
-                header: SingularPtrField::from_option(Some(header)),
+                header: Some(header),
                 account_keys: account_keys
                     .iter()
                     .map(|key| key.to_bytes().to_vec())
@@ -315,17 +190,22 @@ impl<'a> DMBatchContext {
         // in a format ConsoleReader appreciated.
 
         let batch = Batch {
-            transactions: RepeatedField::from_vec(
-                self.trxs
-                    .drain(..)
-                    .into_iter()
-                    .map(|x| x.pb_transaction)
-                    .collect(),
-            ),
+            transactions: self.trxs
+                .drain(..)
+                .into_iter()
+                .map(|x| x.pb_transaction)
+                .collect(),
             ..Default::default()
         };
 
-        if let Err(e) = batch.write_to_writer(&mut self.file) {
+        let mut buf = Vec::new();
+        buf.reserve(batch.encoded_len());
+        if let Err(e) = batch.encode(&mut buf) {
+            println!("DMLOG ERROR FILE {}", e);
+            return;
+        }
+
+        if let Err(e) = self.file.write(&mut buf) {
             println!("DMLOG ERROR FILE {}", e);
             return;
         }
@@ -342,7 +222,7 @@ impl<'a> DMBatchContext {
     pub fn start_instruction(
         &mut self,
         program_id: &Pubkey,
-        keyed_accounts: &mut dyn Iterator<Item = &Pubkey>,
+        keyed_accounts: &mut dyn Iterator<Item=&Pubkey>,
         instruction_data: &[u8],
     ) {
         if let Some(transaction) = self.trxs.last_mut() {
