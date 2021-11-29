@@ -71,7 +71,6 @@ members = [
     "rayon-threadlimit",
     "watchtower",
     "deepmind-pb",
-    "deepmind-foo",
 ]
 
 exclude = [
