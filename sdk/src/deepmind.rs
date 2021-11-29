@@ -199,27 +199,35 @@ impl<'a> DMBatchContext {
         };
 
         let mut buf = Vec::new();
-        buf.reserve(batch.encoded_len());
+        let encoded_len = batch.encoded_len();
+        buf.reserve(encoded_len);
         if let Err(e) = batch.encode(&mut buf) {
-            println!("DMLOG ERROR FILE {}", e);
-            return;
+            panic!("DMLOG ERROR FILE {}", e);
         }
 
-        if let Err(e) = self.file.write(&mut buf) {
-            println!("DMLOG ERROR FILE {}", e);
-            return;
+        let mut write_size = 0;
+        match self.file.write(&mut buf) {
+            Ok(size) => {
+                write_size = size
+            }
+            Err(e) => {
+                panic!("DMLOG ERROR FILE {}", e);
+            }
         }
+        // if let Err(e) =  {
+        //     panic!("DMLOG ERROR FILE {}", e);
+        // }
+
         if let Err(e) = self.file.flush() {
-            println!("DMLOG ERROR FILE {}", e);
-            return;
+            panic!("DMLOG ERROR FILE {}", e);
         }
 
         if let Err(e) = self.file.sync_all() {
-            println!("DMLOG ERROR FILE {}", e);
-            return;
+            panic!("DMLOG ERROR FILE {}", e);
         }
 
         drop(&self.file);
+        println!("flushed batch_file: {} encoded length: {} write size: {}", self.filename, encoded_len, write_size);
         println!("DMLOG BATCH_FILE {}", self.filename);
     }
 
