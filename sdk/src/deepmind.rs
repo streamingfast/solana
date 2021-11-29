@@ -209,6 +209,10 @@ impl<'a> DMBatchContext {
             println!("DMLOG ERROR FILE {}", e);
             return;
         }
+        if let Err(e) = self.file.flush() {
+            println!("DMLOG ERROR FILE {}", e);
+            return;
+        }
 
         if let Err(e) = self.file.sync_all() {
             println!("DMLOG ERROR FILE {}", e);
