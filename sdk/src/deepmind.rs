@@ -205,18 +205,18 @@ impl<'a> DMBatchContext {
             panic!("DMLOG ERROR FILE {}", e);
         }
 
-        let mut write_size = 0;
-        match self.file.write(&mut buf) {
-            Ok(size) => {
-                write_size = size
-            }
-            Err(e) => {
-                panic!("DMLOG ERROR FILE {}", e);
-            }
-        }
-        // if let Err(e) =  {
-        //     panic!("DMLOG ERROR FILE {}", e);
+        // let mut write_size = 0;
+        // match self.file.write_all(&mut buf) {
+        //     Ok(size) => {
+        //         write_size = size
+        //     }
+        //     Err(e) => {
+        //         panic!("DMLOG ERROR FILE {}", e);
+        //     }
         // }
+        if let Err(e) = self.file.write_all(&mut buf) {
+            panic!("DMLOG ERROR FILE {}", e);
+        }
 
         if let Err(e) = self.file.flush() {
             panic!("DMLOG ERROR FILE {}", e);
@@ -227,7 +227,7 @@ impl<'a> DMBatchContext {
         }
 
         drop(&self.file);
-        println!("flushed batch_file: {} encoded length: {} write size: {}", self.filename, encoded_len, write_size);
+        // println!("flushed batch_file: {} encoded length: {} write size: {}", self.filename, encoded_len, write_size);
         println!("DMLOG BATCH_FILE {}", self.filename);
     }
 
