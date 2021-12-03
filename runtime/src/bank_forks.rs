@@ -10,7 +10,7 @@ use solana_sdk::{
     clock::Slot,
     hash::Hash,
     timing,
-    deepmind::{deepmind_enabled, DMBatchContext},
+    deepmind::{deepmind_enabled},
 };
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},

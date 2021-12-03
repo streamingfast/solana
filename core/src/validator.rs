@@ -72,6 +72,7 @@ use {
         shred_version::compute_shred_version,
         signature::{Keypair, Signer},
         timing::timestamp,
+        deepmind::{deepmind_enabled},
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_vote_program::vote_state::VoteState,
@@ -103,7 +104,8 @@ pub struct ValidatorConfig {
     pub account_paths: Vec<PathBuf>,
     pub account_shrink_paths: Option<Vec<PathBuf>>,
     pub rpc_config: JsonRpcConfig,
-    pub rpc_addrs: Option<(SocketAddr, SocketAddr)>, // (JsonRpc, JsonRpcPubSub)
+    pub rpc_addrs: Option<(SocketAddr, SocketAddr)>,
+    // (JsonRpc, JsonRpcPubSub)
     pub pubsub_config: PubSubConfig,
     pub snapshot_config: Option<SnapshotConfig>,
     pub max_ledger_shreds: Option<u64>,
@@ -113,11 +115,15 @@ pub struct ValidatorConfig {
     pub fixed_leader_schedule: Option<FixedSchedule>,
     pub wait_for_supermajority: Option<Slot>,
     pub new_hard_forks: Option<Vec<Slot>>,
-    pub trusted_validators: Option<HashSet<Pubkey>>, // None = trust all
-    pub repair_validators: Option<HashSet<Pubkey>>,  // None = repair from all
-    pub gossip_validators: Option<HashSet<Pubkey>>,  // None = gossip with all
+    pub trusted_validators: Option<HashSet<Pubkey>>,
+    // None = trust all
+    pub repair_validators: Option<HashSet<Pubkey>>,
+    // None = repair from all
+    pub gossip_validators: Option<HashSet<Pubkey>>,
+    // None = gossip with all
     pub halt_on_trusted_validators_accounts_hash_mismatch: bool,
-    pub accounts_hash_fault_injection_slots: u64, // 0 = no fault injection
+    pub accounts_hash_fault_injection_slots: u64,
+    // 0 = no fault injection
     pub frozen_accounts: Vec<Pubkey>,
     pub no_rocksdb_compaction: bool,
     pub rocksdb_compaction_interval: Option<u64>,
@@ -125,7 +131,8 @@ pub struct ValidatorConfig {
     pub accounts_hash_interval_slots: u64,
     pub max_genesis_archive_unpacked_size: u64,
     pub wal_recovery_mode: Option<BlockstoreRecoveryMode>,
-    pub poh_verify: bool, // Perform PoH verification during blockstore processing at boo
+    pub poh_verify: bool,
+    // Perform PoH verification during blockstore processing at boo
     pub require_tower: bool,
     pub tower_path: Option<PathBuf>,
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
@@ -215,14 +222,16 @@ impl Default for ValidatorConfig {
 // having to watch log messages.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum ValidatorStartProgress {
-    Initializing, // Catch all, default state
+    Initializing,
+    // Catch all, default state
     SearchingForRpcService,
     DownloadingSnapshot { slot: Slot, rpc_addr: SocketAddr },
     CleaningBlockStore,
     CleaningAccounts,
     LoadingLedger,
     StartingServices,
-    Halted, // Validator halted due to `--dev-halt-at-slot` argument
+    Halted,
+    // Validator halted due to `--dev-halt-at-slot` argument
     WaitingForSupermajority,
 
     // `Running` is the terminal state once the validator fully starts and all services are
@@ -271,12 +280,12 @@ pub struct Validator {
 // in the distant future, get rid of ::new()/exit() and use Result properly...
 pub(crate) fn abort() -> ! {
     #[cfg(not(test))]
-    {
-        // standard error is usually redirected to a log file, cry for help on standard output as
-        // well
-        println!("Validator process aborted. The validator log may contain further details");
-        std::process::exit(1);
-    }
+        {
+            // standard error is usually redirected to a log file, cry for help on standard output as
+            // well
+            println!("Validator process aborted. The validator log may contain further details");
+            std::process::exit(1);
+        }
 
     #[cfg(test)]
     panic!("process::exit(1) is intercepted for friendly test failure...");
@@ -404,6 +413,9 @@ impl Validator {
         if let Some(ref shrink_paths) = config.account_shrink_paths {
             bank.set_shrink_paths(shrink_paths.clone());
         }
+        if deepmind_enabled() {
+            println!("DMLOG BLOCK_ROOT {}", bank_forks.root());
+        }
         let bank_forks = Arc::new(RwLock::new(bank_forks));
 
         let sample_performance_service =
@@ -523,12 +535,12 @@ impl Validator {
             if ContactInfo::is_valid_address(&node.info.rpc, &socket_addr_space) {
                 assert!(ContactInfo::is_valid_address(
                     &node.info.rpc_pubsub,
-                    &socket_addr_space
+                    &socket_addr_space,
                 ));
             } else {
                 assert!(!ContactInfo::is_valid_address(
                     &node.info.rpc_pubsub,
-                    &socket_addr_space
+                    &socket_addr_space,
                 ));
             }
             let (bank_notification_sender, bank_notification_receiver) = unbounded();
@@ -862,7 +874,7 @@ impl Validator {
             .expect("rpc_completed_slots_service");
 
         if let Some(optimistically_confirmed_bank_tracker) =
-            self.optimistically_confirmed_bank_tracker
+        self.optimistically_confirmed_bank_tracker
         {
             optimistically_confirmed_bank_tracker
                 .join()
@@ -1099,7 +1111,7 @@ fn new_banks_from_ledger(
         config.wal_recovery_mode.clone(),
         enforce_ulimit_nofile,
     )
-    .expect("Failed to open ledger database");
+        .expect("Failed to open ledger database");
     blockstore.set_no_compaction(config.no_rocksdb_compaction);
 
     let tower_path = config.tower_path.as_deref().unwrap_or(ledger_path);
@@ -1169,10 +1181,10 @@ fn new_banks_from_ledger(
             .cache_block_meta_sender
             .as_ref(),
     )
-    .unwrap_or_else(|err| {
-        error!("Failed to load ledger: {:?}", err);
-        abort()
-    });
+        .unwrap_or_else(|err| {
+            error!("Failed to load ledger: {:?}", err);
+            abort()
+        });
 
     if let Some(warp_slot) = config.warp_slot {
         let snapshot_config = config.snapshot_config.as_ref().unwrap_or_else(|| {
@@ -1213,10 +1225,10 @@ fn new_banks_from_ledger(
             Some(bank_forks.root_bank().get_thread_pool()),
             snapshot_config.maximum_snapshots_to_retain,
         )
-        .unwrap_or_else(|err| {
-            error!("Unable to create snapshot: {}", err);
-            abort();
-        });
+            .unwrap_or_else(|err| {
+                error!("Unable to create snapshot: {}", err);
+                abort();
+            });
         info!("created snapshot: {}", archive_file.display());
     }
 
@@ -1450,21 +1462,21 @@ fn wait_for_supermajority(
 
 fn is_rosetta_emulated() -> bool {
     #[cfg(target_os = "macos")]
-    {
-        use std::str::FromStr;
-        std::process::Command::new("sysctl")
-            .args(&["-in", "sysctl.proc_translated"])
-            .output()
-            .map_err(|_| ())
-            .and_then(|output| String::from_utf8(output.stdout).map_err(|_| ()))
-            .and_then(|stdout| u8::from_str(stdout.trim()).map_err(|_| ()))
-            .map(|enabled| enabled == 1)
-            .unwrap_or(false)
-    }
+        {
+            use std::str::FromStr;
+            std::process::Command::new("sysctl")
+                .args(&["-in", "sysctl.proc_translated"])
+                .output()
+                .map_err(|_| ())
+                .and_then(|output| String::from_utf8(output.stdout).map_err(|_| ()))
+                .and_then(|stdout| u8::from_str(stdout.trim()).map_err(|_| ()))
+                .map(|enabled| enabled == 1)
+                .unwrap_or(false)
+        }
     #[cfg(not(target_os = "macos"))]
-    {
-        false
-    }
+        {
+            false
+        }
 }
 
 pub fn report_target_features() {
@@ -1631,7 +1643,7 @@ pub fn is_snapshot_config_invalid(
 ) -> bool {
     snapshot_interval_slots != 0
         && (snapshot_interval_slots < accounts_hash_interval_slots
-            || snapshot_interval_slots % accounts_hash_interval_slots != 0)
+        || snapshot_interval_slots % accounts_hash_interval_slots != 0)
 }
 
 #[cfg(test)]
@@ -1792,7 +1804,7 @@ mod tests {
             rpc_override_health_check.clone(),
             &start_progress,
         )
-        .unwrap());
+            .unwrap());
 
         // bank=0, wait=1, should fail
         config.wait_for_supermajority = Some(1);
@@ -1817,7 +1829,7 @@ mod tests {
             rpc_override_health_check.clone(),
             &start_progress,
         )
-        .unwrap());
+            .unwrap());
 
         // bank=1, wait=1, equal, but bad hash provided
         config.wait_for_supermajority = Some(1);
