@@ -324,7 +324,7 @@ impl BankingStage {
     }
 
     fn filter_valid_packets_for_forwarding<'a>(
-        all_packets: impl Iterator<Item = &'a PacketsAndOffsets>,
+        all_packets: impl Iterator<Item=&'a PacketsAndOffsets>,
     ) -> Vec<&'a Packet> {
         all_packets
             .filter(|(_p, _indexes, forwarded)| !forwarded)
@@ -420,9 +420,9 @@ impl BankingStage {
                         );
                     if processed < verified_txs_len
                         || !Bank::should_bank_still_be_processing_txs(
-                            &bank_creation_time,
-                            max_tx_ingestion_ns,
-                        )
+                        &bank_creation_time,
+                        max_tx_ingestion_ns,
+                    )
                     {
                         reached_end_of_slot =
                             Some((poh_recorder.lock().unwrap().next_slot_leader(), bank));
@@ -713,7 +713,7 @@ impl BankingStage {
     #[allow(clippy::match_wild_err_arm)]
     fn record_transactions<'a>(
         bank_slot: Slot,
-        txs: impl Iterator<Item = &'a Transaction>,
+        txs: impl Iterator<Item=&'a Transaction>,
         results: &[TransactionExecutionResult],
         recorder: &TransactionRecorder,
     ) -> (Result<usize, PohRecorderError>, Vec<usize>) {
@@ -1451,8 +1451,8 @@ fn next_leader_x<F>(
     poh_recorder: &Mutex<PohRecorder>,
     port_selector: F,
 ) -> Option<std::net::SocketAddr>
-where
-    F: FnOnce(&ContactInfo) -> SocketAddr,
+    where
+        F: FnOnce(&ContactInfo) -> SocketAddr,
 {
     if let Some(leader_pubkey) = poh_recorder
         .lock()
@@ -2167,8 +2167,8 @@ mod tests {
                 None,
                 &gossip_vote_sender,
             )
-            .0
-            .unwrap();
+                .0
+                .unwrap();
             poh_recorder.lock().unwrap().tick();
 
             let mut done = false;
@@ -2194,7 +2194,7 @@ mod tests {
                 2,
                 genesis_config.hash(),
             )
-            .into()];
+                .into()];
 
             assert_matches!(
                 BankingStage::process_and_record_transactions(
@@ -2407,7 +2407,7 @@ mod tests {
                     &gossip_vote_sender,
                 );
 
-            assert_eq!(processed_transactions_count, 0,);
+            assert_eq!(processed_transactions_count, 0, );
 
             retryable_txs.sort_unstable();
             let expected: Vec<usize> = (0..transactions.len()).collect();
@@ -2512,7 +2512,7 @@ mod tests {
             assert_eq!(confirmed_block.transactions.len(), 3);
 
             for TransactionWithStatusMeta { transaction, meta } in
-                confirmed_block.transactions.into_iter()
+            confirmed_block.transactions.into_iter()
             {
                 if transaction.signatures[0] == success_signature {
                     let meta = meta.unwrap();
@@ -2613,8 +2613,8 @@ mod tests {
                 (0..num_conflicting_transactions).into_iter().collect(),
                 false,
             )]
-            .into_iter()
-            .collect();
+                .into_iter()
+                .collect();
 
             let (gossip_vote_sender, _gossip_vote_receiver) = unbounded();
 
@@ -2721,9 +2721,9 @@ mod tests {
                         packets_vec[interrupted_iteration + 1..].len()
                     );
                     for ((remaining_unprocessed_packet, _, _forwarded), original_packet) in
-                        buffered_packets
-                            .iter()
-                            .zip(&packets_vec[interrupted_iteration + 1..])
+                    buffered_packets
+                        .iter()
+                        .zip(&packets_vec[interrupted_iteration + 1..])
                     {
                         assert_eq!(
                             remaining_unprocessed_packet.packets[0],
@@ -2868,7 +2868,7 @@ mod tests {
             Some(&SocketAddr::from(([127, 0, 0, 1], 8001))),
             42,
         )
-        .unwrap()]);
+            .unwrap()]);
         assert_eq!(unprocessed_packets.len(), batch_limit);
         BankingStage::push_unprocessed(
             &mut unprocessed_packets,

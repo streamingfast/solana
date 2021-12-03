@@ -6,7 +6,12 @@ use crate::{
 };
 use log::*;
 use solana_metrics::inc_new_counter_info;
-use solana_sdk::{clock::Slot, hash::Hash, timing};
+use solana_sdk::{
+    clock::Slot,
+    hash::Hash,
+    timing,
+    deepmind::{deepmind_enabled, DMBatchContext},
+};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     ops::Index,
@@ -206,6 +211,11 @@ impl BankForks {
     ) {
         let old_epoch = self.root_bank().epoch();
         self.root = root;
+
+        if deepmind_enabled() {
+            println!("DMLOG BLOCK_ROOT {}", root);
+        }
+
         let set_root_start = Instant::now();
         let root_bank = self
             .banks
@@ -253,13 +263,13 @@ impl BankForks {
                     let snapshot_root_bank = self.root_bank();
                     let root_slot = snapshot_root_bank.slot();
                     if let Err(e) =
-                        accounts_background_request_sender.send_snapshot_request(SnapshotRequest {
-                            snapshot_root_bank,
-                            // Save off the status cache because these may get pruned
-                            // if another `set_root()` is called before the snapshots package
-                            // can be generated
-                            status_cache_slot_deltas: bank.src.slot_deltas(&bank.src.roots()),
-                        })
+                    accounts_background_request_sender.send_snapshot_request(SnapshotRequest {
+                        snapshot_root_bank,
+                        // Save off the status cache because these may get pruned
+                        // if another `set_root()` is called before the snapshots package
+                        // can be generated
+                        status_cache_slot_deltas: bank.src.slot_deltas(&bank.src.roots()),
+                    })
                     {
                         warn!(
                             "Error sending snapshot request for bank: {}, err: {:?}",
@@ -289,6 +299,7 @@ impl BankForks {
     pub fn root(&self) -> Slot {
         self.root
     }
+
 
     /// After setting a new root, prune the banks that are no longer on rooted paths
     ///
@@ -350,8 +361,8 @@ impl BankForks {
                 let keep = *slot == root
                     || self.descendants[&root].contains(slot)
                     || (*slot < root
-                        && *slot >= highest_confirmed_root
-                        && self.descendants[slot].contains(&root));
+                    && *slot >= highest_confirmed_root
+                    && self.descendants[slot].contains(&root));
                 !keep
             })
             .collect();
@@ -582,10 +593,10 @@ mod tests {
             None, // highest confirmed root
         );
         banks[2].squash();
-        assert_eq!(bank_forks.ancestors(), make_hash_map(vec![(2, vec![]),]));
+        assert_eq!(bank_forks.ancestors(), make_hash_map(vec![(2, vec![])]));
         assert_eq!(
             *bank_forks.descendants(),
-            make_hash_map(vec![(0, vec![2]), (1, vec![2]), (2, vec![]),])
+            make_hash_map(vec![(0, vec![2]), (1, vec![2]), (2, vec![])])
         );
         banks.push(bank_forks.insert(Bank::new_from_parent(&banks[2], &Pubkey::default(), 5)));
         banks.push(bank_forks.insert(Bank::new_from_parent(&banks[5], &Pubkey::default(), 6)));
@@ -600,7 +611,7 @@ mod tests {
                 (1, vec![2]),
                 (2, vec![5, 6]),
                 (5, vec![6]),
-                (6, vec![])
+                (6, vec![]),
             ])
         );
     }
@@ -643,11 +654,11 @@ mod tests {
         banks[2].squash();
         assert_eq!(
             bank_forks.ancestors(),
-            make_hash_map(vec![(1, vec![]), (2, vec![]),])
+            make_hash_map(vec![(1, vec![]), (2, vec![])])
         );
         assert_eq!(
             *bank_forks.descendants(),
-            make_hash_map(vec![(0, vec![1, 2]), (1, vec![2]), (2, vec![]),])
+            make_hash_map(vec![(0, vec![1, 2]), (1, vec![2]), (2, vec![])])
         );
         banks.push(bank_forks.insert(Bank::new_from_parent(&banks[2], &Pubkey::default(), 5)));
         banks.push(bank_forks.insert(Bank::new_from_parent(&banks[5], &Pubkey::default(), 6)));
@@ -657,7 +668,7 @@ mod tests {
                 (1, vec![]),
                 (2, vec![]),
                 (5, vec![2]),
-                (6, vec![2, 5])
+                (6, vec![2, 5]),
             ])
         );
         assert_eq!(
@@ -667,7 +678,7 @@ mod tests {
                 (1, vec![2]),
                 (2, vec![5, 6]),
                 (5, vec![6]),
-                (6, vec![])
+                (6, vec![]),
             ])
         );
     }

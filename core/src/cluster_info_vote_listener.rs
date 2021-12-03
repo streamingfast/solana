@@ -115,7 +115,7 @@ impl VoteTracker {
             *vote_tracker.leader_schedule_epoch.read().unwrap(),
             root_bank.get_leader_schedule_epoch(root_bank.slot())
         );
-        assert_eq!(*vote_tracker.current_epoch.read().unwrap(), current_epoch,);
+        assert_eq!(*vote_tracker.current_epoch.read().unwrap(), current_epoch, );
         vote_tracker
     }
 
@@ -189,7 +189,7 @@ impl VoteTracker {
         let start_leader_schedule_epoch = *self.leader_schedule_epoch.read().unwrap();
         let mut greatest_leader_schedule_epoch = start_leader_schedule_epoch;
         for leader_schedule_epoch in
-            start_leader_schedule_epoch..=root_bank.get_leader_schedule_epoch(root_bank.slot())
+        start_leader_schedule_epoch..=root_bank.get_leader_schedule_epoch(root_bank.slot())
         {
             let exists = self
                 .epoch_authorized_voters
@@ -312,7 +312,6 @@ impl ClusterInfoVoteListener {
                 );
             })
             .unwrap();
-
         Self {
             thread_hdls: vec![listen_thread, send_thread, bank_send_thread],
         }
@@ -416,7 +415,7 @@ impl ClusterInfoVoteListener {
                     inc_new_counter_info!("bank_send_loop_num_batches", 1);
                     verified_packets_sender.send(vec![msgs])?;
                     #[allow(deprecated)]
-                    bank.last_vote_sync.compare_and_swap(
+                        bank.last_vote_sync.compare_and_swap(
                         last_version,
                         new_version,
                         Ordering::Relaxed,
@@ -894,18 +893,18 @@ mod tests {
         // Check that the two signing keys pass the check
         assert!(VoteTracker::vote_contains_authorized_voter(
             &vote_tx,
-            &node_keypair.pubkey()
+            &node_keypair.pubkey(),
         ));
 
         assert!(VoteTracker::vote_contains_authorized_voter(
             &vote_tx,
-            &authorized_voter.pubkey()
+            &authorized_voter.pubkey(),
         ));
 
         // Non signing key shouldn't pass the check
         assert!(!VoteTracker::vote_contains_authorized_voter(
             &vote_tx,
-            &vote_keypair.pubkey()
+            &vote_keypair.pubkey(),
         ));
 
         // Set the authorized voter == vote keypair
@@ -922,18 +921,18 @@ mod tests {
         // Check that the node_keypair and vote keypair pass the authorized voter check
         assert!(VoteTracker::vote_contains_authorized_voter(
             &vote_tx,
-            &node_keypair.pubkey()
+            &node_keypair.pubkey(),
         ));
 
         assert!(VoteTracker::vote_contains_authorized_voter(
             &vote_tx,
-            &vote_keypair.pubkey()
+            &vote_keypair.pubkey(),
         ));
 
         // The other keypair should not pass the check
         assert!(!VoteTracker::vote_contains_authorized_voter(
             &vote_tx,
-            &authorized_voter.pubkey()
+            &authorized_voter.pubkey(),
         ));
     }
 
@@ -1067,7 +1066,7 @@ mod tests {
             &None,
             &None,
         )
-        .unwrap();
+            .unwrap();
 
         // Vote slots for slots greater than root bank's set of currently calculated epochs
         // are ignored
@@ -1098,7 +1097,7 @@ mod tests {
             &None,
             &None,
         )
-        .unwrap();
+            .unwrap();
 
         // Should be no updates since everything was ignored
         assert!(vote_tracker.slot_vote_trackers.read().unwrap().is_empty());
@@ -1179,7 +1178,7 @@ mod tests {
             &None,
             &None,
         )
-        .unwrap();
+            .unwrap();
 
         let mut gossip_verified_votes: HashMap<Slot, HashMap<Hash, Vec<Pubkey>>> = HashMap::new();
         for (pubkey, slot, hash) in gossip_verified_vote_hash_receiver.try_iter() {
@@ -1336,14 +1335,14 @@ mod tests {
             &None,
             &None,
         )
-        .unwrap();
+            .unwrap();
 
         // Check that the received votes were pushed to other commponents
         // subscribing via a channel
         let received_votes: Vec<_> = verified_vote_receiver.try_iter().collect();
         assert_eq!(received_votes.len(), validator_voting_keypairs.len());
         for (expected_pubkey_vote, received_pubkey_vote) in
-            expected_votes.iter().zip(received_votes.iter())
+        expected_votes.iter().zip(received_votes.iter())
         {
             assert_eq!(expected_pubkey_vote, received_pubkey_vote);
         }
@@ -1582,8 +1581,8 @@ mod tests {
             validator0_keypairs.vote_keypair.pubkey(),
             validator0_keypairs.vote_keypair.pubkey(),
         )]
-        .into_iter()
-        .collect();
+            .into_iter()
+            .collect();
         vote_tracker
             .epoch_authorized_voters
             .write()
