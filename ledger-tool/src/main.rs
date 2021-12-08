@@ -44,6 +44,7 @@ use solana_sdk::{
     shred_version::compute_shred_version,
     stake::{self, state::StakeState},
     system_program,
+    deepmind::enable_deepmind,
 };
 use solana_stake_program::stake_state::{self, PointValue};
 use solana_vote_program::{
@@ -865,6 +866,12 @@ fn main() {
                 .help("Use DIR as ledger location"),
         )
         .arg(
+            Arg::with_name("deepmind")
+                .long("deepmind")
+                .takes_value(false)
+                .help("Activate/deactivate deep-mind instrumentation, disabled by default. You can override output directory using the DEEPMIND_BATCH_FILES_PATH environment variable."),
+        )
+        .arg(
             Arg::with_name("wal_recovery_mode")
                 .long("wal-recovery-mode")
                 .value_name("MODE")
@@ -1437,6 +1444,11 @@ fn main() {
         );
         exit(1);
     });
+
+    if matches.is_present("deepmind") {
+        enable_deepmind();
+        println!("DMLOG INIT VERSION 2");
+    }
 
     let snapshot_archive_path = value_t!(matches, "snapshot_archive_path", String)
         .ok()
