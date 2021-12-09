@@ -24,7 +24,7 @@ use {
     std::{
         cmp::max,
         cmp::Ordering,
-        collections::HashSet,
+        collections::{HashSet, HashMap},
         fmt,
         fs::{self, File},
         io::{
@@ -230,6 +230,11 @@ pub fn remove_tmp_snapshot_archives(snapshot_path: &Path) {
             }
         }
     }
+}
+
+pub fn write_shutdown_snapshot_for_fast_boot() {
+
+    // serialize_status_cache()
 }
 
 pub fn archive_snapshot_package(
@@ -633,30 +638,38 @@ pub fn bank_from_archive<P: AsRef<Path> + std::marker::Sync>(
     shrink_ratio: AccountShrinkThreshold,
     test_hash_calculation: bool,
     accounts_db_skip_shrink: bool,
+    use_boot_snapshot: bool,
 ) -> Result<(Bank, BankFromArchiveTimings)> {
     let unpack_dir = tempfile::Builder::new()
         .prefix(TMP_SNAPSHOT_PREFIX)
         .tempdir_in(snapshot_path)?;
 
+    let mut unpacked_append_vec_map: UnpackedAppendVecMap = HashMap::<String, PathBuf>::new();
+    let unpacked_snapshots_dir = unpack_dir.as_ref().join("snapshots");
+    
     let mut untar = Measure::start("snapshot untar");
-    let divisions = std::cmp::min(
-        PARALLEL_UNTAR_READERS_DEFAULT,
-        std::cmp::max(1, num_cpus::get() / 4),
-    );
-    let unpacked_append_vec_map = untar_snapshot_in(
-        &snapshot_tar,
-        unpack_dir.as_ref(),
-        account_paths,
-        archive_format,
-        divisions,
-    )?;
+    if !use_boot_snapshot {
+        let divisions = std::cmp::min(
+            PARALLEL_UNTAR_READERS_DEFAULT,
+            std::cmp::max(1, num_cpus::get() / 4),
+        );
+        unpacked_append_vec_map = untar_snapshot_in(
+            &snapshot_tar,
+            unpack_dir.as_ref(),
+            account_paths,
+            archive_format,
+            divisions,
+        )?;
+	
+	info!("{}", untar);
+    } else {
+	unpacked_append_vec_map.insert("status_cache".to_string(), snapshot_path.join("status_cache"));
+	unpacked_append_vec_map.insert("snapshots/123/123".to_string(), snapshot_path.join("snapshots/123/123"));
+    }
     untar.stop();
-    info!("{}", untar);
 
     let mut measure = Measure::start("bank rebuild from snapshot");
-    let unpacked_snapshots_dir = unpack_dir.as_ref().join("snapshots");
     let unpacked_version_file = unpack_dir.as_ref().join("version");
-
     let mut snapshot_version = String::new();
     File::open(unpacked_version_file).and_then(|mut f| f.read_to_string(&mut snapshot_version))?;
 
@@ -907,6 +920,7 @@ fn rebuild_bank_from_snapshots(
         "Loading bank from {}",
         &root_paths.snapshot_file_path.display()
     );
+    // READING: snapshots/110633762/110633762 from the unpacked snapshot file
     let bank = deserialize_snapshot_data_file(&root_paths.snapshot_file_path, |mut stream| {
         Ok(match snapshot_version_enum {
             SnapshotVersion::V1_2_0 => bank_from_stream(
@@ -932,6 +946,10 @@ fn rebuild_bank_from_snapshots(
             "Rebuilding status cache from {}",
             status_cache_path.display()
         );
+        // READING: snapshots/status_cache
+        // THIS IS WHAT IS STORED IN `status_cache` A VEC of BankSlotDelta
+        // WHO PRODUCES THIS? Is this cleaned up on booot? On shutdown?
+        // Do we NEED this to boot properly? Can it be regerenated by some other process?
         let slot_deltas: Vec<BankSlotDelta> = bincode::options()
             .with_limit(MAX_SNAPSHOT_DATA_FILE_SIZE)
             .with_fixint_encoding()
@@ -943,6 +961,11 @@ fn rebuild_bank_from_snapshots(
     bank.src.append(&slot_deltas);
 
     info!("Loaded bank for slot: {}", bank.slot());
+    // WE LOADED THIS FROM THE status_cache AND THE snapshot/12312312/123123123
+    // WHERE DOES IT GO BACK? WAS IT ONLY IN MEMORY? WAS IT REMOVED FROM ROCKSDB?
+    // FROM THIS POINT ON' WHERE IS IT GOING? Into rocksdb? In memory?
+    // Is *this* the only thing we need to restore from disk if we want to pick up from
+    // some `accounts` already present on disk?
     Ok(bank)
 }
 
