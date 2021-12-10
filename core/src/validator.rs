@@ -280,12 +280,12 @@ pub struct Validator {
 // in the distant future, get rid of ::new()/exit() and use Result properly...
 pub(crate) fn abort() -> ! {
     #[cfg(not(test))]
-    {
-        // standard error is usually redirected to a log file, cry for help on standard output as
-        // well
-        println!("Validator process aborted. The validator log may contain further details");
-        std::process::exit(1);
-    }
+        {
+            // standard error is usually redirected to a log file, cry for help on standard output as
+            // well
+            println!("Validator process aborted. The validator log may contain further details");
+            std::process::exit(1);
+        }
 
     #[cfg(test)]
     panic!("process::exit(1) is intercepted for friendly test failure...");
@@ -355,7 +355,7 @@ impl Validator {
         if let Some(snapshot_config) = &config.snapshot_config {
             use_boot_snapshot = snapshot_config.use_boot_snapshot
         }
-        if use_boot_snapshot {
+        if !use_boot_snapshot {
             info!("Cleaning accounts paths..");
             *start_progress.write().unwrap() = ValidatorStartProgress::CleaningAccounts;
             let mut start = Measure::start("clean_accounts_paths");
@@ -880,7 +880,7 @@ impl Validator {
             .expect("rpc_completed_slots_service");
 
         if let Some(optimistically_confirmed_bank_tracker) =
-            self.optimistically_confirmed_bank_tracker
+        self.optimistically_confirmed_bank_tracker
         {
             optimistically_confirmed_bank_tracker
                 .join()
@@ -1117,7 +1117,7 @@ fn new_banks_from_ledger(
         config.wal_recovery_mode.clone(),
         enforce_ulimit_nofile,
     )
-    .expect("Failed to open ledger database");
+        .expect("Failed to open ledger database");
     blockstore.set_no_compaction(config.no_rocksdb_compaction);
 
     let tower_path = config.tower_path.as_deref().unwrap_or(ledger_path);
@@ -1187,10 +1187,10 @@ fn new_banks_from_ledger(
             .cache_block_meta_sender
             .as_ref(),
     )
-    .unwrap_or_else(|err| {
-        error!("Failed to load ledger: {:?}", err);
-        abort()
-    });
+        .unwrap_or_else(|err| {
+            error!("Failed to load ledger: {:?}", err);
+            abort()
+        });
 
     if let Some(warp_slot) = config.warp_slot {
         let snapshot_config = config.snapshot_config.as_ref().unwrap_or_else(|| {
@@ -1231,10 +1231,10 @@ fn new_banks_from_ledger(
             Some(bank_forks.root_bank().get_thread_pool()),
             snapshot_config.maximum_snapshots_to_retain,
         )
-        .unwrap_or_else(|err| {
-            error!("Unable to create snapshot: {}", err);
-            abort();
-        });
+            .unwrap_or_else(|err| {
+                error!("Unable to create snapshot: {}", err);
+                abort();
+            });
         info!("created snapshot: {}", archive_file.display());
     }
 
@@ -1468,21 +1468,21 @@ fn wait_for_supermajority(
 
 fn is_rosetta_emulated() -> bool {
     #[cfg(target_os = "macos")]
-    {
-        use std::str::FromStr;
-        std::process::Command::new("sysctl")
-            .args(&["-in", "sysctl.proc_translated"])
-            .output()
-            .map_err(|_| ())
-            .and_then(|output| String::from_utf8(output.stdout).map_err(|_| ()))
-            .and_then(|stdout| u8::from_str(stdout.trim()).map_err(|_| ()))
-            .map(|enabled| enabled == 1)
-            .unwrap_or(false)
-    }
+        {
+            use std::str::FromStr;
+            std::process::Command::new("sysctl")
+                .args(&["-in", "sysctl.proc_translated"])
+                .output()
+                .map_err(|_| ())
+                .and_then(|output| String::from_utf8(output.stdout).map_err(|_| ()))
+                .and_then(|stdout| u8::from_str(stdout.trim()).map_err(|_| ()))
+                .map(|enabled| enabled == 1)
+                .unwrap_or(false)
+        }
     #[cfg(not(target_os = "macos"))]
-    {
-        false
-    }
+        {
+            false
+        }
 }
 
 pub fn report_target_features() {
@@ -1649,7 +1649,7 @@ pub fn is_snapshot_config_invalid(
 ) -> bool {
     snapshot_interval_slots != 0
         && (snapshot_interval_slots < accounts_hash_interval_slots
-            || snapshot_interval_slots % accounts_hash_interval_slots != 0)
+        || snapshot_interval_slots % accounts_hash_interval_slots != 0)
 }
 
 #[cfg(test)]
@@ -1810,7 +1810,7 @@ mod tests {
             rpc_override_health_check.clone(),
             &start_progress,
         )
-        .unwrap());
+            .unwrap());
 
         // bank=0, wait=1, should fail
         config.wait_for_supermajority = Some(1);
@@ -1835,7 +1835,7 @@ mod tests {
             rpc_override_health_check.clone(),
             &start_progress,
         )
-        .unwrap());
+            .unwrap());
 
         // bank=1, wait=1, equal, but bad hash provided
         config.wait_for_supermajority = Some(1);

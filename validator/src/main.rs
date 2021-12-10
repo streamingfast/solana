@@ -1,4 +1,5 @@
 #![allow(clippy::integer_arithmetic)]
+
 use {
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, App,
@@ -217,7 +218,7 @@ fn wait_for_restart_window(
                         "Validator has no idle window of at least {} slots. Largest idle window for epoch {} is {} slots",
                         min_idle_slots, epoch_info.epoch, max_idle_window
                     )
-                    .into());
+                        .into());
                 }
             }
 
@@ -833,160 +834,160 @@ fn rpc_bootstrap(
             }
             Err(err) => Err(format!("Failed to get RPC node version: {}", err)),
         }
-        .and_then(|_| {
-            let genesis_config = download_then_check_genesis_hash(
-                &rpc_contact_info.rpc,
-                ledger_path,
-                validator_config.expected_genesis_hash,
-                bootstrap_config.max_genesis_archive_unpacked_size,
-                bootstrap_config.no_genesis_fetch,
-                use_progress_bar,
-            );
+            .and_then(|_| {
+                let genesis_config = download_then_check_genesis_hash(
+                    &rpc_contact_info.rpc,
+                    ledger_path,
+                    validator_config.expected_genesis_hash,
+                    bootstrap_config.max_genesis_archive_unpacked_size,
+                    bootstrap_config.no_genesis_fetch,
+                    use_progress_bar,
+                );
 
-            if let Ok(genesis_config) = genesis_config {
-                let genesis_hash = genesis_config.hash();
-                if validator_config.expected_genesis_hash.is_none() {
-                    info!("Expected genesis hash set to {}", genesis_hash);
-                    validator_config.expected_genesis_hash = Some(genesis_hash);
+                if let Ok(genesis_config) = genesis_config {
+                    let genesis_hash = genesis_config.hash();
+                    if validator_config.expected_genesis_hash.is_none() {
+                        info!("Expected genesis hash set to {}", genesis_hash);
+                        validator_config.expected_genesis_hash = Some(genesis_hash);
+                    }
                 }
-            }
 
-            if let Some(expected_genesis_hash) = validator_config.expected_genesis_hash {
-                // Sanity check that the RPC node is using the expected genesis hash before
-                // downloading a snapshot from it
-                let rpc_genesis_hash = rpc_client
-                    .get_genesis_hash()
-                    .map_err(|err| format!("Failed to get genesis hash: {}", err))?;
+                if let Some(expected_genesis_hash) = validator_config.expected_genesis_hash {
+                    // Sanity check that the RPC node is using the expected genesis hash before
+                    // downloading a snapshot from it
+                    let rpc_genesis_hash = rpc_client
+                        .get_genesis_hash()
+                        .map_err(|err| format!("Failed to get genesis hash: {}", err))?;
 
-                if expected_genesis_hash != rpc_genesis_hash {
-                    return Err(format!(
-                        "Genesis hash mismatch: expected {} but RPC node genesis hash is {}",
-                        expected_genesis_hash, rpc_genesis_hash
-                    ));
+                    if expected_genesis_hash != rpc_genesis_hash {
+                        return Err(format!(
+                            "Genesis hash mismatch: expected {} but RPC node genesis hash is {}",
+                            expected_genesis_hash, rpc_genesis_hash
+                        ));
+                    }
                 }
-            }
 
-            if let Some(snapshot_hash) = snapshot_hash {
-                let mut use_local_snapshot = false;
+                if let Some(snapshot_hash) = snapshot_hash {
+                    let mut use_local_snapshot = false;
 
-                if let Some(highest_local_snapshot_slot) =
+                    if let Some(highest_local_snapshot_slot) =
                     get_highest_snapshot_archive_path(snapshot_output_dir)
                         .map(|(_path, (slot, _hash, _compression))| slot)
-                {
-                    if highest_local_snapshot_slot
-                        > snapshot_hash.0.saturating_sub(maximum_local_snapshot_age)
                     {
-                        info!(
+                        if highest_local_snapshot_slot
+                            > snapshot_hash.0.saturating_sub(maximum_local_snapshot_age)
+                        {
+                            info!(
                             "Reusing local snapshot at slot {} instead \
                                of downloading a snapshot for slot {}",
                             highest_local_snapshot_slot, snapshot_hash.0
                         );
-                        use_local_snapshot = true;
-                    } else {
-                        info!(
+                            use_local_snapshot = true;
+                        } else {
+                            info!(
                             "Local snapshot from slot {} is too old. \
                               Downloading a newer snapshot for slot {}",
                             highest_local_snapshot_slot, snapshot_hash.0
                         );
+                        }
                     }
-                }
 
-                if use_local_snapshot {
-                    Ok(())
-                } else {
-                    rpc_client
-                        .get_slot_with_commitment(CommitmentConfig::finalized())
-                        .map_err(|err| format!("Failed to get RPC node slot: {}", err))
-                        .and_then(|slot| {
-                            *start_progress.write().unwrap() =
-                                ValidatorStartProgress::DownloadingSnapshot {
-                                    slot: snapshot_hash.0,
-                                    rpc_addr: rpc_contact_info.rpc,
-                                };
-                            info!("RPC node root slot: {}", slot);
-                            let (cluster_info, gossip_exit_flag, gossip_service) =
-                                gossip.take().unwrap();
-                            cluster_info.save_contact_info();
-                            gossip_exit_flag.store(true, Ordering::Relaxed);
-                            let maximum_snapshots_to_retain = if let Some(snapshot_config) =
+                    if use_local_snapshot {
+                        Ok(())
+                    } else {
+                        rpc_client
+                            .get_slot_with_commitment(CommitmentConfig::finalized())
+                            .map_err(|err| format!("Failed to get RPC node slot: {}", err))
+                            .and_then(|slot| {
+                                *start_progress.write().unwrap() =
+                                    ValidatorStartProgress::DownloadingSnapshot {
+                                        slot: snapshot_hash.0,
+                                        rpc_addr: rpc_contact_info.rpc,
+                                    };
+                                info!("RPC node root slot: {}", slot);
+                                let (cluster_info, gossip_exit_flag, gossip_service) =
+                                    gossip.take().unwrap();
+                                cluster_info.save_contact_info();
+                                gossip_exit_flag.store(true, Ordering::Relaxed);
+                                let maximum_snapshots_to_retain = if let Some(snapshot_config) =
                                 validator_config.snapshot_config.as_ref()
-                            {
-                                snapshot_config.maximum_snapshots_to_retain
-                            } else {
-                                DEFAULT_MAX_SNAPSHOTS_TO_RETAIN
-                            };
-                            let ret = download_snapshot(
-                                &rpc_contact_info.rpc,
-                                snapshot_output_dir,
-                                snapshot_hash,
-                                use_progress_bar,
-                                maximum_snapshots_to_retain,
-                                &mut Some(Box::new(|download_progress: &DownloadProgressRecord| {
-                                    debug!("Download progress: {:?}", download_progress);
+                                {
+                                    snapshot_config.maximum_snapshots_to_retain
+                                } else {
+                                    DEFAULT_MAX_SNAPSHOTS_TO_RETAIN
+                                };
+                                let ret = download_snapshot(
+                                    &rpc_contact_info.rpc,
+                                    snapshot_output_dir,
+                                    snapshot_hash,
+                                    use_progress_bar,
+                                    maximum_snapshots_to_retain,
+                                    &mut Some(Box::new(|download_progress: &DownloadProgressRecord| {
+                                        debug!("Download progress: {:?}", download_progress);
 
-                                    if download_progress.last_throughput <  minimal_snapshot_download_speed
-                                       && download_progress.notification_count <= 1
-                                       && download_progress.percentage_done <= 2_f32
-                                       && download_progress.estimated_remaining_time > 60_f32
-                                       && download_abort_count < maximum_snapshot_download_abort {
-                                        if let Some(ref trusted_validators) = validator_config.trusted_validators {
-                                            if trusted_validators.contains(&rpc_contact_info.id)
-                                               && trusted_validators.len() == 1
-                                               && bootstrap_config.no_untrusted_rpc {
-                                                warn!("The snapshot download is too slow, throughput: {} < min speed {} bytes/sec, but will NOT abort \
+                                        if download_progress.last_throughput < minimal_snapshot_download_speed
+                                            && download_progress.notification_count <= 1
+                                            && download_progress.percentage_done <= 2_f32
+                                            && download_progress.estimated_remaining_time > 60_f32
+                                            && download_abort_count < maximum_snapshot_download_abort {
+                                            if let Some(ref trusted_validators) = validator_config.trusted_validators {
+                                                if trusted_validators.contains(&rpc_contact_info.id)
+                                                    && trusted_validators.len() == 1
+                                                    && bootstrap_config.no_untrusted_rpc {
+                                                    warn!("The snapshot download is too slow, throughput: {} < min speed {} bytes/sec, but will NOT abort \
                                                       and try a different node as it is the only known validator and the --only-known-rpc flag \
                                                       is set. \
                                                       Abort count: {}, Progress detail: {:?}",
                                                       download_progress.last_throughput, minimal_snapshot_download_speed,
                                                       download_abort_count, download_progress);
-                                                return true; // Do not abort download from the one-and-only known validator
+                                                    return true; // Do not abort download from the one-and-only known validator
+                                                }
                                             }
-                                        }
-                                        warn!("The snapshot download is too slow, throughput: {} < min speed {} bytes/sec, will abort \
+                                            warn!("The snapshot download is too slow, throughput: {} < min speed {} bytes/sec, will abort \
                                                and try a different node. Abort count: {}, Progress detail: {:?}",
                                                download_progress.last_throughput, minimal_snapshot_download_speed,
                                                download_abort_count, download_progress);
-                                        download_abort_count += 1;
-                                        false
-                                    } else {
-                                        true
-                                    }
-                                })),
-                            );
+                                            download_abort_count += 1;
+                                            false
+                                        } else {
+                                            true
+                                        }
+                                    })),
+                                );
 
-                            gossip_service.join().unwrap();
-                            ret
-                        })
+                                gossip_service.join().unwrap();
+                                ret
+                            })
+                    }
+                } else {
+                    Ok(())
                 }
-            } else {
-                Ok(())
-            }
-        })
-        .map(|_| {
-            if !validator_config.voting_disabled && !bootstrap_config.no_check_vote_account {
-                check_vote_account(
-                    &rpc_client,
-                    &identity_keypair.pubkey(),
-                    vote_account,
-                    &authorized_voter_keypairs
-                        .read()
-                        .unwrap()
-                        .iter()
-                        .map(|k| k.pubkey())
-                        .collect::<Vec<_>>(),
-                )
-                .unwrap_or_else(|err| {
-                    // Consider failures here to be more likely due to user error (eg,
-                    // incorrect `solana-validator` command-line arguments) rather than the
-                    // RPC node failing.
-                    //
-                    // Power users can always use the `--no-check-vote-account` option to
-                    // bypass this check entirely
-                    error!("{}", err);
-                    exit(1);
-                });
-            }
-        });
+            })
+            .map(|_| {
+                if !validator_config.voting_disabled && !bootstrap_config.no_check_vote_account {
+                    check_vote_account(
+                        &rpc_client,
+                        &identity_keypair.pubkey(),
+                        vote_account,
+                        &authorized_voter_keypairs
+                            .read()
+                            .unwrap()
+                            .iter()
+                            .map(|k| k.pubkey())
+                            .collect::<Vec<_>>(),
+                    )
+                        .unwrap_or_else(|err| {
+                            // Consider failures here to be more likely due to user error (eg,
+                            // incorrect `solana-validator` command-line arguments) rather than the
+                            // RPC node failing.
+                            //
+                            // Power users can always use the `--no-check-vote-account` option to
+                            // bypass this check entirely
+                            error!("{}", err);
+                            exit(1);
+                        });
+                }
+            });
 
         if result.is_ok() {
             break;
@@ -1313,7 +1314,6 @@ pub fn main() {
                 .validator(solana_net_utils::is_host)
                 .help("Gossip DNS name or IP address for the validator to advertise in gossip \
                        [default: ask --entrypoint, or 127.0.0.1 when --entrypoint is not provided]"),
-
         )
         .arg(
             Arg::with_name("public_rpc_addr")
@@ -1922,93 +1922,93 @@ pub fn main() {
         .after_help("The default subcommand is run")
         .subcommand(
             SubCommand::with_name("exit")
-            .about("Send an exit request to the validator")
-            .arg(
-                Arg::with_name("force")
-                    .short("f")
-                    .long("force")
-                    .takes_value(false)
-                    .help("Request the validator exit immediately instead of waiting for a restart window")
-            )
-            .arg(
-                Arg::with_name("monitor")
-                    .short("m")
-                    .long("monitor")
-                    .takes_value(false)
-                    .help("Monitor the validator after sending the exit request")
-            )
-            .arg(
-                Arg::with_name("min_idle_time")
-                    .takes_value(true)
-                    .long("min-idle-time")
-                    .value_name("MINUTES")
-                    .validator(is_parsable::<usize>)
-                    .default_value("10")
-                    .help("Minimum time that the validator should not be leader before restarting")
-            )
+                .about("Send an exit request to the validator")
+                .arg(
+                    Arg::with_name("force")
+                        .short("f")
+                        .long("force")
+                        .takes_value(false)
+                        .help("Request the validator exit immediately instead of waiting for a restart window")
+                )
+                .arg(
+                    Arg::with_name("monitor")
+                        .short("m")
+                        .long("monitor")
+                        .takes_value(false)
+                        .help("Monitor the validator after sending the exit request")
+                )
+                .arg(
+                    Arg::with_name("min_idle_time")
+                        .takes_value(true)
+                        .long("min-idle-time")
+                        .value_name("MINUTES")
+                        .validator(is_parsable::<usize>)
+                        .default_value("10")
+                        .help("Minimum time that the validator should not be leader before restarting")
+                )
         )
         .subcommand(
             SubCommand::with_name("authorized-voter")
-            .about("Adjust the validator authorized voters")
-            .setting(AppSettings::SubcommandRequiredElseHelp)
-            .setting(AppSettings::InferSubcommands)
-            .subcommand(
-                SubCommand::with_name("add")
-                .about("Add an authorized voter")
-                .arg(
-                    Arg::with_name("authorized_voter_keypair")
-                        .index(1)
-                        .value_name("KEYPAIR")
-                        .takes_value(true)
-                        .validator(is_keypair)
-                        .help("Keypair of the authorized voter to add"),
+                .about("Adjust the validator authorized voters")
+                .setting(AppSettings::SubcommandRequiredElseHelp)
+                .setting(AppSettings::InferSubcommands)
+                .subcommand(
+                    SubCommand::with_name("add")
+                        .about("Add an authorized voter")
+                        .arg(
+                            Arg::with_name("authorized_voter_keypair")
+                                .index(1)
+                                .value_name("KEYPAIR")
+                                .takes_value(true)
+                                .validator(is_keypair)
+                                .help("Keypair of the authorized voter to add"),
+                        )
+                        .after_help("Note: the new authorized voter only applies to the \
+                             currently running validator instance")
                 )
-                .after_help("Note: the new authorized voter only applies to the \
+                .subcommand(
+                    SubCommand::with_name("remove-all")
+                        .about("Remove all authorized voters")
+                        .after_help("Note: the removal only applies to the \
                              currently running validator instance")
-            )
-            .subcommand(
-                SubCommand::with_name("remove-all")
-                .about("Remove all authorized voters")
-                .after_help("Note: the removal only applies to the \
-                             currently running validator instance")
-            )
+                )
         )
         .subcommand(
             SubCommand::with_name("init")
-            .about("Initialize the ledger directory then exit")
+                .about("Initialize the ledger directory then exit")
         )
         .subcommand(
             SubCommand::with_name("monitor")
-            .about("Monitor the validator")
+                .about("Monitor the validator")
         )
         .subcommand(
             SubCommand::with_name("run")
-            .about("Run the validator")
+                .about("Run the validator")
         )
         .subcommand(
             SubCommand::with_name("set-log-filter")
-            .about("Adjust the validator log filter")
-            .arg(
-                Arg::with_name("filter")
-                    .takes_value(true)
-                    .index(1)
-                    .help("New filter using the same format as the RUST_LOG environment variable")
-            )
-            .after_help("Note: the new filter only applies to the currently running validator instance")
+                .about("Adjust the validator log filter")
+                .arg(
+                    Arg::with_name("filter")
+                        .takes_value(true)
+                        .index(1)
+                        .help("New filter using the same format as the RUST_LOG environment variable")
+                )
+                .after_help("Note: the new filter only applies to the currently running validator instance")
         )
         .subcommand(
             SubCommand::with_name("wait-for-restart-window")
-            .about("Monitor the validator for a good time to restart")
-            .arg(
-                Arg::with_name("min_idle_time")
-                    .takes_value(true)
-                    .index(1)
-                    .validator(is_parsable::<usize>)
-                    .value_name("MINUTES")
-                    .default_value("10")
-                    .help("Minimum time that the validator should not be leader before restarting")
-            )
-            .after_help("Note: If this command exits with a non-zero status \
+                .about("Monitor the validator for a good time to restart")
+                .arg(
+                    Arg::with_name("min_idle_time")
+                        .takes_value(true)
+                        .index(1)
+                        .validator(is_parsable::<usize>)
+                        .value_name("MINUTES")
+                        .default_value("10")
+                        .help("Minimum time that the validator should not be leader before restarting")
+                )
+                .after_help("Note: If this command exits with a non-zero status \
                          then this not a good time for a restart")
         )
         .get_matches();
@@ -2127,7 +2127,7 @@ pub fn main() {
             "The --identity <KEYPAIR> argument is required",
             clap::ErrorKind::ArgumentNotFound,
         )
-        .exit();
+            .exit();
     }));
 
     let logfile = {
@@ -2487,6 +2487,7 @@ pub fn main() {
 
     let boot_snapshot_path = snapshot_output_dir.join("snapshot-boot");
     let use_boot_snapshot = boot_snapshot_path.as_path().exists();
+    info!("use boot snapshot: {:?}", use_boot_snapshot);
     if use_boot_snapshot {
         snapshot_path = boot_snapshot_path.clone()
     }
@@ -2525,8 +2526,8 @@ pub fn main() {
         validator_config.accounts_hash_interval_slots,
     ) {
         eprintln!("Invalid snapshot interval provided ({}), must be a multiple of accounts_hash_interval_slots ({})",
-            snapshot_interval_slots,
-            validator_config.accounts_hash_interval_slots,
+                  snapshot_interval_slots,
+                  validator_config.accounts_hash_interval_slots,
         );
         exit(1);
     }

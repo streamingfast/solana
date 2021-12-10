@@ -49,15 +49,27 @@ pub fn load(
             snapshot_config.snapshot_path
         );
         if snapshot_config.use_boot_snapshot {
-            let _ = fs::remove_dir_all(&snapshot_config.snapshot_path);
+            info!("Using BOOT snapshot");
+            // let _ = fs::remove_dir_all(&snapshot_config.snapshot_path);
             fs::create_dir_all(&snapshot_config.snapshot_path)
                 .expect("Couldn't create snapshot directory");
+
+            return load_from_snapshot_boot(
+                genesis_config,
+                blockstore,
+                account_paths,
+                shrink_paths,
+                snapshot_config,
+                process_options,
+                transaction_status_sender,
+                cache_block_meta_sender,
+            );
         }
 
         if let Some((archive_filename, (archive_slot, archive_hash, archive_format))) =
-            snapshot_utils::get_highest_snapshot_archive_path(
-                &snapshot_config.snapshot_package_output_path,
-            )
+        snapshot_utils::get_highest_snapshot_archive_path(
+            &snapshot_config.snapshot_package_output_path,
+        )
         {
             return load_from_snapshot(
                 genesis_config,
@@ -148,8 +160,7 @@ fn load_from_snapshot(
         process_options.accounts_db_test_hash_calculation,
         process_options.accounts_db_skip_shrink,
         snapshot_config.use_boot_snapshot,
-    )
-    .expect("Load from snapshot failed");
+    ).expect("Load from snapshot failed");
     if let Some(shrink_paths) = shrink_paths {
         deserialized_bank.set_shrink_paths(shrink_paths);
     }
@@ -166,6 +177,70 @@ fn load_from_snapshot(
         );
         process::exit(1);
     }
+
+    to_loadresult(
+        blockstore_processor::process_blockstore_from_root(
+            blockstore,
+            deserialized_bank,
+            &process_options,
+            &VerifyRecyclers::default(),
+            transaction_status_sender,
+            cache_block_meta_sender,
+            timings,
+        ),
+        Some(deserialized_bank_slot_and_hash),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_from_snapshot_boot(
+    genesis_config: &GenesisConfig,
+    blockstore: &Blockstore,
+    account_paths: Vec<PathBuf>,
+    shrink_paths: Option<Vec<PathBuf>>,
+    snapshot_config: &SnapshotConfig,
+    process_options: ProcessOptions,
+    transaction_status_sender: Option<&TransactionStatusSender>,
+    cache_block_meta_sender: Option<&CacheBlockMetaSender>,
+) -> LoadResult {
+
+    // Fail hard here if snapshot fails to load, don't silently continue
+    if account_paths.is_empty() {
+        error!("Account paths not present when booting from snapshot");
+        process::exit(1);
+    }
+
+    let (deserialized_bank, timings) = snapshot_utils::bank_from_snapshot_boot(
+        &account_paths,
+        &process_options.frozen_accounts,
+        &snapshot_config.snapshot_path,
+        genesis_config,
+        process_options.debug_keys.clone(),
+        Some(&crate::builtins::get(process_options.bpf_jit)),
+        process_options.account_indexes.clone(),
+        process_options.accounts_db_caching_enabled,
+        process_options.limit_load_slot_count_from_snapshot,
+        process_options.shrink_ratio,
+        process_options.accounts_db_test_hash_calculation,
+        process_options.accounts_db_skip_shrink,
+    )
+        .expect("Load from snapshot failed");
+    if let Some(shrink_paths) = shrink_paths {
+        deserialized_bank.set_shrink_paths(shrink_paths);
+    }
+
+    let deserialized_bank_slot_and_hash = (
+        deserialized_bank.slot(),
+        deserialized_bank.get_accounts_hash(),
+    );
+
+    // if deserialized_bank_slot_and_hash != (archive_slot, archive_hash) {
+    //     error!(
+    //         "Snapshot has mismatch:\narchive: {:?}\ndeserialized: {:?}",bank_forks_utils.rs:213:40
+    //         archive_hash, deserialized_bank_slot_and_hash
+    //     );
+    //     process::exit(1);
+    // }
 
     to_loadresult(
         blockstore_processor::process_blockstore_from_root(
