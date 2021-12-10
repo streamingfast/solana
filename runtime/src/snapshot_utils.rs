@@ -723,42 +723,28 @@ pub fn bank_from_snapshot_boot(
     test_hash_calculation: bool,
     accounts_db_skip_shrink: bool,
 ) -> Result<(Bank, BankFromArchiveTimings)> {
-    // tempfile::Builder::new()
-    //     .prefix(TMP_SNAPSHOT_PREFIX)
-    //     .tempdir_in(snapshot_path)?;
-
     let mut unpacked_append_vec_map: UnpackedAppendVecMap = HashMap::<String, PathBuf>::new();
-    // let unpacked_snapshots_dir = unpack_dir.as_ref().join("snapshots");
 
-    // let mut untar = Measure::start("snapshot untar");
-    // if !use_boot_snapshot {
-    //     let divisions = std::cmp::min(
-    //         PARALLEL_UNTAR_READERS_DEFAULT,
-    //         std::cmp::max(1, num_cpus::get() / 4),
-    //     );
-    //     unpacked_append_vec_map = untar_snapshot_in(
-    //         &snapshot_tar,
-    //         unpack_dir.as_ref(),
-    //         account_paths,
-    //         archive_format,
-    //         divisions,
-    //     )?;
-    //
-    //     info!("{}", untar);
-    // } else {
     unpacked_append_vec_map.insert("status_cache".to_string(), boot_path.join("status_cache"));
     unpacked_append_vec_map.insert("snapshot-boot/19320/19320".to_string(), boot_path.join("snapshot-boot/19320/19320"));
 
+    let re = Regex::new(r"^[0-9]*$").unwrap();
+    for entry in fs::read_dir(boot_path)? {
+        let entry = entry?;
+        let mut file_name = entry.file_name().into_string().unwrap();
+        if re.is_match(file_name.as_str()) {
+            file_name = format!("snapshot-boot/{}/{}", file_name, file_name);
+        }
+        info!("from snapshot boot: {} {:?}", file_name, entry.path());
+        unpacked_append_vec_map.insert(file_name, entry.path().into());
+    }
 
     for path in account_paths {
         for entry in fs::read_dir(path)? {
             let entry = entry?;
-            info!("entry {:?} {:?}", entry.file_name(), entry.path());
             unpacked_append_vec_map.insert(entry.file_name().into_string().unwrap(), entry.path().into());
         }
     }
-    // }
-    // untar.stop();
 
     info!("Loading bank from boot snapshot: {:?}", boot_path);
 
