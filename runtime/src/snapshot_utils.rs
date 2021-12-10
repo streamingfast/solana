@@ -750,10 +750,12 @@ pub fn bank_from_snapshot_boot(
     unpacked_append_vec_map.insert("snapshot-boot/19320/19320".to_string(), boot_path.join("snapshot-boot/19320/19320"));
 
 
-    for entry in fs::read_dir("/Users/cbillett/devel/sf/solana.battlefield/run/data/syncer/accounts")? {
-        let entry = entry?;
-        info!("entry {:?} {:?}", entry.file_name(), entry.path());
-        unpacked_append_vec_map.insert(entry.file_name().into_string().unwrap(), entry.path().into());
+    for path in account_paths {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            info!("entry {:?} {:?}", entry.file_name(), entry.path());
+            unpacked_append_vec_map.insert(entry.file_name().into_string().unwrap(), entry.path().into());
+        }
     }
     // }
     // untar.stop();
