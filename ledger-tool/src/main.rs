@@ -44,6 +44,7 @@ use solana_sdk::{
     shred_version::compute_shred_version,
     stake::{self, state::StakeState},
     system_program,
+    deepmind::enable_deepmind,
 };
 use solana_stake_program::stake_state::{self, PointValue};
 use solana_vote_program::{
@@ -694,6 +695,8 @@ fn load_bank_forks(
             archive_format: ArchiveFormat::TarBzip2,
             snapshot_version: SnapshotVersion::default(),
             maximum_snapshots_to_retain: DEFAULT_MAX_SNAPSHOTS_TO_RETAIN,
+	    // TODO: are we SURE we don't want to use boot_snapshot here?!
+	    use_boot_snapshot: false,
         })
     };
     let account_paths = if let Some(account_paths) = arg_matches.value_of("account_paths") {
@@ -863,6 +866,12 @@ fn main() {
                 .global(true)
                 .default_value("ledger")
                 .help("Use DIR as ledger location"),
+        )
+        .arg(
+            Arg::with_name("deepmind")
+                .long("deepmind")
+                .takes_value(false)
+                .help("Activate/deactivate deep-mind instrumentation, disabled by default. You can override output directory using the DEEPMIND_BATCH_FILES_PATH environment variable."),
         )
         .arg(
             Arg::with_name("wal_recovery_mode")
@@ -1437,6 +1446,11 @@ fn main() {
         );
         exit(1);
     });
+
+    if matches.is_present("deepmind") {
+        enable_deepmind();
+        println!("DMLOG INIT VERSION 2");
+    }
 
     let snapshot_archive_path = value_t!(matches, "snapshot_archive_path", String)
         .ok()

@@ -1285,11 +1285,12 @@ fn process_single_slot(
     //****************************************************************
     if deepmind_enabled() {
         println!(
-            "DMLOG BLOCK_END {} {:?} {} {}",
+            "DMLOG BLOCK_END {} {:?} {} {} {}",
             bank.slot(),
             bank.hash(),
             bank.unix_timestamp_from_genesis(),
-            bank.clock().unix_timestamp
+            bank.clock().unix_timestamp,
+	    "process_single_slot",
         );
     }
     //****************************************************************

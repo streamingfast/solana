@@ -52,10 +52,10 @@ use {
     solana_sdk::{
         clock::{Slot, DEFAULT_S_PER_SLOT},
         commitment_config::CommitmentConfig,
+        deepmind::enable_deepmind,
         hash::Hash,
         pubkey::Pubkey,
         signature::{Keypair, Signer},
-        deepmind::enable_deepmind,
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_validator::{
@@ -79,10 +79,10 @@ use {
     },
 };
 
-#[cfg(not(any(target_env = "msvc", feature="rosetta2")))]
+#[cfg(not(any(target_env = "msvc", feature = "rosetta2")))]
 use jemallocator::Jemalloc;
 
-#[cfg(not(any(target_env = "msvc", feature="rosetta2")))]
+#[cfg(not(any(target_env = "msvc", feature = "rosetta2")))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
@@ -2181,7 +2181,6 @@ pub fn main() {
         println!("DMLOG INIT VERSION 2");
     }
 
-
     let private_rpc = matches.is_present("private_rpc");
     let no_port_check = matches.is_present("no_port_check");
     let no_rocksdb_compaction = true;
@@ -2466,7 +2465,7 @@ pub fn main() {
     } else {
         ledger_path.clone()
     };
-    let snapshot_path = snapshot_output_dir.join("snapshot");
+    let mut snapshot_path = snapshot_output_dir.join("snapshot");
     fs::create_dir_all(&snapshot_path).unwrap_or_else(|err| {
         eprintln!(
             "Failed to create snapshots directory {:?}: {}",
@@ -2485,6 +2484,12 @@ pub fn main() {
             _ => panic!("Archive format not recognized: {}", archive_format_str),
         }
     };
+
+    let boot_snapshot_path = snapshot_output_dir.join("snapshot-boot");
+    let use_boot_snapshot = boot_snapshot_path.as_path().exists();
+    if use_boot_snapshot {
+        snapshot_path = boot_snapshot_path.clone()
+    }
 
     let snapshot_version =
         matches
@@ -2506,6 +2511,7 @@ pub fn main() {
         archive_format,
         snapshot_version,
         maximum_snapshots_to_retain,
+        use_boot_snapshot,
     });
 
     validator_config.accounts_hash_interval_slots =

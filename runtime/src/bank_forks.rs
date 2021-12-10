@@ -48,6 +48,9 @@ pub struct SnapshotConfig {
 
     // Maximum number of snapshots to retain
     pub maximum_snapshots_to_retain: usize,
+
+    // Use boot snapshot if available
+    pub use_boot_snapshot: bool,
 }
 
 pub struct BankForks {

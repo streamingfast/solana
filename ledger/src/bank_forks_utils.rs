@@ -48,9 +48,11 @@ pub fn load(
             "Initializing snapshot path: {:?}",
             snapshot_config.snapshot_path
         );
-        let _ = fs::remove_dir_all(&snapshot_config.snapshot_path);
-        fs::create_dir_all(&snapshot_config.snapshot_path)
-            .expect("Couldn't create snapshot directory");
+        if snapshot_config.use_boot_snapshot {
+            let _ = fs::remove_dir_all(&snapshot_config.snapshot_path);
+            fs::create_dir_all(&snapshot_config.snapshot_path)
+                .expect("Couldn't create snapshot directory");
+        }
 
         if let Some((archive_filename, (archive_slot, archive_hash, archive_format))) =
             snapshot_utils::get_highest_snapshot_archive_path(
@@ -145,6 +147,7 @@ fn load_from_snapshot(
         process_options.shrink_ratio,
         process_options.accounts_db_test_hash_calculation,
         process_options.accounts_db_skip_shrink,
+        snapshot_config.use_boot_snapshot,
     )
     .expect("Load from snapshot failed");
     if let Some(shrink_paths) = shrink_paths {
