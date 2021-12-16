@@ -1,11 +1,3 @@
-use crate::pb::codec::{
-    AccountChange, BalanceChange, Batch, Instruction, InstructionError as PbInstructionError,
-    MessageHeader, Transaction, TransactionError as PbTransactionError,
-};
-use num_traits::ToPrimitive;
-use solana_program::hash::Hash;
-use solana_program::instruction::InstructionError;
-use solana_sdk::{pubkey::Pubkey, signature::Signature};
 use std::{
     borrow::BorrowMut,
     env,
@@ -14,7 +6,18 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use std::io::Write;
+
+use num_traits::ToPrimitive;
 use prost::Message;
+
+use solana_program::hash::Hash;
+use solana_program::instruction::InstructionError;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
+
+use crate::pb::codec::{
+    AccountChange, BalanceChange, Batch, Instruction, InstructionError as PbInstructionError,
+    MessageHeader, Transaction, TransactionError as PbTransactionError,
+};
 use crate::transaction::TransactionError;
 
 pub static DEEPMIND_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -131,11 +134,9 @@ pub struct DMBatchContext {
 impl<'a> DMBatchContext {
     pub fn new(batch_id: u64, file_number: usize) -> DMBatchContext {
         let filename = format!("dmlog-{}-{}", file_number + 1, batch_id);
-        let file_path = format!(
-            "{}{}",
-            env::var("DEEPMIND_BATCH_FILES_PATH").unwrap_or(String::from_str("/tmp/").unwrap()),
-            filename,
-        );
+        let file_dir = env::var("DEEPMIND_BATCH_FILES_PATH").unwrap_or(String::from_str("/tmp").unwrap());
+        let file_path = format!("{}/{}", file_dir, filename);
+
         let fl = File::create(&file_path).unwrap();
         DMBatchContext {
             batch_number: batch_id,

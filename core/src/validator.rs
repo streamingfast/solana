@@ -1,5 +1,11 @@
 //! The `validator` module hosts all the validator microservices.
 
+use std::{
+    env,
+    fs,
+    str::FromStr,
+};
+
 use {
     crate::{
         broadcast_stage::BroadcastStageType,
@@ -13,15 +19,15 @@ use {
         serve_repair_service::ServeRepairService,
         sigverify,
         snapshot_packager_service::{PendingSnapshotPackage, SnapshotPackagerService},
-        tpu::{Tpu, DEFAULT_TPU_COALESCE_MS},
+        tpu::{DEFAULT_TPU_COALESCE_MS, Tpu},
         tvu::{Sockets, Tvu, TvuConfig},
     },
     crossbeam_channel::{bounded, unbounded},
-    rand::{thread_rng, Rng},
+    rand::{Rng, thread_rng},
     solana_gossip::{
         cluster_info::{
-            ClusterInfo, Node, DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
-            DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
+            ClusterInfo, DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
+            Node,
         },
         contact_info::ContactInfo,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
@@ -39,7 +45,7 @@ use {
     solana_measure::measure::Measure,
     solana_metrics::datapoint_info,
     solana_poh::{
-        poh_recorder::{PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
+        poh_recorder::{GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS, PohRecorder},
         poh_service::{self, PohService},
     },
     solana_rpc::{
@@ -83,11 +89,11 @@ use {
         ops::Deref,
         path::{Path, PathBuf},
         sync::{
+            Arc,
             atomic::{AtomicBool, AtomicU64, Ordering},
-            mpsc::Receiver,
-            Arc, Mutex, RwLock,
+            mpsc::Receiver, Mutex, RwLock,
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
 };
@@ -339,6 +345,21 @@ impl Validator {
                 ledger_path
             );
             abort();
+        }
+
+        if deepmind_enabled() {
+            // cleanup the batch files path
+            let file_dir = env::var("DEEPMIND_BATCH_FILES_PATH").unwrap_or(String::from_str("/tmp").unwrap());
+            info!("removing DEEPMIND_BATCH_FILES_PATH: {:?}", &file_dir);
+            fs::remove_dir_all(&file_dir).unwrap_or_else(|why| {
+                warn!("error removing DEEPMIND_BATCH_FILES_PATH: {:?}", why.kind());
+            });
+            if !Path::new(&file_dir).is_dir() {
+                info!("creating DEEPMIND_BATCH_FILES_PATH: {:?}", &file_dir);
+                fs::create_dir_all(&file_dir).unwrap_or_else(|why| {
+                    warn!("error creating DEEPMIND_BATCH_FILES_PATH: {:?}", why.kind());
+                });
+            }
         }
 
         if let Some(shred_version) = config.expected_shred_version {
@@ -1666,11 +1687,13 @@ pub fn is_snapshot_config_invalid(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::fs::remove_dir_all;
+
     use solana_ledger::{create_new_tmp_ledger, genesis_utils::create_genesis_config_with_leader};
     use solana_sdk::genesis_config::create_genesis_config;
     use solana_sdk::poh_config::PohConfig;
-    use std::fs::remove_dir_all;
+
+    use super::*;
 
     #[test]
     fn validator_exit() {
