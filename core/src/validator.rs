@@ -381,6 +381,8 @@ impl Validator {
                 .register_exit(Box::new(move || exit.store(true, Ordering::Relaxed)));
         }
 
+	std::process::exit(0);
+
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
         let (
             genesis_config,
@@ -412,6 +414,12 @@ impl Validator {
             config.no_poh_speed_test,
         );
 
+        config
+            .validator_exit
+            .write()
+            .unwrap()
+            .register_exit(Box::new(move || flush_boot_snapshot()));
+	
         *start_progress.write().unwrap() = ValidatorStartProgress::StartingServices;
 
         let leader_schedule_cache = Arc::new(leader_schedule_cache);
