@@ -24,7 +24,7 @@ use {
     std::{
         cmp::max,
         cmp::Ordering,
-        collections::{HashSet, HashMap},
+        collections::{HashMap, HashSet},
         fmt,
         fs::{self, File},
         io::{
@@ -227,17 +227,74 @@ pub fn remove_tmp_snapshot_archives(snapshot_path: &Path) {
                 } else {
                     fs::remove_dir_all(entry.path())
                 }
-                    .unwrap_or_else(|err| {
-                        warn!("Failed to remove {}: {}", entry.path().display(), err)
-                    });
+                .unwrap_or_else(|err| {
+                    warn!("Failed to remove {}: {}", entry.path().display(), err)
+                });
             }
         }
     }
 }
 
-pub fn write_shutdown_snapshot_for_fast_boot() {
+pub fn flush_boot_snapshot(
+    ledger_path: Path, // so this determines the `snapshot_package_output_path`
+    bank: &Bank,
+    // snapshot_version: why not use a fixed `SnapshotVersion`, the one supported by this version of the software?
+    // archive_format: not needed here
+    // thread_pool: no thread pool needed, we won't package all those accounts in parallel
+    // no max_snapshots_to_retain, that's not the business of the boot snapshot
+) -> Result<()> {
+    // Create a tmp dir for the snapshot
+    // Eventually rename that `tmp_dir`  to `snapshot-boot` under `ledger_path`
 
-    // serialize_status_cache()
+    let snapshot_package: AccountsPackage;
+
+    // A PREVIOUS process will have written to the `snapshot_links` directory, which
+    // seems to be a TEMPORARY directory.  Perhaps we can simply MOVE that directory under
+    // `snapshot-boot` here.
+    // -> That process is in `bank_to_snapshot_archive`, receives the latest Bank or so
+    // with a SnapshotVersion and an output path, calls that `bank_to_snapshot_archive`
+    // and that one packages a "snapshot", so a bank to a single `snapshot/slot/slot` file
+    
+    // These are normally done when building a snapshot.
+    assert!(bank.is_complete());
+    bank.squash(); // Bank may not be a root
+    bank.force_flush_accounts_cache();
+    //bank.clean_accounts(true, false); // don't waste time on shutdown
+    bank.update_accounts_hash();
+    bank.rehash(); 
+
+    // Duplicated from 
+    let storages: Vec<_> = bank.get_snapshot_storages();
+    let slot_snapshot_paths = add_snapshot(&temp_dir, bank, &storages, snapshot_version)?;
+    let package = package_snapshot(
+        bank,
+        &slot_snapshot_paths,
+        &temp_dir,
+        bank.src.slot_deltas(&bank.src.roots()),
+        snapshot_package_output_path,
+        storages,
+        archive_format,
+        snapshot_version,
+        None,
+    )?;
+    let package = process_accounts_package_pre(package, thread_pool);
+    
+    // Take from 
+    serialize_status_cache(
+        package.slot,
+        &package.slot_deltas,
+        &package
+            .snapshot_links
+            .path()
+            .join(SNAPSHOT_STATUS_CACHE_FILE_NAME),
+    )?;
+
+    // TODO: obtain `snapshot_path`, is it the `AccountsPackage::snapshot_links TempDir`?
+    let staging_version_file = snapshot_path.join("version");
+    
+    write_version_file(staging_version_file, snapshot_package.snapshot_version)?;
+    // write `status_cache` through serialize_status_cache()
+    // write `version` through
 }
 
 pub fn archive_snapshot_package(
@@ -287,7 +344,7 @@ pub fn archive_snapshot_package(
         snapshot_package.snapshot_links.path(),
         &staging_snapshots_dir,
     )
-        .map_err(|e| SnapshotError::IoWithSource(e, "create staging symlinks"))?;
+    .map_err(|e| SnapshotError::IoWithSource(e, "create staging symlinks"))?;
 
     // Add the AppendVecs into the compressible list
     for storage in snapshot_package.storages.iter().flatten() {
@@ -309,13 +366,7 @@ pub fn archive_snapshot_package(
         }
     }
 
-    // Write version file
-    {
-        let mut f = fs::File::create(staging_version_file)
-            .map_err(|e| SnapshotError::IoWithSource(e, "create version file"))?;
-        f.write_all(snapshot_package.snapshot_version.as_str().as_bytes())
-            .map_err(|e| SnapshotError::IoWithSource(e, "write version file"))?;
-    }
+    write_version_file(staging_version_file, snapshot_package.snapshot_version)?;
 
     let file_ext = get_archive_ext(snapshot_package.archive_format);
 
@@ -413,9 +464,16 @@ pub fn archive_snapshot_package(
     Ok(())
 }
 
+fn write_version_file(version_file: PathBuf, snapshot_version: SnapshotVersion) -> Result<()> {
+    let mut f = fs::File::create(version_file)
+        .map_err(|e| SnapshotError::IoWithSource(e, "create version file"))?;
+    f.write_all(snapshot_version.as_str().as_bytes())
+        .map_err(|e| SnapshotError::IoWithSource(e, "write version file"))?;
+}
+
 pub fn get_snapshot_paths<P: AsRef<Path>>(snapshot_path: P) -> Vec<SlotSnapshotPaths>
-    where
-        P: fmt::Debug,
+where
+    P: fmt::Debug,
 {
     match fs::read_dir(&snapshot_path) {
         Ok(paths) => {
@@ -451,8 +509,8 @@ pub fn get_snapshot_paths<P: AsRef<Path>>(snapshot_path: P) -> Vec<SlotSnapshotP
 }
 
 pub fn serialize_snapshot_data_file<F>(data_file_path: &Path, serializer: F) -> Result<u64>
-    where
-        F: FnOnce(&mut BufWriter<File>) -> Result<()>,
+where
+    F: FnOnce(&mut BufWriter<File>) -> Result<()>,
 {
     serialize_snapshot_data_file_capped::<F>(
         data_file_path,
@@ -462,8 +520,8 @@ pub fn serialize_snapshot_data_file<F>(data_file_path: &Path, serializer: F) -> 
 }
 
 pub fn deserialize_snapshot_data_file<F, T>(data_file_path: &Path, deserializer: F) -> Result<T>
-    where
-        F: FnOnce(&mut BufReader<File>) -> Result<T>,
+where
+    F: FnOnce(&mut BufReader<File>) -> Result<T>,
 {
     deserialize_snapshot_data_file_capped::<F, T>(
         data_file_path,
@@ -477,8 +535,8 @@ fn serialize_snapshot_data_file_capped<F>(
     maximum_file_size: u64,
     serializer: F,
 ) -> Result<u64>
-    where
-        F: FnOnce(&mut BufWriter<File>) -> Result<()>,
+where
+    F: FnOnce(&mut BufWriter<File>) -> Result<()>,
 {
     let data_file = File::create(data_file_path)?;
     let mut data_file_stream = BufWriter::new(data_file);
@@ -501,8 +559,8 @@ fn deserialize_snapshot_data_file_capped<F, T>(
     maximum_file_size: u64,
     deserializer: F,
 ) -> Result<T>
-    where
-        F: FnOnce(&mut BufReader<File>) -> Result<T>,
+where
+    F: FnOnce(&mut BufReader<File>) -> Result<T>,
 {
     let file_size = fs::metadata(&data_file_path)?.len();
 
@@ -666,8 +724,14 @@ pub fn bank_from_archive<P: AsRef<Path> + std::marker::Sync>(
 
         info!("{}", untar);
     } else {
-        unpacked_append_vec_map.insert("status_cache".to_string(), snapshot_path.join("status_cache"));
-        unpacked_append_vec_map.insert("snapshots/123/123".to_string(), snapshot_path.join("snapshots/123/123"));
+        unpacked_append_vec_map.insert(
+            "status_cache".to_string(),
+            snapshot_path.join("status_cache"),
+        );
+        unpacked_append_vec_map.insert(
+            "snapshots/123/123".to_string(),
+            snapshot_path.join("snapshots/123/123"),
+        );
     }
     untar.stop();
 
@@ -726,7 +790,10 @@ pub fn bank_from_snapshot_boot(
     let mut unpacked_append_vec_map: UnpackedAppendVecMap = HashMap::<String, PathBuf>::new();
 
     unpacked_append_vec_map.insert("status_cache".to_string(), boot_path.join("status_cache"));
-    unpacked_append_vec_map.insert("snapshot-boot/19320/19320".to_string(), boot_path.join("snapshot-boot/19320/19320"));
+    unpacked_append_vec_map.insert(
+        "snapshot-boot/19320/19320".to_string(),
+        boot_path.join("snapshot-boot/19320/19320"),
+    );
 
     let re = Regex::new(r"^[0-9]*$").unwrap();
     for entry in fs::read_dir(boot_path)? {
@@ -742,7 +809,10 @@ pub fn bank_from_snapshot_boot(
     for path in account_paths {
         for entry in fs::read_dir(path)? {
             let entry = entry?;
-            unpacked_append_vec_map.insert(entry.file_name().into_string().unwrap(), entry.path().into());
+            unpacked_append_vec_map.insert(
+                entry.file_name().into_string().unwrap(),
+                entry.path().into(),
+            );
         }
     }
 
@@ -1081,7 +1151,7 @@ pub fn verify_snapshot_archive<P, Q, R>(
         archive_format,
         1,
     )
-        .unwrap();
+    .unwrap();
 
     // Check snapshots are the same
     let unpacked_snapshots = unpack_dir.join("snapshots");
@@ -1202,7 +1272,7 @@ pub fn process_accounts_package_pre(
             false,
             None,
         )
-            .unwrap();
+        .unwrap();
 
         assert_eq!(accounts_package.expected_capitalization, lamports);
 
@@ -1253,7 +1323,7 @@ mod tests {
                 Ok(())
             },
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(consumed_size, expected_consumed_size);
     }
 
@@ -1286,14 +1356,14 @@ mod tests {
                 Ok(())
             },
         )
-            .unwrap();
+        .unwrap();
 
         let actual_data = deserialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size,
             |stream| Ok(deserialize_from::<_, u32>(stream)?),
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(actual_data, expected_data);
     }
 
@@ -1311,7 +1381,7 @@ mod tests {
                 Ok(())
             },
         )
-            .unwrap();
+        .unwrap();
 
         let result = deserialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
@@ -1336,7 +1406,7 @@ mod tests {
                 Ok(())
             },
         )
-            .unwrap();
+        .unwrap();
 
         let result = deserialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
@@ -1397,7 +1467,7 @@ mod tests {
 
         let results = get_snapshot_archives(temp_snapshot_archives_dir);
         assert_eq!(results.len(), max_slot - min_slot);
-        assert_eq!(results[0].1.0 as usize, max_slot - 1);
+        assert_eq!(results[0].1 .0 as usize, max_slot - 1);
     }
 
     fn common_test_purge_old_snapshot_archives(

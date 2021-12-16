@@ -2491,6 +2491,7 @@ pub fn main() {
     if use_boot_snapshot {
         snapshot_path = boot_snapshot_path.clone()
     }
+    eprintln!("boot snapshot path: {:?}, use boot snapshot: {}", boot_snapshot_path, use_boot_snapshot);
 
     let snapshot_version =
         matches
