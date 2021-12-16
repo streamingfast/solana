@@ -413,9 +413,7 @@ impl Validator {
         if let Some(ref shrink_paths) = config.account_shrink_paths {
             bank.set_shrink_paths(shrink_paths.clone());
         }
-        if deepmind_enabled() {
-            println!("DMLOG BLOCK_ROOT {}", bank_forks.root());
-        }
+
         let bank_forks = Arc::new(RwLock::new(bank_forks));
 
         let sample_performance_service =
