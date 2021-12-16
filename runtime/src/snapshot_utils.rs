@@ -237,70 +237,70 @@ pub fn remove_tmp_snapshot_archives(snapshot_path: &Path) {
     }
 }
 
-// pub fn flush_boot_snapshot(
-//     ledger_path: &Path, // so this determines the `snapshot_package_output_path`
-//     snapshot_config: &SnapshotConfig, // so this determines the `snapshot_package_output_path`
-//     bank: &Bank,
-//     // snapshot_version: why not use a fixed `SnapshotVersion`, the one supported by this version of the software?
-//     // archive_format: not needed here
-//     // thread_pool: no thread pool needed, we won't package all those accounts in parallel
-//     // no max_snapshots_to_retain, that's not the business of the boot snapshot
-// ) {
-//     // Create a tmp dir for the snapshot
-//     // Eventually rename that `tmp_dir`  to `snapshot-boot` under `ledger_path`
-//
-//     let result = TempDir::new()?;
-//
-//     let snapshot_package: AccountsPackage;
-//
-//     // A PREVIOUS process will have written to the `snapshot_links` directory, which
-//     // seems to be a TEMPORARY directory.  Perhaps we can simply MOVE that directory under
-//     // `snapshot-boot` here.
-//     // -> That process is in `bank_to_snapshot_archive`, receives the latest Bank or so
-//     // with a SnapshotVersion and an output path, calls that `bank_to_snapshot_archive`
-//     // and that one packages a "snapshot", so a bank to a single `snapshot/slot/slot` file
-//
-//     // These are normally done when building a snapshot.
-//     assert!(bank.is_complete());
-//     bank.squash(); // Bank may not be a root
-//     bank.force_flush_accounts_cache();
-//     //bank.clean_accounts(true, false); // don't waste time on shutdown
-//     bank.update_accounts_hash();
-//     bank.rehash();
-//
-//     // Duplicated from
-//     let storages: Vec<_> = bank.get_snapshot_storages();
-//     let slot_snapshot_paths = add_snapshot(&temp_dir, bank, &storages, snapshot_version)?;
-//     let package = package_snapshot(
-//         bank,
-//         &slot_snapshot_paths,
-//         &temp_dir,
-//         bank.src.slot_deltas(&bank.src.roots()),
-//         snapshot_package_output_path,
-//         storages,
-//         archive_format,
-//         snapshot_version,
-//         None,
-//     )?;
-//     let package = process_accounts_package_pre(package, thread_pool);
-//
-//     // Take from
-//     serialize_status_cache(
-//         package.slot,
-//         &package.slot_deltas,
-//         &package
-//             .snapshot_links
-//             .path()
-//             .join(SNAPSHOT_STATUS_CACHE_FILE_NAME),
-//     )?;
-//
-//     // TODO: obtain `snapshot_path`, is it the `AccountsPackage::snapshot_links TempDir`?
-//     let staging_version_file = snapshot_path.join("version");
-//
-//     write_version_file(staging_version_file, snapshot_package.snapshot_version)?;
-//     // write `status_cache` through serialize_status_cache()
-//     // write `version` through
-// }
+pub fn flush_boot_snapshot(
+    ledger_path: &Path, // so this determines the `snapshot_package_output_path`
+    snapshot_config: &SnapshotConfig, // so this determines the `snapshot_package_output_path`
+    bank: &Bank,
+    // snapshot_version: why not use a fixed `SnapshotVersion`, the one supported by this version of the software?
+    // archive_format: not needed here
+    // thread_pool: no thread pool needed, we won't package all those accounts in parallel
+    // no max_snapshots_to_retain, that's not the business of the boot snapshot
+) {
+    // Create a tmp dir for the snapshot
+    // Eventually rename that `tmp_dir`  to `snapshot-boot` under `ledger_path`
+
+    let result = TempDir::new()?;
+
+    let snapshot_package: AccountsPackage;
+
+    // A PREVIOUS process will have written to the `snapshot_links` directory, which
+    // seems to be a TEMPORARY directory.  Perhaps we can simply MOVE that directory under
+    // `snapshot-boot` here.
+    // -> That process is in `bank_to_snapshot_archive`, receives the latest Bank or so
+    // with a SnapshotVersion and an output path, calls that `bank_to_snapshot_archive`
+    // and that one packages a "snapshot", so a bank to a single `snapshot/slot/slot` file
+
+    // These are normally done when building a snapshot.
+    assert!(bank.is_complete());
+    bank.squash(); // Bank may not be a root
+    bank.force_flush_accounts_cache();
+    //bank.clean_accounts(true, false); // don't waste time on shutdown
+    bank.update_accounts_hash();
+    bank.rehash();
+
+    // Duplicated from
+    let storages: Vec<_> = bank.get_snapshot_storages();
+    let slot_snapshot_paths = add_snapshot(&temp_dir, bank, &storages, snapshot_version)?;
+    let package = package_snapshot(
+        bank,
+        &slot_snapshot_paths,
+        &temp_dir,
+        bank.src.slot_deltas(&bank.src.roots()),
+        snapshot_package_output_path,
+        storages,
+        archive_format,
+        snapshot_version,
+        None,
+    )?;
+    let package = process_accounts_package_pre(package, thread_pool);
+
+    // Take from
+    serialize_status_cache(
+        package.slot,
+        &package.slot_deltas,
+        &package
+            .snapshot_links
+            .path()
+            .join(SNAPSHOT_STATUS_CACHE_FILE_NAME),
+    )?;
+
+    // TODO: obtain `snapshot_path`, is it the `AccountsPackage::snapshot_links TempDir`?
+    let staging_version_file = snapshot_path.join("version");
+
+    write_version_file(staging_version_file, snapshot_package.snapshot_version)?;
+    // write `status_cache` through serialize_status_cache()
+    // write `version` through
+}
 
 pub fn archive_snapshot_package(
     snapshot_package: &AccountsPackage,
@@ -370,8 +370,8 @@ pub fn archive_snapshot_package(
             return Err(SnapshotError::StoragePathSymlinkInvalid);
         }
     }
-    //grrrrr
-    //write_version_file(staging_version_file, snapshot_package.snapshot_version)?;
+
+    write_version_file(staging_version_file, snapshot_package.snapshot_version)?;
 
     let file_ext = get_archive_ext(snapshot_package.archive_format);
 
@@ -468,13 +468,14 @@ pub fn archive_snapshot_package(
     );
     Ok(())
 }
-//grrrr
-// fn write_version_file(version_file: PathBuf, snapshot_version: SnapshotVersion) -> Result<()> {
-//     let mut f = fs::File::create(version_file)
-//         .map_err(|e| SnapshotError::IoWithSource(e, "create version file"))?;
-//     f.write_all(snapshot_version.as_str().as_bytes())
-//         .map_err(|e| SnapshotError::IoWithSource(e, "write version file"))
-// }
+
+fn write_version_file(version_file: PathBuf, snapshot_version: SnapshotVersion) -> Result<()> {
+    let mut f = fs::File::create(version_file)
+        .map_err(|e| SnapshotError::IoWithSource(e, "create version file"))?;
+    f.write_all(snapshot_version.as_str().as_bytes())
+        .map_err(|e| SnapshotError::IoWithSource(e, "write version file"))
+}
+
 pub fn get_snapshot_paths<P: AsRef<Path>>(snapshot_path: P) -> Vec<SlotSnapshotPaths>
 where
     P: fmt::Debug,

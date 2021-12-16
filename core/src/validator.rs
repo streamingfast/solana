@@ -433,16 +433,16 @@ impl Validator {
             &start_progress,
             config.no_poh_speed_test,
         );
-        // grrrr
-        // if let Some(snapshot_config) = &config.snapshot_config {
-        //     config
-        //         .validator_exit
-        //         .write()
-        //         .unwrap()
-        //         .register_exit(Box::new(move || {
-        //             snapshot_utils::flush_boot_snapshot(ledger_path, snapshot_config, bank_forks)
-        //         }));
-        // }
+
+        if let Some(snapshot_config) = &config.snapshot_config {
+            config
+                .validator_exit
+                .write()
+                .unwrap()
+                .register_exit(Box::new(move || {
+                    snapshot_utils::flush_boot_snapshot(ledger_path, snapshot_config, bank_forks)
+                }));
+        }
         *start_progress.write().unwrap() = ValidatorStartProgress::StartingServices;
 
         let leader_schedule_cache = Arc::new(leader_schedule_cache);
