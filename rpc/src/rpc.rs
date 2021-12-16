@@ -180,7 +180,7 @@ impl JsonRpcRequestProcessor {
                 .unwrap()
                 .bank
                 .clone();
-            debug!("RPC using optimistically confirmed slot: {:?}", bank.slot());
+            info!("RPC using optimistically confirmed slot: {:?}", bank.slot());
             return bank;
         }
 

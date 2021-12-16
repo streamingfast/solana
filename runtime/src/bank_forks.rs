@@ -6,12 +6,7 @@ use crate::{
 };
 use log::*;
 use solana_metrics::inc_new_counter_info;
-use solana_sdk::{
-    clock::Slot,
-    hash::Hash,
-    timing,
-    deepmind::{deepmind_enabled},
-};
+use solana_sdk::{clock::Slot, deepmind::deepmind_enabled, hash::Hash, timing};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     ops::Index,
@@ -40,6 +35,9 @@ pub struct SnapshotConfig {
 
     // Where to place the snapshots for recent slots
     pub snapshot_path: PathBuf,
+
+    // boot where the fast boot snapshot located
+    pub snapshot_boot_path: PathBuf,
 
     pub archive_format: ArchiveFormat,
 
@@ -266,13 +264,13 @@ impl BankForks {
                     let snapshot_root_bank = self.root_bank();
                     let root_slot = snapshot_root_bank.slot();
                     if let Err(e) =
-                    accounts_background_request_sender.send_snapshot_request(SnapshotRequest {
-                        snapshot_root_bank,
-                        // Save off the status cache because these may get pruned
-                        // if another `set_root()` is called before the snapshots package
-                        // can be generated
-                        status_cache_slot_deltas: bank.src.slot_deltas(&bank.src.roots()),
-                    })
+                        accounts_background_request_sender.send_snapshot_request(SnapshotRequest {
+                            snapshot_root_bank,
+                            // Save off the status cache because these may get pruned
+                            // if another `set_root()` is called before the snapshots package
+                            // can be generated
+                            status_cache_slot_deltas: bank.src.slot_deltas(&bank.src.roots()),
+                        })
                     {
                         warn!(
                             "Error sending snapshot request for bank: {}, err: {:?}",
@@ -302,7 +300,6 @@ impl BankForks {
     pub fn root(&self) -> Slot {
         self.root
     }
-
 
     /// After setting a new root, prune the banks that are no longer on rooted paths
     ///
@@ -364,8 +361,8 @@ impl BankForks {
                 let keep = *slot == root
                     || self.descendants[&root].contains(slot)
                     || (*slot < root
-                    && *slot >= highest_confirmed_root
-                    && self.descendants[slot].contains(&root));
+                        && *slot >= highest_confirmed_root
+                        && self.descendants[slot].contains(&root));
                 !keep
             })
             .collect();

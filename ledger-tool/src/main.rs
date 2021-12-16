@@ -35,6 +35,7 @@ use solana_sdk::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
     account_utils::StateMut,
     clock::{Epoch, Slot},
+    deepmind::enable_deepmind,
     genesis_config::{ClusterType, GenesisConfig},
     hash::Hash,
     inflation::Inflation,
@@ -44,7 +45,6 @@ use solana_sdk::{
     shred_version::compute_shred_version,
     stake::{self, state::StakeState},
     system_program,
-    deepmind::enable_deepmind,
 };
 use solana_stake_program::stake_state::{self, PointValue};
 use solana_vote_program::{
@@ -692,11 +692,12 @@ fn load_bank_forks(
             snapshot_interval_slots: 0, // Value doesn't matter
             snapshot_package_output_path,
             snapshot_path,
+            snapshot_boot_path: Default::default(),
             archive_format: ArchiveFormat::TarBzip2,
             snapshot_version: SnapshotVersion::default(),
             maximum_snapshots_to_retain: DEFAULT_MAX_SNAPSHOTS_TO_RETAIN,
-	    // TODO: are we SURE we don't want to use boot_snapshot here?!
-	    use_boot_snapshot: false,
+            // TODO: are we SURE we don't want to use boot_snapshot here?!
+            use_boot_snapshot: false,
         })
     };
     let account_paths = if let Some(account_paths) = arg_matches.value_of("account_paths") {

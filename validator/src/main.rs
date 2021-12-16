@@ -2127,7 +2127,7 @@ pub fn main() {
             "The --identity <KEYPAIR> argument is required",
             clap::ErrorKind::ArgumentNotFound,
         )
-            .exit();
+        .exit();
     }));
 
     let logfile = {
@@ -2465,7 +2465,7 @@ pub fn main() {
     } else {
         ledger_path.clone()
     };
-    let mut snapshot_path = snapshot_output_dir.join("snapshot");
+    let snapshot_path = snapshot_output_dir.join("snapshot");
     fs::create_dir_all(&snapshot_path).unwrap_or_else(|err| {
         eprintln!(
             "Failed to create snapshots directory {:?}: {}",
@@ -2488,9 +2488,6 @@ pub fn main() {
     let boot_snapshot_path = snapshot_output_dir.join("snapshot-boot");
     let use_boot_snapshot = boot_snapshot_path.as_path().exists();
     info!("use boot snapshot: {:?}", use_boot_snapshot);
-    if use_boot_snapshot {
-        snapshot_path = boot_snapshot_path.clone()
-    }
 
     let snapshot_version =
         matches
@@ -2508,6 +2505,7 @@ pub fn main() {
             std::u64::MAX
         },
         snapshot_path,
+        snapshot_boot_path: boot_snapshot_path,
         snapshot_package_output_path: snapshot_output_dir.clone(),
         archive_format,
         snapshot_version,

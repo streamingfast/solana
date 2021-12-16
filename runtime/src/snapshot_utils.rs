@@ -24,7 +24,7 @@ use {
     std::{
         cmp::max,
         cmp::Ordering,
-        collections::{HashSet, HashMap},
+        collections::{HashMap, HashSet},
         fmt,
         fs::{self, File},
         io::{
@@ -227,9 +227,9 @@ pub fn remove_tmp_snapshot_archives(snapshot_path: &Path) {
                 } else {
                     fs::remove_dir_all(entry.path())
                 }
-                    .unwrap_or_else(|err| {
-                        warn!("Failed to remove {}: {}", entry.path().display(), err)
-                    });
+                .unwrap_or_else(|err| {
+                    warn!("Failed to remove {}: {}", entry.path().display(), err)
+                });
             }
         }
     }
@@ -287,7 +287,7 @@ pub fn archive_snapshot_package(
         snapshot_package.snapshot_links.path(),
         &staging_snapshots_dir,
     )
-        .map_err(|e| SnapshotError::IoWithSource(e, "create staging symlinks"))?;
+    .map_err(|e| SnapshotError::IoWithSource(e, "create staging symlinks"))?;
 
     // Add the AppendVecs into the compressible list
     for storage in snapshot_package.storages.iter().flatten() {
@@ -414,8 +414,8 @@ pub fn archive_snapshot_package(
 }
 
 pub fn get_snapshot_paths<P: AsRef<Path>>(snapshot_path: P) -> Vec<SlotSnapshotPaths>
-    where
-        P: fmt::Debug,
+where
+    P: fmt::Debug,
 {
     match fs::read_dir(&snapshot_path) {
         Ok(paths) => {
@@ -451,8 +451,8 @@ pub fn get_snapshot_paths<P: AsRef<Path>>(snapshot_path: P) -> Vec<SlotSnapshotP
 }
 
 pub fn serialize_snapshot_data_file<F>(data_file_path: &Path, serializer: F) -> Result<u64>
-    where
-        F: FnOnce(&mut BufWriter<File>) -> Result<()>,
+where
+    F: FnOnce(&mut BufWriter<File>) -> Result<()>,
 {
     serialize_snapshot_data_file_capped::<F>(
         data_file_path,
@@ -462,8 +462,8 @@ pub fn serialize_snapshot_data_file<F>(data_file_path: &Path, serializer: F) -> 
 }
 
 pub fn deserialize_snapshot_data_file<F, T>(data_file_path: &Path, deserializer: F) -> Result<T>
-    where
-        F: FnOnce(&mut BufReader<File>) -> Result<T>,
+where
+    F: FnOnce(&mut BufReader<File>) -> Result<T>,
 {
     deserialize_snapshot_data_file_capped::<F, T>(
         data_file_path,
@@ -477,8 +477,8 @@ fn serialize_snapshot_data_file_capped<F>(
     maximum_file_size: u64,
     serializer: F,
 ) -> Result<u64>
-    where
-        F: FnOnce(&mut BufWriter<File>) -> Result<()>,
+where
+    F: FnOnce(&mut BufWriter<File>) -> Result<()>,
 {
     let data_file = File::create(data_file_path)?;
     let mut data_file_stream = BufWriter::new(data_file);
@@ -501,8 +501,8 @@ fn deserialize_snapshot_data_file_capped<F, T>(
     maximum_file_size: u64,
     deserializer: F,
 ) -> Result<T>
-    where
-        F: FnOnce(&mut BufReader<File>) -> Result<T>,
+where
+    F: FnOnce(&mut BufReader<File>) -> Result<T>,
 {
     let file_size = fs::metadata(&data_file_path)?.len();
 
@@ -641,34 +641,27 @@ pub fn bank_from_archive<P: AsRef<Path> + std::marker::Sync>(
     shrink_ratio: AccountShrinkThreshold,
     test_hash_calculation: bool,
     accounts_db_skip_shrink: bool,
-    use_boot_snapshot: bool,
 ) -> Result<(Bank, BankFromArchiveTimings)> {
     let unpack_dir = tempfile::Builder::new()
         .prefix(TMP_SNAPSHOT_PREFIX)
         .tempdir_in(snapshot_path)?;
 
-    let mut unpacked_append_vec_map: UnpackedAppendVecMap = HashMap::<String, PathBuf>::new();
     let unpacked_snapshots_dir = unpack_dir.as_ref().join("snapshots");
 
     let mut untar = Measure::start("snapshot untar");
-    if !use_boot_snapshot {
-        let divisions = std::cmp::min(
-            PARALLEL_UNTAR_READERS_DEFAULT,
-            std::cmp::max(1, num_cpus::get() / 4),
-        );
-        unpacked_append_vec_map = untar_snapshot_in(
-            &snapshot_tar,
-            unpack_dir.as_ref(),
-            account_paths,
-            archive_format,
-            divisions,
-        )?;
+    let divisions = std::cmp::min(
+        PARALLEL_UNTAR_READERS_DEFAULT,
+        std::cmp::max(1, num_cpus::get() / 4),
+    );
+    let unpacked_append_vec_map = untar_snapshot_in(
+        &snapshot_tar,
+        unpack_dir.as_ref(),
+        account_paths,
+        archive_format,
+        divisions,
+    )?;
 
-        info!("{}", untar);
-    } else {
-        unpacked_append_vec_map.insert("status_cache".to_string(), snapshot_path.join("status_cache"));
-        unpacked_append_vec_map.insert("snapshots/123/123".to_string(), snapshot_path.join("snapshots/123/123"));
-    }
+    info!("{}", untar);
     untar.stop();
 
     let mut measure = Measure::start("bank rebuild from snapshot");
@@ -726,7 +719,6 @@ pub fn bank_from_snapshot_boot(
     let mut unpacked_append_vec_map: UnpackedAppendVecMap = HashMap::<String, PathBuf>::new();
 
     unpacked_append_vec_map.insert("status_cache".to_string(), boot_path.join("status_cache"));
-    unpacked_append_vec_map.insert("snapshot-boot/19320/19320".to_string(), boot_path.join("snapshot-boot/19320/19320"));
 
     let re = Regex::new(r"^[0-9]*$").unwrap();
     for entry in fs::read_dir(boot_path)? {
@@ -742,7 +734,10 @@ pub fn bank_from_snapshot_boot(
     for path in account_paths {
         for entry in fs::read_dir(path)? {
             let entry = entry?;
-            unpacked_append_vec_map.insert(entry.file_name().into_string().unwrap(), entry.path().into());
+            unpacked_append_vec_map.insert(
+                entry.file_name().into_string().unwrap(),
+                entry.path().into(),
+            );
         }
     }
 
@@ -971,6 +966,9 @@ fn verify_snapshot_version_and_folder(
         })?;
     let mut snapshot_paths = get_snapshot_paths(&unpacked_snapshots_dir);
     if snapshot_paths.len() > 1 {
+        for path in snapshot_paths {
+            info!("snapshot_path: {:?}", path)
+        }
         return Err(get_io_error("invalid snapshot format"));
     }
     let root_paths = snapshot_paths
@@ -1081,7 +1079,7 @@ pub fn verify_snapshot_archive<P, Q, R>(
         archive_format,
         1,
     )
-        .unwrap();
+    .unwrap();
 
     // Check snapshots are the same
     let unpacked_snapshots = unpack_dir.join("snapshots");
@@ -1202,7 +1200,7 @@ pub fn process_accounts_package_pre(
             false,
             None,
         )
-            .unwrap();
+        .unwrap();
 
         assert_eq!(accounts_package.expected_capitalization, lamports);
 
@@ -1253,7 +1251,7 @@ mod tests {
                 Ok(())
             },
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(consumed_size, expected_consumed_size);
     }
 
@@ -1286,14 +1284,14 @@ mod tests {
                 Ok(())
             },
         )
-            .unwrap();
+        .unwrap();
 
         let actual_data = deserialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
             expected_consumed_size,
             |stream| Ok(deserialize_from::<_, u32>(stream)?),
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(actual_data, expected_data);
     }
 
@@ -1311,7 +1309,7 @@ mod tests {
                 Ok(())
             },
         )
-            .unwrap();
+        .unwrap();
 
         let result = deserialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
@@ -1336,7 +1334,7 @@ mod tests {
                 Ok(())
             },
         )
-            .unwrap();
+        .unwrap();
 
         let result = deserialize_snapshot_data_file_capped(
             &temp_dir.path().join("data-file"),
@@ -1397,7 +1395,7 @@ mod tests {
 
         let results = get_snapshot_archives(temp_snapshot_archives_dir);
         assert_eq!(results.len(), max_slot - min_slot);
-        assert_eq!(results[0].1.0 as usize, max_slot - 1);
+        assert_eq!(results[0].1 .0 as usize, max_slot - 1);
     }
 
     fn common_test_purge_old_snapshot_archives(

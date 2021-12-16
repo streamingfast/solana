@@ -59,7 +59,7 @@ pub fn load(
                 blockstore,
                 account_paths,
                 shrink_paths,
-                snapshot_config,
+                &snapshot_config.snapshot_boot_path,
                 process_options,
                 transaction_status_sender,
                 cache_block_meta_sender,
@@ -67,9 +67,9 @@ pub fn load(
         }
 
         if let Some((archive_filename, (archive_slot, archive_hash, archive_format))) =
-        snapshot_utils::get_highest_snapshot_archive_path(
-            &snapshot_config.snapshot_package_output_path,
-        )
+            snapshot_utils::get_highest_snapshot_archive_path(
+                &snapshot_config.snapshot_package_output_path,
+            )
         {
             return load_from_snapshot(
                 genesis_config,
@@ -159,8 +159,8 @@ fn load_from_snapshot(
         process_options.shrink_ratio,
         process_options.accounts_db_test_hash_calculation,
         process_options.accounts_db_skip_shrink,
-        snapshot_config.use_boot_snapshot,
-    ).expect("Load from snapshot failed");
+    )
+    .expect("Load from snapshot failed");
     if let Some(shrink_paths) = shrink_paths {
         deserialized_bank.set_shrink_paths(shrink_paths);
     }
@@ -198,12 +198,11 @@ fn load_from_snapshot_boot(
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
     shrink_paths: Option<Vec<PathBuf>>,
-    snapshot_config: &SnapshotConfig,
+    snapshot_boot_path: &PathBuf,
     process_options: ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
 ) -> LoadResult {
-
     // Fail hard here if snapshot fails to load, don't silently continue
     if account_paths.is_empty() {
         error!("Account paths not present when booting from snapshot");
@@ -213,7 +212,7 @@ fn load_from_snapshot_boot(
     let (deserialized_bank, timings) = snapshot_utils::bank_from_snapshot_boot(
         &account_paths,
         &process_options.frozen_accounts,
-        &snapshot_config.snapshot_path,
+        snapshot_boot_path,
         genesis_config,
         process_options.debug_keys.clone(),
         Some(&crate::builtins::get(process_options.bpf_jit)),
@@ -224,7 +223,7 @@ fn load_from_snapshot_boot(
         process_options.accounts_db_test_hash_calculation,
         process_options.accounts_db_skip_shrink,
     )
-        .expect("Load from snapshot failed");
+    .expect("Load from snapshot failed");
     if let Some(shrink_paths) = shrink_paths {
         deserialized_bank.set_shrink_paths(shrink_paths);
     }
