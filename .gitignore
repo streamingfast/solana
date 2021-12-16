@@ -4,13 +4,9 @@
 /solana-metrics/
 /solana-metrics.tar.bz2
 /target/
-/bin/
-
 
 **/*.rs.bk
 .cargo
-.crates.toml
-.crates2.json
 
 /config/
 
