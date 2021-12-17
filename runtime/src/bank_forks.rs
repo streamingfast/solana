@@ -23,6 +23,7 @@ pub enum ArchiveFormat {
     TarGzip,
     TarZstd,
     Tar,
+    Boot,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

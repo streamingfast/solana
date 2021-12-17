@@ -1,11 +1,8 @@
 //! The `validator` module hosts all the validator microservices.
 
-use std::{
-    env,
-    fs,
-    str::FromStr,
-};
+use std::{env, fs, str::FromStr};
 
+use solana_runtime::snapshot_utils::SnapshotVersion;
 use {
     crate::{
         broadcast_stage::BroadcastStageType,
@@ -19,15 +16,15 @@ use {
         serve_repair_service::ServeRepairService,
         sigverify,
         snapshot_packager_service::{PendingSnapshotPackage, SnapshotPackagerService},
-        tpu::{DEFAULT_TPU_COALESCE_MS, Tpu},
+        tpu::{Tpu, DEFAULT_TPU_COALESCE_MS},
         tvu::{Sockets, Tvu, TvuConfig},
     },
     crossbeam_channel::{bounded, unbounded},
-    rand::{Rng, thread_rng},
+    rand::{thread_rng, Rng},
     solana_gossip::{
         cluster_info::{
-            ClusterInfo, DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
-            Node,
+            ClusterInfo, Node, DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
+            DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
         },
         contact_info::ContactInfo,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
@@ -45,7 +42,7 @@ use {
     solana_measure::measure::Measure,
     solana_metrics::datapoint_info,
     solana_poh::{
-        poh_recorder::{GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS, PohRecorder},
+        poh_recorder::{PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
         poh_service::{self, PohService},
     },
     solana_rpc::{
@@ -89,11 +86,11 @@ use {
         ops::Deref,
         path::{Path, PathBuf},
         sync::{
-            Arc,
             atomic::{AtomicBool, AtomicU64, Ordering},
-            mpsc::Receiver, Mutex, RwLock,
+            mpsc::Receiver,
+            Arc, Mutex, RwLock,
         },
-        thread::{Builder, JoinHandle, sleep},
+        thread::{sleep, Builder, JoinHandle},
         time::{Duration, Instant},
     },
 };
@@ -349,7 +346,8 @@ impl Validator {
 
         if deepmind_enabled() {
             // cleanup the batch files path
-            let file_dir = env::var("DEEPMIND_BATCH_FILES_PATH").unwrap_or(String::from_str("/tmp").unwrap());
+            let file_dir =
+                env::var("DEEPMIND_BATCH_FILES_PATH").unwrap_or(String::from_str("/tmp").unwrap());
             info!("removing DEEPMIND_BATCH_FILES_PATH: {:?}", &file_dir);
             fs::remove_dir_all(&file_dir).unwrap_or_else(|why| {
                 warn!("error removing DEEPMIND_BATCH_FILES_PATH: {:?}", why.kind());
@@ -435,13 +433,19 @@ impl Validator {
         );
 
         if let Some(snapshot_config) = &config.snapshot_config {
+            let flush_boot_snapshot = {
+                snapshot_utils::flush_boot_snapshot(
+                    ledger_path.clone(),
+                    snapshot_config,
+                    &bank_forks.root_bank(),
+                    SnapshotVersion::V1_2_0,
+                )
+            };
             config
                 .validator_exit
                 .write()
                 .unwrap()
-                .register_exit(Box::new(move || {
-                    snapshot_utils::flush_boot_snapshot(ledger_path, snapshot_config, bank_forks)
-                }));
+                .register_exit(Box::new(move || flush_boot_snapshot));
         }
         *start_progress.write().unwrap() = ValidatorStartProgress::StartingServices;
 

@@ -1,5 +1,4 @@
 use crate::bank_forks::SnapshotConfig;
-use tempfile::TempDir;
 use {
     crate::{
         accounts_db::{AccountShrinkThreshold, AccountsDb},
@@ -210,6 +209,7 @@ fn get_archive_ext(archive_format: ArchiveFormat) -> &'static str {
         ArchiveFormat::TarGzip => "tar.gz",
         ArchiveFormat::TarZstd => "tar.zst",
         ArchiveFormat::Tar => "tar",
+        ArchiveFormat::Boot => "boot",
     }
 }
 
@@ -241,26 +241,43 @@ pub fn flush_boot_snapshot(
     ledger_path: &Path, // so this determines the `snapshot_package_output_path`
     snapshot_config: &SnapshotConfig, // so this determines the `snapshot_package_output_path`
     bank: &Bank,
-    // snapshot_version: why not use a fixed `SnapshotVersion`, the one supported by this version of the software?
+    snapshot_version: SnapshotVersion,
     // archive_format: not needed here
     // thread_pool: no thread pool needed, we won't package all those accounts in parallel
     // no max_snapshots_to_retain, that's not the business of the boot snapshot
+    // ) -> result::Result<(), SnapshotError> {
 ) {
     // Create a tmp dir for the snapshot
     // Eventually rename that `tmp_dir`  to `snapshot-boot` under `ledger_path`
 
-    let result = TempDir::new()?;
+    let temp_boot_snapshot_dir = match tempfile::Builder::new().tempfile() {
+        Ok(temp_boot_snapshot_dir) => temp_boot_snapshot_dir,
+        Err(e) => panic!("failed to create temp boot snapshot dir: {:?}", e),
+    };
+    info!("temp boot snapshot dir: {:?}", temp_boot_snapshot_dir);
+    // let temp_dir = env::temp_dir();
+    // info!("boot snap shot temp dir: {}", temp_dir.to_str().unwrap());
+    //
+    // let temp_boot_snapshot_dir = match File::create(temp_dir) {
+    //     Ok(file) => file,
+    //     Err(e) => {
+    //         return Err(SnapshotError::Io(IoError::new(
+    //             ErrorKind::Other,
+    //             format!("failed to create boot snapshot temp dir: {}", e),
+    //         )))
+    //     }
+    // };
 
-    let snapshot_package: AccountsPackage;
-
-    // A PREVIOUS process will have written to the `snapshot_links` directory, which
-    // seems to be a TEMPORARY directory.  Perhaps we can simply MOVE that directory under
-    // `snapshot-boot` here.
-    // -> That process is in `bank_to_snapshot_archive`, receives the latest Bank or so
-    // with a SnapshotVersion and an output path, calls that `bank_to_snapshot_archive`
-    // and that one packages a "snapshot", so a bank to a single `snapshot/slot/slot` file
-
-    // These are normally done when building a snapshot.
+    // let snapshot_package: AccountsPackage;
+    //
+    // // A PREVIOUS process will have written to the `snapshot_links` directory, which
+    // // seems to be a TEMPORARY directory.  Perhaps we can simply MOVE that directory under
+    // // `snapshot-boot` here.
+    // // -> That process is in `bank_to_snapshot_archive`, receives the latest Bank or so
+    // // with a SnapshotVersion and an output path, calls that `bank_to_snapshot_archive`
+    // // and that one packages a "snapshot", so a bank to a single `snapshot/slot/slot` file
+    //
+    // // These are normally done when building a snapshot.
     assert!(bank.is_complete());
     bank.squash(); // Bank may not be a root
     bank.force_flush_accounts_cache();
@@ -270,36 +287,50 @@ pub fn flush_boot_snapshot(
 
     // Duplicated from
     let storages: Vec<_> = bank.get_snapshot_storages();
-    let slot_snapshot_paths = add_snapshot(&temp_dir, bank, &storages, snapshot_version)?;
-    let package = package_snapshot(
+    let slot_snapshot_paths =
+        match add_snapshot(&temp_boot_snapshot_dir, bank, &storages, snapshot_version) {
+            Ok(slot_snapshot_paths) => slot_snapshot_paths,
+            Err(e) => panic!("failed to add snapshot: {:?}", e),
+        };
+
+    let package = match package_snapshot(
         bank,
         &slot_snapshot_paths,
-        &temp_dir,
+        &temp_boot_snapshot_dir,
         bank.src.slot_deltas(&bank.src.roots()),
-        snapshot_package_output_path,
+        &temp_boot_snapshot_dir,
         storages,
-        archive_format,
+        ArchiveFormat::Boot,
         snapshot_version,
         None,
-    )?;
-    let package = process_accounts_package_pre(package, thread_pool);
+    ) {
+        Ok(package) => package,
+        Err(e) => panic!("failed to package boot snapshot: {:?}", e),
+    };
 
+    // let package = process_accounts_package_pre(package, thread_pool);
+    //
     // Take from
-    serialize_status_cache(
+    match serialize_status_cache(
         package.slot,
         &package.slot_deltas,
         &package
             .snapshot_links
             .path()
             .join(SNAPSHOT_STATUS_CACHE_FILE_NAME),
-    )?;
+    ) {
+        Ok(_) => {}
+        Err(e) => panic!("failed to serialize status cache: {:?}", e),
+    };
+    //
+    // // TODO: obtain `snapshot_path`, is it the `AccountsPackage::snapshot_links TempDir`?
+    // let staging_version_file = snapshot_path.join("version");
+    //
+    // write_version_file(staging_version_file, snapshot_package.snapshot_version)?;
+    // // write `status_cache` through serialize_status_cache()
+    // // write `version` through
 
-    // TODO: obtain `snapshot_path`, is it the `AccountsPackage::snapshot_links TempDir`?
-    let staging_version_file = snapshot_path.join("version");
-
-    write_version_file(staging_version_file, snapshot_package.snapshot_version)?;
-    // write `status_cache` through serialize_status_cache()
-    // write `version` through
+    // Ok(())
 }
 
 pub fn archive_snapshot_package(
@@ -429,6 +460,7 @@ pub fn archive_snapshot_package(
                     io::copy(tar_output, &mut encoder)?;
                     let _ = encoder.finish()?;
                 }
+                ArchiveFormat::Boot => {}
             };
         }
     }
@@ -1010,6 +1042,9 @@ fn untar_snapshot_in<P: AsRef<Path>>(
             account_paths,
             parallel_divisions,
         )?,
+        ArchiveFormat::Boot => {
+            panic!("Boot archive cannot be untar")
+        }
     };
     Ok(account_paths_map)
 }
