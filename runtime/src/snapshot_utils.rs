@@ -248,9 +248,9 @@ pub fn flush_boot_snapshot(
 ) {
     // Create a tmp dir for the snapshot
     // Eventually rename that `tmp_dir`  to `snapshot-boot` under `ledger_path`
-
-    let temp_boot_snapshot_dir = match tempfile::Builder::new().tempfile() {
-        Ok(temp_boot_snapshot_dir) => temp_boot_snapshot_dir,
+    let temp_boot_snapshot_dir = ledger_path.join("snapshot-boot-tmp");
+    match fs::create_dir(temp_boot_snapshot_dir.clone()) {
+        Ok(_) => {}
         Err(e) => panic!("failed to create temp boot snapshot dir: {:?}", e),
     };
     info!("temp boot snapshot dir: {:?}", temp_boot_snapshot_dir);
@@ -635,7 +635,16 @@ pub fn add_snapshot<P: AsRef<Path>>(
     let slot = bank.slot();
     // snapshot_path/slot
     let slot_snapshot_dir = get_bank_snapshot_dir(snapshot_path, slot);
-    fs::create_dir_all(slot_snapshot_dir.clone())?;
+
+    if let Err(e) = fs::create_dir_all(slot_snapshot_dir.clone()) {
+        return Err(SnapshotError::Io(IoError::new(
+            ErrorKind::Other,
+            format!(
+                "failed to create boot snapshot temp dir: {:?}: {}",
+                slot_snapshot_dir, e
+            ),
+        )));
+    }
 
     // the bank snapshot is stored as snapshot_path/slot/slot
     let snapshot_bank_file_path = slot_snapshot_dir.join(get_snapshot_file_name(slot));
