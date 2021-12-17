@@ -239,7 +239,7 @@ pub fn remove_tmp_snapshot_archives(snapshot_path: &Path) {
 
 pub fn flush_boot_snapshot(
     ledger_path: &Path, // so this determines the `snapshot_package_output_path`
-    snapshot_config: &SnapshotConfig, // so this determines the `snapshot_package_output_path`
+    // snapshot_config: &SnapshotConfig, // so this determines the `snapshot_package_output_path`
     bank: &Bank,
     snapshot_version: SnapshotVersion,
     // archive_format: not needed here

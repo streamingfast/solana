@@ -432,21 +432,6 @@ impl Validator {
             config.no_poh_speed_test,
         );
 
-        if let Some(snapshot_config) = &config.snapshot_config {
-            let flush_boot_snapshot = {
-                snapshot_utils::flush_boot_snapshot(
-                    ledger_path.clone(),
-                    snapshot_config,
-                    &bank_forks.root_bank(),
-                    SnapshotVersion::V1_2_0,
-                )
-            };
-            config
-                .validator_exit
-                .write()
-                .unwrap()
-                .register_exit(Box::new(move || flush_boot_snapshot));
-        }
         *start_progress.write().unwrap() = ValidatorStartProgress::StartingServices;
 
         let leader_schedule_cache = Arc::new(leader_schedule_cache);
@@ -456,6 +441,26 @@ impl Validator {
         }
 
         let bank_forks = Arc::new(RwLock::new(bank_forks));
+
+        if let Some(snapshot_config) = &config.snapshot_config {
+            info!("registering flush boot snapshot on exit");
+            let ledger_path_buf = ledger_path.to_path_buf();
+            let bank_forks = bank_forks.clone();
+            config
+                .validator_exit
+                .write()
+                .unwrap()
+                .register_exit(Box::new(move || {
+                    let ledger_path = ledger_path_buf.as_path();
+                    let root_back = bank_forks.read().unwrap().root_bank();
+                    snapshot_utils::flush_boot_snapshot(
+                        ledger_path,
+                        // snapshot_config,
+                        root_back.as_ref(),
+                        SnapshotVersion::V1_2_0,
+                    )
+                }));
+        }
 
         let sample_performance_service =
             if config.rpc_addrs.is_some() && config.rpc_config.enable_rpc_transaction_history {
