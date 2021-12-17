@@ -58,7 +58,7 @@ use std::{
 use thiserror::Error;
 
 pub type BlockstoreProcessorResult =
-result::Result<(BankForks, LeaderScheduleCache), BlockstoreProcessorError>;
+    result::Result<(BankForks, LeaderScheduleCache), BlockstoreProcessorError>;
 
 thread_local!(static PAR_THREAD_POOL: RefCell<ThreadPool> = RefCell::new(rayon::ThreadPoolBuilder::new()
                     .num_threads(get_thread_count())
@@ -534,6 +534,10 @@ fn do_process_blockstore_from_root(
         panic!("starting slot isn't root and can't update due to being secondary blockstore access: {}", start_slot);
     }
 
+    if deepmind_enabled() {
+        println!("DMLOG BLOCK_ROOT {}", &start_slot);
+    }
+
     if let Ok(metas) = blockstore.slot_meta_iterator(start_slot) {
         if let Some((slot, _meta)) = metas.last() {
             info!("ledger holds data through slot {}", slot);
@@ -888,7 +892,7 @@ pub fn confirm_slot(
         replay_vote_sender,
         &mut execute_timings,
     )
-        .map_err(BlockstoreProcessorError::from);
+    .map_err(BlockstoreProcessorError::from);
     replay_elapsed.stop();
     timing.replay_elapsed += replay_elapsed.as_us();
 
@@ -946,7 +950,7 @@ fn process_bank_0(
         None,
         &mut ExecuteTimings::default(),
     )
-        .expect("processing for bank 0 must succeed");
+    .expect("processing for bank 0 must succeed");
     bank0.freeze();
     //****************************************************************
     // DMLOG
@@ -961,7 +965,6 @@ fn process_bank_0(
         );
     }
     //****************************************************************
-
 
     cache_block_meta(bank0, cache_block_meta_sender);
 }
@@ -1090,7 +1093,7 @@ fn load_frozen_forks(
                 None,
                 timing,
             )
-                .is_err()
+            .is_err()
             {
                 continue;
             }
@@ -1221,8 +1224,8 @@ fn supermajority_root_from_vote_accounts<I>(
     total_epoch_stake: u64,
     vote_accounts: I,
 ) -> Option<Slot>
-    where
-        I: IntoIterator<Item=(Pubkey, (u64, ArcVoteAccount))>,
+where
+    I: IntoIterator<Item = (Pubkey, (u64, ArcVoteAccount))>,
 {
     let mut roots_stakes: Vec<(Slot, u64)> = vote_accounts
         .into_iter()
@@ -1280,9 +1283,9 @@ fn process_single_slot(
     })?;
 
     bank.freeze(); // all banks handled by this routine are created from complete slots
-    //****************************************************************
-    // DMLOG
-    //****************************************************************
+                   //****************************************************************
+                   // DMLOG
+                   //****************************************************************
     if deepmind_enabled() {
         println!(
             "DMLOG BLOCK_END {} {:?} {} {} {}",
@@ -1290,7 +1293,7 @@ fn process_single_slot(
             bank.hash(),
             bank.unix_timestamp_from_genesis(),
             bank.clock().unix_timestamp,
-	    "process_single_slot",
+            "process_single_slot",
         );
     }
     //****************************************************************
@@ -1490,7 +1493,7 @@ pub mod tests {
             },
             None,
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
     }
 
@@ -1535,7 +1538,7 @@ pub mod tests {
             },
             None,
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
 
         // Write slot 2 fully
@@ -1552,7 +1555,7 @@ pub mod tests {
             },
             None,
         )
-            .unwrap();
+        .unwrap();
 
         // One valid fork, one bad fork.  process_blockstore() should only return the valid fork
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0, 2]);
@@ -1903,7 +1906,7 @@ pub mod tests {
             ProcessOptions::default(),
             None,
         )
-            .unwrap();
+        .unwrap();
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0, 1, 3]);
         assert_eq!(bank_forks.working_bank().slot(), 3);
@@ -1953,7 +1956,7 @@ pub mod tests {
             ProcessOptions::default(),
             None,
         )
-            .unwrap();
+        .unwrap();
 
         // Should see the parent of the dead child
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0, 1, 2, 3]);
@@ -2006,7 +2009,7 @@ pub mod tests {
             ProcessOptions::default(),
             None,
         )
-            .unwrap();
+        .unwrap();
 
         // Should see only the parent of the dead children
         assert_eq!(frozen_bank_slots(&bank_forks), vec![0]);
@@ -2513,7 +2516,7 @@ pub mod tests {
             None,
             None,
         )
-            .is_err());
+        .is_err());
 
         // First transaction in first entry succeeded, so keypair1 lost 1 lamport
         assert_eq!(bank.get_balance(&keypair1.pubkey()), 3);
@@ -2625,7 +2628,7 @@ pub mod tests {
             None,
             None,
         )
-            .is_err());
+        .is_err());
 
         // last entry should have been aborted before par_execute_entries
         assert_eq!(bank.get_balance(&keypair1.pubkey()), 2);
@@ -3048,7 +3051,7 @@ pub mod tests {
             None,
             &mut ExecuteTimings::default(),
         )
-            .unwrap();
+        .unwrap();
         bank1.squash();
 
         // Test process_blockstore_from_root() from slot 1 onwards
@@ -3061,7 +3064,7 @@ pub mod tests {
             None,
             BankFromArchiveTimings::default(),
         )
-            .unwrap();
+        .unwrap();
 
         assert_eq!(frozen_bank_slots(&bank_forks), vec![5, 6]);
         assert_eq!(bank_forks.working_bank().slot(), 6);
@@ -3176,7 +3179,7 @@ pub mod tests {
                 None,
                 None,
             )
-                .expect("process ticks failed");
+            .expect("process ticks failed");
 
             if i % 16 == 0 {
                 if let Some(old_root) = root {

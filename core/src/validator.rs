@@ -433,7 +433,6 @@ impl Validator {
         );
 
         *start_progress.write().unwrap() = ValidatorStartProgress::StartingServices;
-
         let leader_schedule_cache = Arc::new(leader_schedule_cache);
         let bank = bank_forks.working_bank();
         if let Some(ref shrink_paths) = config.account_shrink_paths {
@@ -1259,10 +1258,6 @@ fn new_banks_from_ledger(
             Some(warp_slot),
         );
         leader_schedule_cache.set_root(&bank_forks.root_bank());
-
-        if deepmind_enabled() {
-            println!("DMLOG BLOCK_ROOT {}", bank_forks.root());
-        }
 
         let archive_file = solana_runtime::snapshot_utils::bank_to_snapshot_archive(
             ledger_path,
