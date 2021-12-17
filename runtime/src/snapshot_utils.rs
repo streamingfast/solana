@@ -1,4 +1,3 @@
-use crate::bank_forks::SnapshotConfig;
 use {
     crate::{
         accounts_db::{AccountShrinkThreshold, AccountsDb},

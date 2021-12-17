@@ -1,8 +1,10 @@
 //! The `validator` module hosts all the validator microservices.
 
-use std::{env, fs, str::FromStr};
-
+use libc::{SIGINT, SIGTERM};
+use signal_hook::iterator::Signals;
 use solana_runtime::snapshot_utils::SnapshotVersion;
+use std::process::exit;
+use std::{env, fs, str::FromStr, thread};
 use {
     crate::{
         broadcast_stage::BroadcastStageType,
@@ -867,10 +869,12 @@ impl Validator {
 
     // Used for notifying many nodes in parallel to exit
     pub fn exit(&mut self) {
+        info!("validator exiting");
         self.validator_exit.write().unwrap().exit();
     }
 
     pub fn close(mut self) {
+        info!("validator closing");
         self.exit();
         self.join();
     }
@@ -900,7 +904,26 @@ impl Validator {
         );
     }
 
+    pub fn wait_for_signals(&self) {
+        let validator_exit = self.validator_exit.clone();
+
+        let signals = match Signals::new(&[SIGTERM, SIGINT]) {
+            Ok(signals) => signals,
+            Err(e) => panic!("failed to start signals listener: {:?}", e),
+        };
+
+        thread::spawn(move || {
+            for sig in signals.forever() {
+                info!("Received signal {:?}", sig);
+                validator_exit.write().unwrap().exit();
+                exit(0);
+            }
+        });
+    }
+
     pub fn join(self) {
+        info!("validator joining");
+
         self.poh_service.join().expect("poh_service");
         drop(self.poh_recorder);
 
@@ -964,6 +987,7 @@ impl Validator {
         if let Some(ip_echo_server) = self.ip_echo_server {
             ip_echo_server.shutdown_background();
         }
+        info!("validator join completed")
     }
 }
 
@@ -1734,6 +1758,7 @@ mod tests {
             *start_progress.read().unwrap(),
             ValidatorStartProgress::Running
         );
+
         validator.close();
         remove_dir_all(validator_ledger_path).unwrap();
     }
