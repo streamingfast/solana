@@ -443,7 +443,7 @@ impl Validator {
 
         let bank_forks = Arc::new(RwLock::new(bank_forks));
 
-        if let Some(snapshot_config) = &config.snapshot_config {
+        if let Some(_) = &config.snapshot_config {
             info!("registering flush boot snapshot on exit");
             let ledger_path_buf = ledger_path.to_path_buf();
             let bank_forks = bank_forks.clone();
@@ -1530,7 +1530,6 @@ fn wait_for_supermajority(
 fn is_rosetta_emulated() -> bool {
     #[cfg(target_os = "macos")]
     {
-        use std::str::FromStr;
         std::process::Command::new("sysctl")
             .args(&["-in", "sysctl.proc_translated"])
             .output()

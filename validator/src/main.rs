@@ -1,6 +1,4 @@
 #![allow(clippy::integer_arithmetic)]
-
-use std::thread;
 use {
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, App,
@@ -83,8 +81,6 @@ use {
 
 #[cfg(not(any(target_env = "msvc", feature = "rosetta2")))]
 use jemallocator::Jemalloc;
-use libc::{SIGINT, SIGTERM};
-use signal_hook::iterator::Signals;
 
 #[cfg(not(any(target_env = "msvc", feature = "rosetta2")))]
 #[global_allocator]
