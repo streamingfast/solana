@@ -2713,9 +2713,10 @@ pub fn main() {
             exit(1);
         });
     }
+    
+    validator.hook_signals();
 
     info!("Validator initialized");
-    validator.wait_for_signals();
     validator.join();
     info!("Validator exiting..");
 }

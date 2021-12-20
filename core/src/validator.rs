@@ -904,7 +904,7 @@ impl Validator {
         );
     }
 
-    pub fn wait_for_signals(&self) {
+    pub fn hook_signals(&self) {
         let validator_exit = self.validator_exit.clone();
 
         let signals = match Signals::new(&[SIGTERM, SIGINT]) {
@@ -916,6 +916,8 @@ impl Validator {
             for sig in signals.forever() {
                 info!("Received signal {:?}", sig);
                 validator_exit.write().unwrap().exit();
+		// WARN: as noted in AdminRpc's `exit` call, we might want to add
+		// a few seconds of sleep if rocksdb or other things need to shutdown.
                 exit(0);
             }
         });
