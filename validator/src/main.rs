@@ -79,10 +79,10 @@ use {
     },
 };
 
-#[cfg(not(any(target_env = "msvc", feature = "rosetta2")))]
+#[cfg(not(any(target_env = "msvc", target_os = "macos")))]
 use jemallocator::Jemalloc;
 
-#[cfg(not(any(target_env = "msvc", feature = "rosetta2")))]
+#[cfg(not(any(target_env = "msvc", target_os = "macos")))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
