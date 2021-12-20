@@ -313,23 +313,19 @@ pub fn flush_boot_snapshot(
     match serialize_status_cache(
         package.slot,
         &package.slot_deltas,
-        &package
-            .snapshot_links
-            .path()
-            .join(SNAPSHOT_STATUS_CACHE_FILE_NAME),
+        &temp_boot_snapshot_dir.join(SNAPSHOT_STATUS_CACHE_FILE_NAME),
     ) {
         Ok(_) => {}
         Err(e) => panic!("failed to serialize status cache: {:?}", e),
     };
-    //
-    // // TODO: obtain `snapshot_path`, is it the `AccountsPackage::snapshot_links TempDir`?
-    // let staging_version_file = snapshot_path.join("version");
-    //
-    // write_version_file(staging_version_file, snapshot_package.snapshot_version)?;
-    // // write `status_cache` through serialize_status_cache()
-    // // write `version` through
 
-    // Ok(())
+    // TODO: obtain `snapshot_path`, is it the `AccountsPackage::snapshot_links TempDir`?
+    let staging_version_file = temp_boot_snapshot_dir.join("version");
+
+    match write_version_file(staging_version_file, package.snapshot_version) {
+        Ok(_) => return,
+        Err(e) => panic!("failed to write snapshot version: {:?}", e),
+    };
 }
 
 pub fn archive_snapshot_package(
@@ -691,6 +687,7 @@ fn serialize_status_cache(
     status_cache_path: &Path,
 ) -> Result<()> {
     let mut status_cache_serialize = Measure::start("status_cache_serialize-ms");
+    info!("serializing status cache to: {:?}", status_cache_path);
     let consumed_size = serialize_snapshot_data_file(status_cache_path, |stream| {
         serialize_into(stream, slot_deltas)?;
         Ok(())
