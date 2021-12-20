@@ -253,6 +253,7 @@ pub fn flush_boot_snapshot(ledger_path: &Path, bank: &Bank, snapshot_version: Sn
     assert!(bank.is_complete());
     bank.squash(); // Bank may not be a root
     bank.force_flush_accounts_cache();
+    bank.clean_accounts(true, false);
     bank.update_accounts_hash();
     bank.rehash();
 
