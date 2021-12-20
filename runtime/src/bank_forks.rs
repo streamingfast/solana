@@ -38,7 +38,7 @@ pub struct SnapshotConfig {
     pub snapshot_path: PathBuf,
 
     // boot where the fast boot snapshot located
-    pub snapshot_boot_path: PathBuf,
+    pub boot_snapshot_path: PathBuf,
 
     pub archive_format: ArchiveFormat,
 

@@ -692,7 +692,7 @@ fn load_bank_forks(
             snapshot_interval_slots: 0, // Value doesn't matter
             snapshot_package_output_path,
             snapshot_path,
-            snapshot_boot_path: Default::default(),
+            boot_snapshot_path: Default::default(),
             archive_format: ArchiveFormat::TarBzip2,
             snapshot_version: SnapshotVersion::default(),
             maximum_snapshots_to_retain: DEFAULT_MAX_SNAPSHOTS_TO_RETAIN,

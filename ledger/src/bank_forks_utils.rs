@@ -54,12 +54,12 @@ pub fn load(
             fs::create_dir_all(&snapshot_config.snapshot_path)
                 .expect("Couldn't create snapshot directory");
 
-            return load_from_snapshot_boot(
+            return load_from_boot_snapshot(
                 genesis_config,
                 blockstore,
                 account_paths,
                 shrink_paths,
-                &snapshot_config.snapshot_boot_path,
+                &snapshot_config.boot_snapshot_path,
                 process_options,
                 transaction_status_sender,
                 cache_block_meta_sender,
@@ -193,12 +193,12 @@ fn load_from_snapshot(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn load_from_snapshot_boot(
+fn load_from_boot_snapshot(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
     shrink_paths: Option<Vec<PathBuf>>,
-    snapshot_boot_path: &PathBuf,
+    boot_snapshot_path: &PathBuf,
     process_options: ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
@@ -209,10 +209,10 @@ fn load_from_snapshot_boot(
         process::exit(1);
     }
 
-    let (deserialized_bank, timings) = snapshot_utils::bank_from_snapshot_boot(
+    let (deserialized_bank, timings) = snapshot_utils::bank_from_boot_snapshot(
         &account_paths,
         &process_options.frozen_accounts,
-        snapshot_boot_path,
+        boot_snapshot_path,
         genesis_config,
         process_options.debug_keys.clone(),
         Some(&crate::builtins::get(process_options.bpf_jit)),
@@ -232,14 +232,6 @@ fn load_from_snapshot_boot(
         deserialized_bank.slot(),
         deserialized_bank.get_accounts_hash(),
     );
-
-    // if deserialized_bank_slot_and_hash != (archive_slot, archive_hash) {
-    //     error!(
-    //         "Snapshot has mismatch:\narchive: {:?}\ndeserialized: {:?}",bank_forks_utils.rs:213:40
-    //         archive_hash, deserialized_bank_slot_and_hash
-    //     );
-    //     process::exit(1);
-    // }
 
     to_loadresult(
         blockstore_processor::process_blockstore_from_root(

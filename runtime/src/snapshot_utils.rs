@@ -237,7 +237,7 @@ pub fn remove_tmp_snapshot_archives(snapshot_path: &Path) {
 }
 
 pub fn flush_boot_snapshot(ledger_path: &Path, bank: &Bank, snapshot_version: SnapshotVersion) {
-    let boot_snapshot_dir = ledger_path.join("snapshot-boot");
+    let boot_snapshot_dir = ledger_path.join("boot-snapshot");
 
     if boot_snapshot_dir.exists() {
         if let Err(e) = fs::remove_dir_all(&boot_snapshot_dir) {
@@ -769,7 +769,7 @@ pub fn bank_from_archive<P: AsRef<Path> + std::marker::Sync>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn bank_from_snapshot_boot(
+pub fn bank_from_boot_snapshot(
     account_paths: &[PathBuf],
     frozen_account_pubkeys: &[Pubkey],
     boot_path: &Path,
@@ -792,7 +792,7 @@ pub fn bank_from_snapshot_boot(
         let entry = entry?;
         let mut file_name = entry.file_name().into_string().unwrap();
         if re.is_match(file_name.as_str()) {
-            file_name = format!("snapshot-boot/{}/{}", file_name, file_name);
+            file_name = format!("boot-snapshot/{}/{}", file_name, file_name);
         }
         info!("from snapshot boot: {} {:?}", file_name, entry.path());
         unpacked_append_vec_map.insert(file_name, entry.path().into());
