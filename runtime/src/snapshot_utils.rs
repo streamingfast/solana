@@ -800,13 +800,7 @@ pub fn bank_from_boot_snapshot(
     }
 
     for path in account_paths {
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            unpacked_append_vec_map.insert(
-                entry.file_name().into_string().unwrap(),
-                entry.path().into(),
-            );
-        }
+        load_account_path(&path, &mut unpacked_append_vec_map)?;
     }
 
     info!("Loading bank from boot snapshot: {:?}", boot_path);
@@ -846,6 +840,23 @@ pub fn bank_from_boot_snapshot(
     };
 
     Ok((bank, timings))
+}
+
+fn load_account_path(
+    path: &PathBuf,
+    unpacked_append_vec_map: &mut UnpackedAppendVecMap,
+) -> Result<()> {
+    info!("loading account path: {:?}", path);
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let file_name = entry.file_name().into_string().unwrap();
+        if file_name == "accounts" {
+            load_account_path(&entry.path(), unpacked_append_vec_map)?;
+            continue;
+        }
+        unpacked_append_vec_map.insert(file_name, entry.path().into());
+    }
+    Ok(())
 }
 
 pub fn get_snapshot_archive_path(
