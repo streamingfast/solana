@@ -449,7 +449,10 @@ impl JsonRpcService {
         validator_exit
             .write()
             .unwrap()
-            .register_exit(Box::new(move || close_handle_.close()));
+            .register_exit(Box::new(move || {
+                info!("json rpc shutting down (exit)");
+                close_handle_.close()
+            }));
         Self {
             thread_hdl,
             #[cfg(test)]

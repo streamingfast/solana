@@ -398,10 +398,11 @@ impl Validator {
                 .validator_exit
                 .write()
                 .unwrap()
-                .register_exit(Box::new(move || exit.store(true, Ordering::Relaxed)));
+                .register_exit(Box::new(move || {
+                    info!("storing exit 'true' relaxed (exit)");
+                    exit.store(true, Ordering::Relaxed)
+                }));
         }
-
-        // std::process::exit(0);
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
         let (
@@ -452,6 +453,7 @@ impl Validator {
                 .write()
                 .unwrap()
                 .register_exit(Box::new(move || {
+                    info!("flushing boot snapshot (exit)");
                     let ledger_path = ledger_path_buf.as_path();
                     let root_back = bank_forks.read().unwrap().root_bank();
                     snapshot_utils::flush_boot_snapshot(
@@ -623,7 +625,10 @@ impl Validator {
                         .validator_exit
                         .write()
                         .unwrap()
-                        .register_exit(Box::new(move || trigger.cancel()));
+                        .register_exit(Box::new(move || {
+                            info!("pub sub trigger cancel (exit)");
+                            trigger.cancel()
+                        }));
 
                     Some(pubsub_service)
                 },
@@ -916,8 +921,8 @@ impl Validator {
             for sig in signals.forever() {
                 info!("Received signal {:?}", sig);
                 validator_exit.write().unwrap().exit();
-		// WARN: as noted in AdminRpc's `exit` call, we might want to add
-		// a few seconds of sleep if rocksdb or other things need to shutdown.
+                // WARN: as noted in AdminRpc's `exit` call, we might want to add
+                // a few seconds of sleep if rocksdb or other things need to shutdown.
                 exit(0);
             }
         });
