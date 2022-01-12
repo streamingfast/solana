@@ -598,9 +598,11 @@ mod tests {
                 snapshot_interval_slots: 0,
                 snapshot_package_output_path: PathBuf::from("/"),
                 snapshot_path: PathBuf::from("/"),
+                boot_snapshot_path: Default::default(),
                 archive_format: ArchiveFormat::TarBzip2,
                 snapshot_version: SnapshotVersion::default(),
                 maximum_snapshots_to_retain: DEFAULT_MAX_SNAPSHOTS_TO_RETAIN,
+                use_boot_snapshot: false
             }),
             bank_forks,
             RpcHealth::stub(),

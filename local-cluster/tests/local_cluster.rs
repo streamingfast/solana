@@ -3271,12 +3271,15 @@ fn setup_snapshot_validator_config(
     let snapshot_dir = tempfile::tempdir_in(farf_dir()).unwrap();
     let snapshot_output_path = tempfile::tempdir_in(farf_dir()).unwrap();
     let snapshot_config = SnapshotConfig {
+        
         snapshot_interval_slots,
         snapshot_package_output_path: PathBuf::from(snapshot_output_path.path()),
         snapshot_path: PathBuf::from(snapshot_dir.path()),
+        boot_snapshot_path: Default::default(),
         archive_format: ArchiveFormat::TarBzip2,
         snapshot_version: snapshot_utils::SnapshotVersion::default(),
         maximum_snapshots_to_retain: snapshot_utils::DEFAULT_MAX_SNAPSHOTS_TO_RETAIN,
+        use_boot_snapshot: false
     };
 
     // Create the account paths

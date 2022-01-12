@@ -118,6 +118,7 @@ mod tests {
                 snapshot_interval_slots,
                 snapshot_package_output_path: PathBuf::from(snapshot_output_path.path()),
                 snapshot_path: PathBuf::from(snapshot_dir.path()),
+                boot_snapshot_path: Default::default(),
                 archive_format: ArchiveFormat::TarBzip2,
                 snapshot_version,
                 maximum_snapshots_to_retain: DEFAULT_MAX_SNAPSHOTS_TO_RETAIN,
