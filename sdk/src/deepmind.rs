@@ -144,7 +144,6 @@ impl<'a> DMBatchContext {
             trxs: Vec::new(),
             file: fl,
             path: file_path,
-            total_encoded_len: 0,
         }
     }
 
