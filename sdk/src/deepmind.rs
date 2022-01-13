@@ -129,8 +129,6 @@ pub struct DMBatchContext {
     pub file: File,
     pub path: String,
     pub filename: String,
-
-    total_encoded_len: u64,
 }
 
 impl<'a> DMBatchContext {
@@ -205,8 +203,6 @@ impl<'a> DMBatchContext {
         let mut buf = Vec::new();
         let encoded_len = batch.encoded_len();
 
-        self.total_encoded_len = self.total_encoded_len + (encoded_len as u64);
-
         buf.reserve(encoded_len);
         if let Err(e) = batch.encode(&mut buf) {
             panic!("DMLOG ERROR FILE {}", e);
@@ -225,7 +221,8 @@ impl<'a> DMBatchContext {
         }
 
         drop(&self.file);
-        println!("DM {} bytes written to file {}", self.total_encoded_len, self.filename);
+
+        println!("DM {} bytes written to file {}", encoded_len, self.filename);
         println!("DMLOG BATCH_FILE {}", self.filename);
     }
 
