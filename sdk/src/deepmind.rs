@@ -206,22 +206,12 @@ impl<'a> DMBatchContext {
         let encoded_len = batch.encoded_len();
 
         self.total_encoded_len = self.total_encoded_len + (encoded_len as u64);
-        println!("{} bytes written to file {}", self.total_encoded_len, self.filename);
 
         buf.reserve(encoded_len);
         if let Err(e) = batch.encode(&mut buf) {
             panic!("DMLOG ERROR FILE {}", e);
         }
 
-        // let mut write_size = 0;
-        // match self.file.write_all(&mut buf) {
-        //     Ok(size) => {
-        //         write_size = size
-        //     }
-        //     Err(e) => {
-        //         panic!("DMLOG ERROR FILE {}", e);
-        //     }
-        // }
         if let Err(e) = self.file.write_all(&mut buf) {
             panic!("DMLOG ERROR FILE {}", e);
         }
@@ -235,7 +225,7 @@ impl<'a> DMBatchContext {
         }
 
         drop(&self.file);
-        // println!("flushed batch_file: {} encoded length: {} write size: {}", self.filename, encoded_len, write_size);
+        println!("DM {} bytes written to file {}", self.total_encoded_len, self.filename);
         println!("DMLOG BATCH_FILE {}", self.filename);
     }
 
