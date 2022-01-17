@@ -675,6 +675,10 @@ impl AccountStorageEntry {
         }
     }
 
+    pub fn set_no_remove_on_drop(&mut self) {
+	self.accounts.set_no_remove_on_drop();
+    }
+
     pub fn all_accounts(&self) -> Vec<StoredAccountMeta> {
         self.accounts.accounts(0)
     }
@@ -2478,6 +2482,16 @@ impl AccountsDb {
                 }
             }
         }
+    }
+
+    pub fn prevent_deletion_of_append_vecs(&self) {
+        self.storage.0.iter_mut().for_each(|e| {
+            e.clone().write().unwrap().iter_mut().for_each(|mut tuple| {
+		let the = Arc::get_mut(&mut tuple.1);
+		let other = the.unwrap();
+		other.set_no_remove_on_drop();
+            })
+        })
     }
 
     pub fn scan_accounts<F, A>(

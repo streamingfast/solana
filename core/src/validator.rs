@@ -1005,10 +1005,10 @@ struct BootFlusher {
 
 impl BootFlusher {
     pub fn flush_boot_snapshot(&self) {
-        let root_back = self.bank_forks.read().unwrap().root_bank();
+        let root_bank = self.bank_forks.read().unwrap().root_bank();
         snapshot_utils::flush_boot_snapshot(
             self.ledger_path.as_path(),
-            root_back.as_ref(),
+            root_bank.as_ref(),
             SnapshotVersion::V1_2_0,
         )
     }
