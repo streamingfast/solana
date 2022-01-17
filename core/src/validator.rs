@@ -907,7 +907,6 @@ impl Validator {
                 validator_exit.write().unwrap().exit();
                 // WARN: as noted in AdminRpc's `exit` call, we might want to add
                 // a few seconds of sleep if rocksdb or other things need to shutdown.
-                exit(0);
             }
         });
     }
@@ -918,18 +917,22 @@ impl Validator {
         self.poh_service.join().expect("poh_service");
         drop(self.poh_recorder);
 
+        info!("validator joining 1");
         if let Some(json_rpc_service) = self.json_rpc_service {
             json_rpc_service.join().expect("rpc_service");
         }
 
+        info!("validator joining 2");
         if let Some(pubsub_service) = self.pubsub_service {
             pubsub_service.join().expect("pubsub_service");
         }
 
+        info!("validator joining 3");
         self.rpc_completed_slots_service
             .join()
             .expect("rpc_completed_slots_service");
 
+        info!("validator joining 4");
         if let Some(optimistically_confirmed_bank_tracker) =
             self.optimistically_confirmed_bank_tracker
         {
@@ -938,40 +941,50 @@ impl Validator {
                 .expect("optimistically_confirmed_bank_tracker");
         }
 
+        info!("validator joining 5");
         if let Some(transaction_status_service) = self.transaction_status_service {
             transaction_status_service
                 .join()
                 .expect("transaction_status_service");
         }
 
+        info!("validator joining 6");
         if let Some(rewards_recorder_service) = self.rewards_recorder_service {
             rewards_recorder_service
                 .join()
                 .expect("rewards_recorder_service");
         }
 
+        info!("validator joining 7");
         if let Some(cache_block_meta_service) = self.cache_block_meta_service {
             cache_block_meta_service
                 .join()
                 .expect("cache_block_meta_service");
         }
 
+        info!("validator joining 8");
         if let Some(sample_performance_service) = self.sample_performance_service {
             sample_performance_service
                 .join()
                 .expect("sample_performance_service");
         }
 
+        info!("validator joining 9");
         if let Some(s) = self.snapshot_packager_service {
             s.join().expect("snapshot_packager_service");
         }
 
+        info!("validator joining 10");
         self.gossip_service.join().expect("gossip_service");
+        info!("validator joining 11");
         self.serve_repair_service
             .join()
             .expect("serve_repair_service");
+        info!("validator joining 12");
         self.tpu.join().expect("tpu");
+        info!("validator joining 13");
         self.tvu.join().expect("tvu");
+        info!("validator joining 14");
         self.completed_data_sets_service
             .join()
             .expect("completed_data_sets_service");
