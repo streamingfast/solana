@@ -2724,7 +2724,14 @@ pub fn main() {
     validator.hook_signals();
 
     info!("Validator initialized");
+
+    //let boot_flusher = validator.boot_flusher.clone();
+    
     validator.join();
+    
+    info!("Validator flushing boot snapshot");
+    //boot_flusher.flush_boot_snapshot();
+    
     info!("Validator exiting..");
 }
 

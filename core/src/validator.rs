@@ -281,6 +281,7 @@ pub struct Validator {
     tpu: Tpu,
     tvu: Tvu,
     ip_echo_server: Option<solana_net_utils::IpEchoServer>,
+    boot_flusher: BootFlusher,
 }
 
 // in the distant future, get rid of ::new()/exit() and use Result properly...
@@ -443,27 +444,6 @@ impl Validator {
         }
 
         let bank_forks = Arc::new(RwLock::new(bank_forks));
-
-        if let Some(_) = &config.snapshot_config {
-            info!("registering flush boot snapshot on exit");
-            let ledger_path_buf = ledger_path.to_path_buf();
-            let bank_forks = bank_forks.clone();
-            config
-                .validator_exit
-                .write()
-                .unwrap()
-                .register_exit(Box::new(move || {
-                    info!("flushing boot snapshot (exit)");
-                    let ledger_path = ledger_path_buf.as_path();
-                    let root_back = bank_forks.read().unwrap().root_bank();
-                    snapshot_utils::flush_boot_snapshot(
-                        ledger_path,
-                        // snapshot_config,
-                        root_back.as_ref(),
-                        SnapshotVersion::V1_2_0,
-                    )
-                }));
-        }
 
         let sample_performance_service =
             if config.rpc_addrs.is_some() && config.rpc_config.enable_rpc_transaction_history {
@@ -838,7 +818,7 @@ impl Validator {
             &exit,
             node.info.shred_version,
             vote_tracker,
-            bank_forks,
+            bank_forks.clone(),
             verified_vote_sender,
             gossip_verified_vote_hash_sender,
             replay_vote_receiver,
@@ -869,6 +849,10 @@ impl Validator {
             poh_recorder,
             ip_echo_server,
             validator_exit: config.validator_exit.clone(),
+            boot_flusher: BootFlusher {
+                bank_forks: bank_forks.clone(),
+                ledger_path: ledger_path.to_path_buf(),
+            },
         }
     }
 
@@ -994,7 +978,26 @@ impl Validator {
         if let Some(ip_echo_server) = self.ip_echo_server {
             ip_echo_server.shutdown_background();
         }
-        info!("validator join completed")
+        info!("validator join completed");
+
+        self.boot_flusher.flush_boot_snapshot()
+    }
+
+}
+
+struct BootFlusher {
+    bank_forks: Arc<RwLock<BankForks>>,
+    ledger_path: PathBuf,
+}
+
+impl BootFlusher {
+    pub fn flush_boot_snapshot(&self) {
+        let root_back = self.bank_forks.read().unwrap().root_bank();
+        snapshot_utils::flush_boot_snapshot(
+            self.ledger_path.as_path(),
+            root_back.as_ref(),
+            SnapshotVersion::V1_2_0,
+        )
     }
 }
 
