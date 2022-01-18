@@ -2486,12 +2486,12 @@ impl AccountsDb {
 
     pub fn prevent_deletion_of_append_vecs(&self) {
         self.storage.0.iter_mut().for_each(|e| {
-            e.clone().write().unwrap().iter_mut().for_each(|mut tuple| {
-                if let Some(entry) = Arc::get_mut(&mut tuple.1) {
-                    entry.set_no_remove_on_drop();
-                } else {
-		    info!("couldn't get mutable arc on entry with file {:?}", tuple.1.clone().accounts.get_path().as_path());
-		}
+            e.clone().write().unwrap().iter().for_each(|tuple| {
+		// UNSAFE because the `RwLock` is acquired above:
+		tuple.1.accounts.set_no_remove_on_drop();
+		// unsafe {
+		//     Arc::get_mut_unchecked(&mut entry).accounts.set_no_remove_on_drop();
+		// }
             })
         })
     }

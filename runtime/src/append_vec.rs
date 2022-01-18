@@ -223,8 +223,12 @@ impl AppendVec {
         }
     }
 
-    pub fn set_no_remove_on_drop(&mut self) {
-        self.remove_on_drop = false;
+    pub fn set_no_remove_on_drop(&self) {
+	unsafe {
+	    let const_ptr = &self.remove_on_drop as *const bool;
+	    let mut_ptr = const_ptr as *mut bool;
+	    *mut_ptr = false;
+	}
     }
 
     pub fn new_empty_map(current_len: usize) -> Self {
