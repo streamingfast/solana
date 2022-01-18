@@ -676,7 +676,7 @@ impl AccountStorageEntry {
     }
 
     pub fn set_no_remove_on_drop(&mut self) {
-	self.accounts.set_no_remove_on_drop();
+        self.accounts.set_no_remove_on_drop();
     }
 
     pub fn all_accounts(&self) -> Vec<StoredAccountMeta> {
@@ -2487,9 +2487,11 @@ impl AccountsDb {
     pub fn prevent_deletion_of_append_vecs(&self) {
         self.storage.0.iter_mut().for_each(|e| {
             e.clone().write().unwrap().iter_mut().for_each(|mut tuple| {
-		let the = Arc::get_mut(&mut tuple.1);
-		let other = the.unwrap();
-		other.set_no_remove_on_drop();
+                if let Some(entry) = Arc::get_mut(&mut tuple.1) {
+                    entry.set_no_remove_on_drop();
+                } else {
+		    info!("couldn't get mutable arc on entry with file {:?}", tuple.1.clone().accounts.get_path().as_path());
+		}
             })
         })
     }
