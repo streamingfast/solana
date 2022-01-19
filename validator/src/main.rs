@@ -882,6 +882,13 @@ fn rpc_bootstrap(
                 }
             }
 
+            if let Some(snapshot_config) = &validator_config.snapshot_config {
+                if snapshot_config.use_boot_snapshot {
+                    info!("Skipping local snapshot check and download, will use boot snapshot instead");
+                    return Ok(())
+                }
+            }
+
             if let Some(snapshot_hash) = snapshot_hash {
                 let mut use_local_snapshot = false;
 
