@@ -10,6 +10,9 @@ homepage = "https://solana.com/"
 documentation = "https://docs.rs/solana-validator"
 default-run = "solana-validator"
 
+[features]
+rosetta2 = []
+
 [dependencies]
 base64 = "0.12.3"
 bincode = "1.3.1"

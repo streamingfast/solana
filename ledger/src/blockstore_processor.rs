@@ -36,7 +36,9 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{
+        bs58,
         clock::{Slot, MAX_PROCESSING_AGE},
+        deepmind::{deepmind_enabled, DMBatchContext},
         execute_timings::ExecuteTimings,
         feature_set,
         genesis_config::GenesisConfig,
@@ -53,8 +55,12 @@ use {
         cell::RefCell,
         collections::{HashMap, HashSet},
         path::PathBuf,
+        rc::Rc,
         result,
-        sync::{Arc, RwLock},
+        sync::{
+            atomic::{AtomicU64, AtomicUsize, Ordering},
+            Arc, RwLock,
+        },
         time::{Duration, Instant},
     },
     thiserror::Error,
@@ -156,6 +162,7 @@ fn execute_batch(
     replay_vote_sender: Option<&ReplayVoteSender>,
     timings: &mut ExecuteTimings,
     cost_capacity_meter: Arc<RwLock<BlockCostCapacityMeter>>,
+    dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
 ) -> Result<()> {
     let record_token_balances = transaction_status_sender.is_some();
 
@@ -177,6 +184,7 @@ fn execute_batch(
             transaction_status_sender.is_some(),
             transaction_status_sender.is_some(),
             timings,
+            dmbatch_context,
         );
 
     if bank
@@ -238,6 +246,8 @@ fn execute_batch(
     first_err.map(|(result, _)| result).unwrap_or(Ok(()))
 }
 
+static GLOBAL_DEEP_MIND_FILE_NUMBER: AtomicUsize = AtomicUsize::new(0);
+
 fn execute_batches(
     bank: &Arc<Bank>,
     batches: &[TransactionBatch],
@@ -251,10 +261,29 @@ fn execute_batches(
     let (results, new_timings): (Vec<Result<()>>, Vec<ExecuteTimings>) =
         PAR_THREAD_POOL.with(|thread_pool| {
             thread_pool.borrow().install(|| {
+                //****************************************************************
+                // DMLOG
+                //****************************************************************
+                let i: AtomicU64 = AtomicU64::new(0);
+                //****************************************************************
                 batches
                     .into_par_iter()
                     .map(|batch| {
                         let mut timings = ExecuteTimings::default();
+
+                        //****************************************************************
+                        // DMLOG
+                        //****************************************************************
+                        let mut dmbatch_ctx_opt: Option<Rc<RefCell<DMBatchContext>>> = None;
+                        if deepmind_enabled() {
+                            let batch_id = i.fetch_add(1, Ordering::Relaxed);
+                            let file_number =
+                                GLOBAL_DEEP_MIND_FILE_NUMBER.fetch_add(1, Ordering::SeqCst);
+                            let ctx = DMBatchContext::new(batch_id, file_number);
+                            dmbatch_ctx_opt = Some(Rc::new(RefCell::new(ctx)));
+                        }
+                        //****************************************************************
+
                         let result = execute_batch(
                             batch,
                             bank,
@@ -262,10 +291,20 @@ fn execute_batches(
                             replay_vote_sender,
                             &mut timings,
                             cost_capacity_meter.clone(),
+                            &dmbatch_ctx_opt,
                         );
                         if let Some(entry_callback) = entry_callback {
                             entry_callback(bank);
                         }
+
+                        //****************************************************************
+                        // DMLOG
+                        //****************************************************************
+                        if let Some(ctx_ref) = &dmbatch_ctx_opt {
+                            ctx_ref.borrow_mut().flush();
+                        }
+                        //****************************************************************
+
                         (result, timings)
                     })
                     .unzip()
@@ -276,6 +315,10 @@ fn execute_batches(
     timings.num_execute_batches += 1;
     for timing in new_timings {
         timings.accumulate(&timing);
+    }
+
+    if deepmind_enabled() && batches.len() > 0 {
+        println!("DMLOG BATCHES_END");
     }
 
     first_err(&results)
@@ -574,6 +617,10 @@ fn do_process_blockstore_from_root(
             .expect("Couldn't set root slot on startup");
     } else if !blockstore.is_root(start_slot) {
         panic!("starting slot isn't root and can't update due to being secondary blockstore access: {}", start_slot);
+    }
+
+    if deepmind_enabled() {
+        println!("DMLOG BLOCK_ROOT {}", &start_slot);
     }
 
     if let Ok(metas) = blockstore.slot_meta_iterator(start_slot) {
@@ -875,6 +922,36 @@ pub fn confirm_slot(
         None
     };
 
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
+    if deepmind_enabled() && num_entries != 0 {
+        let mut ids = Vec::<String>::new();
+        for entry in &entries {
+            for trx in &entry.transactions {
+                ids.push(bs58::encode(&trx.signatures[0]).into_string());
+            }
+        }
+
+        println!(
+            "DMLOG BLOCK_WORK {} {} {} {} {} {} {} {} {} {} {} {} T;{}",
+            bank.parent_slot(),
+            slot,
+            if slot_full { "full" } else { "partial" },
+            bank.parent_hash(), // previous BLOCK hash, not slot hash (in case we skipped one)
+            num_entries,
+            num_txs,
+            num_shreds,
+            progress.num_entries,
+            progress.num_txs,
+            progress.num_shreds,
+            progress.last_entry,
+            progress.tick_hash_count,
+            ids.join(";"),
+        );
+    }
+    //****************************************************************
+
     let check_start = Instant::now();
     let check_result = entries.verify_and_hash_transactions(skip_verification, &bank.feature_set);
     if check_result.is_none() {
@@ -914,6 +991,16 @@ pub fn confirm_slot(
         }
     }
 
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
+    if deepmind_enabled() {
+        if process_result.is_err() {
+            println!("DMLOG BLOCK_FAILED {} {:#?}", slot, process_result);
+        }
+    }
+    //****************************************************************
+
     process_result?;
 
     progress.num_shreds += num_shreds;
@@ -948,6 +1035,20 @@ fn process_bank_0(
     )
     .expect("processing for bank 0 must succeed");
     bank0.freeze();
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
+    if deepmind_enabled() {
+        println!(
+            "DMLOG BLOCK_END {} {:?} {} {}",
+            bank0.slot(),
+            bank0.hash(),
+            bank0.unix_timestamp_from_genesis(),
+            bank0.clock().unix_timestamp
+        );
+    }
+    //****************************************************************
+
     cache_block_meta(bank0, cache_block_meta_sender);
 }
 
@@ -1263,6 +1364,20 @@ fn process_single_slot(
     })?;
 
     bank.freeze(); // all banks handled by this routine are created from complete slots
+                   //****************************************************************
+                   // DMLOG
+                   //****************************************************************
+    if deepmind_enabled() {
+        println!(
+            "DMLOG BLOCK_END {} {:?} {} {}",
+            bank.slot(),
+            bank.hash(),
+            bank.unix_timestamp_from_genesis(),
+            bank.clock().unix_timestamp,
+        );
+    }
+    //****************************************************************
+
     cache_block_meta(bank, cache_block_meta_sender);
 
     Ok(())
@@ -2836,7 +2951,7 @@ pub mod tests {
                 &mut [entry_1, tick, entry_2.clone()],
                 true,
                 None,
-                None
+                None,
             ),
             Ok(())
         );
@@ -3286,6 +3401,7 @@ pub mod tests {
             false,
             false,
             &mut ExecuteTimings::default(),
+            &None,
         );
         let (err, signature) = get_first_error(&batch, fee_collection_results).unwrap();
         // First error found should be for the 2nd transaction, due to iteration_order
