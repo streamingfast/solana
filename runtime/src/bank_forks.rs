@@ -6,7 +6,7 @@ use crate::{
 };
 use log::*;
 use solana_metrics::inc_new_counter_info;
-use solana_sdk::{clock::Slot, hash::Hash, timing};
+use solana_sdk::{clock::Slot, deepmind::deepmind_enabled, hash::Hash, timing};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     ops::Index,
@@ -206,6 +206,11 @@ impl BankForks {
     ) {
         let old_epoch = self.root_bank().epoch();
         self.root = root;
+
+        if deepmind_enabled() {
+            println!("DMLOG BLOCK_ROOT {}", root);
+        }
+
         let set_root_start = Instant::now();
         let root_bank = self
             .banks

@@ -8,6 +8,7 @@ use solana_sdk::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
     account_utils::StateMut,
     bpf_loader_upgradeable::{self, UpgradeableLoaderState},
+    deepmind::DMBatchContext,
     feature_set::{
         demote_program_write_locks, fix_write_privs, instructions_sysvar_enabled,
         neon_evm_compute_budget, updated_verify_policy, FeatureSet,
@@ -30,6 +31,7 @@ use solana_sdk::{
 use std::{
     cell::{Ref, RefCell},
     collections::HashMap,
+    ops::Deref,
     rc::Rc,
     sync::Arc,
 };
@@ -107,6 +109,7 @@ impl PreAccount {
         timings: &mut ExecuteDetailsTimings,
         outermost_call: bool,
         updated_verify_policy: bool,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> Result<(), InstructionError> {
         let pre = self.account.borrow();
 
@@ -168,6 +171,18 @@ impl PreAccount {
                 return Err(InstructionError::ReadonlyDataModified);
             }
         }
+
+        //****************************************************************
+        // DMLOG
+        //****************************************************************
+        if let Some(ctx_ref) = &dmbatch_context {
+            if is_writable && (pre.data() != post.data()) {
+                let ctx = ctx_ref.deref();
+                ctx.borrow_mut()
+                    .account_change(&self.key, pre.data(), post.data())
+            }
+        }
+        //****************************************************************
 
         // executable is one-way (false->true) and only the account owner may set it.
         let executable_changed = pre.executable() != post.executable();
@@ -276,6 +291,7 @@ pub struct ThisInvokeContext<'a> {
     ancestors: &'a Ancestors,
     #[allow(clippy::type_complexity)]
     sysvars: RefCell<Vec<(Pubkey, Option<Rc<Vec<u8>>>)>>,
+    dmbatch_context: &'a Option<Rc<RefCell<DMBatchContext>>>,
 }
 impl<'a> ThisInvokeContext<'a> {
     #[allow(clippy::too_many_arguments)]
@@ -294,6 +310,7 @@ impl<'a> ThisInvokeContext<'a> {
         feature_set: Arc<FeatureSet>,
         account_db: Arc<Accounts>,
         ancestors: &'a Ancestors,
+        dmbatch_context: &'a Option<Rc<RefCell<DMBatchContext>>>,
     ) -> Self {
         let pre_accounts = MessageProcessor::create_pre_accounts(message, instruction, accounts);
         let keyed_accounts = MessageProcessor::create_keyed_accounts(
@@ -321,6 +338,7 @@ impl<'a> ThisInvokeContext<'a> {
             account_db,
             ancestors,
             sysvars: RefCell::new(vec![]),
+            dmbatch_context,
         };
         invoke_context
             .invoke_stack
@@ -412,6 +430,7 @@ impl<'a> InvokeContext for ThisInvokeContext<'a> {
             &mut self.timings,
             logger,
             self.feature_set.is_active(&updated_verify_policy::id()),
+            &self.dmbatch_context,
         )
     }
     fn get_caller(&self) -> Result<&Pubkey, InstructionError> {
@@ -502,6 +521,29 @@ impl<'a> InvokeContext for ThisInvokeContext<'a> {
             None
         }
     }
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
+    fn dmbatch_start_instruction(
+        &self,
+        program_id: &Pubkey,
+        keyed_accounts: &mut dyn Iterator<Item = &Pubkey>,
+        instruction_data: &[u8],
+    ) {
+        if let Some(ctx_ref) = &self.dmbatch_context {
+            let ctx = ctx_ref.deref();
+            ctx.borrow_mut()
+                .start_instruction(program_id, keyed_accounts, instruction_data);
+        }
+    }
+
+    fn dmbatch_end_instruction(&self) {
+        if let Some(ctx_ref) = &self.dmbatch_context {
+            let ctx = ctx_ref.deref();
+            ctx.borrow_mut().end_instruction();
+        }
+    }
+    //****************************************************************
 }
 pub struct ThisLogger {
     log_collector: Option<Rc<LogCollector>>,
@@ -962,6 +1004,24 @@ impl MessageProcessor {
             // Invoke callee
             invoke_context.push(program_id, &keyed_accounts)?;
 
+            //*********************************************************************************
+            // DMLOG: This is the call entry point for inner instruction
+            // 1) Store the current parent ordinal number to restore after the inner call is completed
+            // 2) The current ordinal number will be the parent for the next calls
+            // 3) Increment the ordinal number
+
+            let mut instruction_accounts = instruction
+                .accounts
+                .iter()
+                .map(|index| &message.account_keys[*index as usize]);
+
+            invoke_context.dmbatch_start_instruction(
+                program_id,
+                &mut instruction_accounts,
+                &instruction.data,
+            );
+            //****************************************************************
+
             let mut message_processor = MessageProcessor::default();
             for (program_id, process_instruction) in invoke_context.get_programs().iter() {
                 message_processor.add_program(*program_id, *process_instruction);
@@ -982,6 +1042,13 @@ impl MessageProcessor {
 
             // Restore previous state
             invoke_context.pop();
+
+            //*********************************************************************************
+            // DMLOG: The inner call is completed..
+            //**********************************************************************************
+            invoke_context.dmbatch_end_instruction();
+            //****************************************************************
+
             result
         } else {
             // This function is always called with a valid instruction, if that changes return an error
@@ -1036,6 +1103,7 @@ impl MessageProcessor {
         logger: Rc<RefCell<dyn Logger>>,
         updated_verify_policy: bool,
         demote_program_write_locks: bool,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> Result<(), InstructionError> {
         // Verify all executable accounts have zero outstanding refs
         Self::verify_account_references(executable_accounts)?;
@@ -1062,6 +1130,7 @@ impl MessageProcessor {
                         timings,
                         true,
                         updated_verify_policy,
+                        dmbatch_context,
                     )
                     .map_err(|err| {
                         ic_logger_msg!(
@@ -1072,6 +1141,19 @@ impl MessageProcessor {
                         );
                         err
                     })?;
+
+                //****************************************************************
+                // DMLOG
+                //****************************************************************
+                let pre_lamports = pre_accounts[unique_index].lamports();
+                let post_lamports = account.lamports();
+                if let Some(ctx_ref) = dmbatch_context {
+                    let ctx = ctx_ref.deref();
+                    ctx.borrow_mut()
+                        .lamport_change(account.owner(), pre_lamports, post_lamports)
+                }
+                //****************************************************************
+
                 pre_sum += u128::from(pre_accounts[unique_index].lamports());
                 post_sum += u128::from(account.lamports());
                 Ok(())
@@ -1098,6 +1180,7 @@ impl MessageProcessor {
         timings: &mut ExecuteDetailsTimings,
         logger: Rc<RefCell<dyn Logger>>,
         updated_verify_policy: bool,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> Result<(), InstructionError> {
         // Verify the per-account instruction results
         let (mut pre_sum, mut post_sum) = (0_u128, 0_u128);
@@ -1124,6 +1207,7 @@ impl MessageProcessor {
                                 timings,
                                 false,
                                 updated_verify_policy,
+                                dmbatch_context,
                             )
                             .map_err(|err| {
                                 ic_logger_msg!(logger, "failed to verify account {}: {}", key, err);
@@ -1171,6 +1255,7 @@ impl MessageProcessor {
         timings: &mut ExecuteDetailsTimings,
         account_db: Arc<Accounts>,
         ancestors: &Ancestors,
+        dmbatch_context: Option<Rc<RefCell<DMBatchContext>>>,
     ) -> Result<(), InstructionError> {
         // Fixup the special instructions key if present
         // before the account pre-values are taken care of
@@ -1198,6 +1283,23 @@ impl MessageProcessor {
             bpf_compute_budget.heap_size = Some(256 * 1024);
         }
 
+        //****************************************************************
+        // DMLOG: This is the call entry point for top level instructions
+        //****************************************************************
+        if let Some(ctx_ref) = &dmbatch_context {
+            let ctx = ctx_ref.deref();
+            let mut instruction_accounts = instruction
+                .accounts
+                .iter()
+                .map(|index| &message.account_keys[*index as usize]);
+            ctx.borrow_mut().start_instruction(
+                program_id,
+                &mut instruction_accounts,
+                instruction.data.as_slice(),
+            );
+        }
+        //****************************************************************
+
         let mut invoke_context = ThisInvokeContext::new(
             program_id,
             rent_collector.rent,
@@ -1213,8 +1315,29 @@ impl MessageProcessor {
             feature_set,
             account_db,
             ancestors,
+            &dmbatch_context,
         );
-        self.process_instruction(program_id, &instruction.data, &mut invoke_context)?;
+
+        let result = self.process_instruction(program_id, &instruction.data, &mut invoke_context);
+
+        //****************************************************************
+        // DMLOG
+        //****************************************************************
+
+        if let Some(ctx_ref) = &dmbatch_context {
+            let ctx = ctx_ref.deref();
+            if result.is_err() {
+                if let Some(error) = &result.clone().err() {
+                    ctx.borrow_mut().error_instruction(error);
+                }
+            }
+        }
+
+        if result.is_err() {
+            return result;
+        }
+        //****************************************************************
+
         Self::verify(
             message,
             instruction,
@@ -1226,7 +1349,17 @@ impl MessageProcessor {
             invoke_context.get_logger(),
             invoke_context.is_feature_active(&updated_verify_policy::id()),
             invoke_context.is_feature_active(&demote_program_write_locks::id()),
+            invoke_context.dmbatch_context,
         )?;
+
+        //****************************************************************
+        // DMLOG: This is the call entry point for top level instructions
+        //****************************************************************
+        if let Some(ctx_ref) = &dmbatch_context {
+            let ctx = ctx_ref.deref();
+            ctx.borrow_mut().end_instruction();
+        }
+        //****************************************************************
 
         timings.accumulate(&invoke_context.timings);
 
@@ -1252,6 +1385,7 @@ impl MessageProcessor {
         timings: &mut ExecuteDetailsTimings,
         account_db: Arc<Accounts>,
         ancestors: &Ancestors,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> Result<(), TransactionError> {
         for (instruction_index, instruction) in message.instructions.iter().enumerate() {
             let instruction_recorder = instruction_recorders
@@ -1272,6 +1406,7 @@ impl MessageProcessor {
                 timings,
                 account_db.clone(),
                 ancestors,
+                dmbatch_context.clone(),
             )
             .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;
         }
@@ -1339,6 +1474,7 @@ mod tests {
             Arc::new(FeatureSet::all_enabled()),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
 
         // Check call depth increases and has a limit
@@ -1523,6 +1659,7 @@ mod tests {
                 &mut ExecuteDetailsTimings::default(),
                 false,
                 true,
+                &None,
             )
         }
     }
@@ -1950,6 +2087,7 @@ mod tests {
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
         assert_eq!(result, Ok(()));
         assert_eq!(accounts[0].1.borrow().lamports(), 100);
@@ -1977,6 +2115,7 @@ mod tests {
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
         assert_eq!(
             result,
@@ -2008,6 +2147,7 @@ mod tests {
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
         assert_eq!(
             result,
@@ -2131,6 +2271,7 @@ mod tests {
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
         assert_eq!(
             result,
@@ -2162,6 +2303,7 @@ mod tests {
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
         assert_eq!(result, Ok(()));
 
@@ -2191,6 +2333,7 @@ mod tests {
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
         assert_eq!(result, Ok(()));
         assert_eq!(accounts[0].1.borrow().lamports(), 80);
@@ -2307,6 +2450,7 @@ mod tests {
             Arc::new(feature_set),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
 
         // not owned account modified by the caller (before the invoke)
@@ -2377,6 +2521,7 @@ mod tests {
                 Arc::new(FeatureSet::all_enabled()),
                 Arc::new(Accounts::default()),
                 &ancestors,
+                &None,
             );
 
             let caller_write_privileges = message
@@ -2529,6 +2674,7 @@ mod tests {
             Arc::new(FeatureSet::all_enabled()),
             Arc::new(Accounts::default()),
             &ancestors,
+            &None,
         );
 
         // not owned account modified by the invoker
@@ -2595,6 +2741,7 @@ mod tests {
                 Arc::new(FeatureSet::all_enabled()),
                 Arc::new(Accounts::default()),
                 &ancestors,
+                &None,
             );
 
             assert_eq!(
