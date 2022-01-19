@@ -250,41 +250,27 @@ pub fn flush_boot_snapshot(ledger_path: &Path, bank: &Bank, snapshot_version: Sn
     };
     info!("temp boot snapshot dir: {:?}", boot_snapshot_dir);
     
-    //self.rc.accounts.accounts_db .. GO MARK ALL OF THE APPENDVEC WITH `set_no_remove_on_drop()`
-    
     assert!(bank.is_complete());
-    bank.squash(); // Bank may not be a root
     bank.force_flush_accounts_cache();
     bank.clean_accounts(true, false);
-    bank.update_accounts_hash();
+    bank.update_accounts_hash(); // TODO: on boot, it'll check hash of the accounts state, double check.
     bank.rehash();
-    bank.prevent_deletion_of_append_vecs();
 
     let storages: Vec<_> = bank.get_snapshot_storages();
-    let slot_snapshot_paths =
-        match add_snapshot(&boot_snapshot_dir, bank, &storages, snapshot_version) {
-            Ok(slot_snapshot_paths) => slot_snapshot_paths,
-            Err(e) => panic!("failed to add snapshot: {:?}", e),
-        };
-
-    let package = match package_snapshot(
-        bank,
-        &slot_snapshot_paths,
-        &boot_snapshot_dir,
-        bank.src.slot_deltas(&bank.src.roots()),
-        &boot_snapshot_dir,
-        storages,
-        ArchiveFormat::Boot,
-        snapshot_version,
-        None,
-    ) {
-        Ok(package) => package,
-        Err(e) => panic!("failed to package boot snapshot: {:?}", e),
+    
+    storages.iter().for_each(|e| {
+	e.iter().for_each(|t| {
+	    t.accounts.set_no_remove_on_drop_unchecked();
+	});
+    });
+    
+    if let Err(e) = add_snapshot(&boot_snapshot_dir, bank, &storages, snapshot_version) {
+        panic!("failed to add snapshot: {:?}", e);
     };
 
     match serialize_status_cache(
-        package.slot,
-        &package.slot_deltas,
+        bank.slot(),
+        &bank.src.slot_deltas(&bank.src.roots()),
         &boot_snapshot_dir.join(SNAPSHOT_STATUS_CACHE_FILE_NAME),
     ) {
         Ok(_) => {}
@@ -293,7 +279,7 @@ pub fn flush_boot_snapshot(ledger_path: &Path, bank: &Bank, snapshot_version: Sn
 
     let staging_version_file = boot_snapshot_dir.join("version");
 
-    match write_version_file(staging_version_file, package.snapshot_version) {
+    match write_version_file(staging_version_file, snapshot_version) {
         Ok(_) => return,
         Err(e) => panic!("failed to write snapshot version: {:?}", e),
     };

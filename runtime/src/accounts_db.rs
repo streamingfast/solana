@@ -2484,18 +2484,6 @@ impl AccountsDb {
         }
     }
 
-    pub fn prevent_deletion_of_append_vecs(&self) {
-        self.storage.0.iter_mut().for_each(|e| {
-            e.clone().write().unwrap().iter().for_each(|tuple| {
-		// UNSAFE because the `RwLock` is acquired above:
-		tuple.1.accounts.set_no_remove_on_drop();
-		// unsafe {
-		//     Arc::get_mut_unchecked(&mut entry).accounts.set_no_remove_on_drop();
-		// }
-            })
-        })
-    }
-
     pub fn scan_accounts<F, A>(
         &self,
         ancestors: &Ancestors,
