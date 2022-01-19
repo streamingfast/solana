@@ -256,6 +256,9 @@ fn reconstruct_bank_from_fields<E>(
 where
     E: SerializableStorage + std::marker::Sync,
 {
+    // THE `bank_fields` and `accounts_db_fields` WERE LOADED FROM A SNAPSHOT
+    // FILE LIKE `snapshots/110633762/110633762`
+
     let mut accounts_db = reconstruct_accountsdb_from_fields(
         accounts_db_fields,
         account_paths,

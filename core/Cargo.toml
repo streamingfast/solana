@@ -43,6 +43,7 @@ retain_mut = "0.1.2"
 serde = "1.0.122"
 serde_bytes = "0.11"
 serde_derive = "1.0.103"
+signal-hook = "0.1.17"
 solana-account-decoder = { path = "../account-decoder", version = "=1.7.15" }
 solana-banks-server = { path = "../banks-server", version = "=1.7.15" }
 solana-clap-utils = { path = "../clap-utils", version = "=1.7.15" }

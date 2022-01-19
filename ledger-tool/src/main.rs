@@ -692,9 +692,12 @@ fn load_bank_forks(
             snapshot_interval_slots: 0, // Value doesn't matter
             snapshot_package_output_path,
             snapshot_path,
+            boot_snapshot_path: Default::default(),
             archive_format: ArchiveFormat::TarBzip2,
             snapshot_version: SnapshotVersion::default(),
             maximum_snapshots_to_retain: DEFAULT_MAX_SNAPSHOTS_TO_RETAIN,
+            // TODO: are we SURE we don't want to use boot_snapshot here?!
+            use_boot_snapshot: false,
         })
     };
     let account_paths = if let Some(account_paths) = arg_matches.value_of("account_paths") {

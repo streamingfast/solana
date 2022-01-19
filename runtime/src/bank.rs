@@ -4728,6 +4728,13 @@ impl Bank {
             .flush_accounts_cache(true, Some(self.slot()))
     }
 
+    pub fn prevent_deletion_of_append_vecs(&self) {
+        self.rc
+            .accounts
+            .accounts_db
+            .prevent_deletion_of_append_vecs()
+    }
+
     pub fn flush_accounts_cache_if_needed(&self) {
         self.rc
             .accounts

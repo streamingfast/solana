@@ -4480,6 +4480,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serial_test",
+ "signal-hook",
  "solana-account-decoder",
  "solana-banks-server",
  "solana-clap-utils",

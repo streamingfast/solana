@@ -157,6 +157,7 @@ pub struct AppendVec {
 impl Drop for AppendVec {
     fn drop(&mut self) {
         if self.remove_on_drop {
+	    info!("removing AppendVec file on drop: {:?}", &self.path);
             if let Err(_e) = remove_file(&self.path) {
                 // promote this to panic soon.
                 // disabled due to many false positive warnings while running tests.
@@ -223,8 +224,12 @@ impl AppendVec {
         }
     }
 
-    pub fn set_no_remove_on_drop(&mut self) {
-        self.remove_on_drop = false;
+    pub fn set_no_remove_on_drop(&self) {
+	unsafe {
+	    let const_ptr = &self.remove_on_drop as *const bool;
+	    let mut_ptr = const_ptr as *mut bool;
+	    *mut_ptr = false;
+	}
     }
 
     pub fn new_empty_map(current_len: usize) -> Self {
