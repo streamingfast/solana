@@ -54,6 +54,7 @@ use {
     solana_sdk::{
         clock::{Slot, DEFAULT_S_PER_SLOT},
         commitment_config::CommitmentConfig,
+        deepmind::enable_deepmind,
         hash::Hash,
         pubkey::Pubkey,
         signature::{Keypair, Signer},
@@ -1991,6 +1992,12 @@ pub fn main() {
                 .help("Allow contacting private ip addresses")
                 .hidden(true),
         )
+        .arg(
+            Arg::with_name("deepmind")
+                .long("deepmind")
+                .takes_value(false)
+                .help("Activate/deactivate deep-mind instrumentation, disabled by default. You can override output directory using the DEEPMIND_BATCH_FILES_PATH environment variable."),
+        )
         .after_help("The default subcommand is run")
         .subcommand(
             SubCommand::with_name("exit")
@@ -2313,6 +2320,11 @@ pub fn main() {
             u64
         ),
     };
+
+    if matches.is_present("deepmind") {
+        enable_deepmind();
+        println!("DMLOG INIT VERSION 2");
+    }
 
     let private_rpc = matches.is_present("private_rpc");
     let no_port_check = matches.is_present("no_port_check");

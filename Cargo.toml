@@ -72,6 +72,7 @@ members = [
     "cli",
     "rayon-threadlimit",
     "watchtower",
+    "deepmind-pb",
 ]
 
 exclude = [

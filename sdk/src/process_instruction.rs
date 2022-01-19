@@ -109,6 +109,18 @@ pub trait InvokeContext {
     fn set_return_data(&mut self, return_data: Option<(Pubkey, Vec<u8>)>);
     /// Get the return data
     fn get_return_data(&self) -> &Option<(Pubkey, Vec<u8>)>;
+
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
+    fn dmbatch_start_instruction(
+        &self,
+        program_id: &Pubkey,
+        keyed_accounts: &mut dyn Iterator<Item = &Pubkey>,
+        instruction_data: &[u8],
+    );
+    fn dmbatch_end_instruction(&self);
+    //****************************************************************
 }
 
 /// Convenience macro to log a message with an `Rc<RefCell<dyn Logger>>`
@@ -530,4 +542,17 @@ impl<'a> InvokeContext for MockInvokeContext<'a> {
     fn get_return_data(&self) -> &Option<(Pubkey, Vec<u8>)> {
         &self.return_data
     }
+
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
+    fn dmbatch_start_instruction(
+        &self,
+        _program_id: &Pubkey,
+        _keyed_accounts: &mut dyn Iterator<Item = &Pubkey>,
+        _instruction_data: &[u8],
+    ) {
+    }
+    fn dmbatch_end_instruction(&self) {}
+    //****************************************************************
 }
