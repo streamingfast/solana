@@ -230,12 +230,12 @@ impl AppendVec {
     }
 
     pub fn set_no_remove_on_drop(&mut self) {
-	info!("setting no remove on drop safe: {:?}", self.path);
+	//info!("setting no remove on drop safe: {:?}", self.path);
 	self.remove_on_drop = false;
     }
 
     pub fn set_no_remove_on_drop_unchecked(&self) {
-	info!("setting no remove on drop unchecked: {:?}", self.path);
+	//info!("setting no remove on drop unchecked: {:?}", self.path);
 	unsafe {
 	    let const_ptr = &self.remove_on_drop as *const bool;
 	    let mut_ptr = const_ptr as *mut bool;

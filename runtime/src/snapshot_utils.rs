@@ -238,15 +238,6 @@ pub fn remove_tmp_snapshot_archives(snapshot_path: &Path) {
 pub fn flush_boot_snapshot(ledger_path: &Path, bank: &Bank, snapshot_version: SnapshotVersion) {
     let boot_snapshot_dir = ledger_path.join("boot-snapshot");
 
-    if boot_snapshot_dir.exists() {
-        if let Err(e) = fs::remove_dir_all(&boot_snapshot_dir) {
-            panic!("failed to delete temp boot snapshot dir: {:?}", e);
-        };
-    }
-
-    if let Err(e) = fs::create_dir(&boot_snapshot_dir.clone()) {
-        panic!("failed to create temp boot snapshot dir: {:?}", e);
-    };
     info!("temp boot snapshot dir: {:?}", boot_snapshot_dir);
     
     assert!(bank.is_complete());
@@ -262,6 +253,15 @@ pub fn flush_boot_snapshot(ledger_path: &Path, bank: &Bank, snapshot_version: Sn
 	    t.accounts.set_no_remove_on_drop_unchecked();
 	});
     });
+    
+    if boot_snapshot_dir.exists() {
+        if let Err(e) = fs::remove_dir_all(&boot_snapshot_dir) {
+            panic!("failed to delete temp boot snapshot dir: {:?}", e);
+        };
+    }
+    if let Err(e) = fs::create_dir(&boot_snapshot_dir.clone()) {
+        panic!("failed to create temp boot snapshot dir: {:?}", e);
+    };
     
     if let Err(e) = add_snapshot(&boot_snapshot_dir, bank, &storages, snapshot_version) {
         panic!("failed to add snapshot: {:?}", e);
