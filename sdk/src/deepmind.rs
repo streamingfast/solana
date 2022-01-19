@@ -221,7 +221,7 @@ impl<'a> DMBatchContext {
 
         drop(&self.file);
 
-        println!("DM {} bytes written to file {}", encoded_len, self.filename);
+        //println!("DM {} bytes written to file {}", encoded_len, self.filename);
         println!("DMLOG BATCH_FILE {}", self.filename);
     }
 
