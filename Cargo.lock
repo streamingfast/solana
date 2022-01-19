@@ -4699,6 +4699,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serial_test",
+ "signal-hook",
  "solana-account-decoder",
  "solana-accountsdb-plugin-manager",
  "solana-banks-server",

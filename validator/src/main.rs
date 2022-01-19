@@ -2661,6 +2661,10 @@ pub fn main() {
         }
     };
 
+    let boot_snapshot_path = snapshot_output_dir.join("boot-snapshot");
+    let use_boot_snapshot = boot_snapshot_path.as_path().exists();
+    info!("use boot snapshot: {:?}", use_boot_snapshot);
+
     let snapshot_version =
         matches
             .value_of("snapshot_version")
@@ -2677,11 +2681,13 @@ pub fn main() {
             std::u64::MAX
         },
         snapshot_path,
+        boot_snapshot_path: boot_snapshot_path,
         snapshot_package_output_path: snapshot_output_dir.clone(),
         archive_format,
         snapshot_version,
         maximum_snapshots_to_retain,
         packager_thread_niceness_adj: snapshot_packager_niceness_adj,
+        use_boot_snapshot,
     });
 
     validator_config.accounts_hash_interval_slots =
@@ -2888,8 +2894,18 @@ pub fn main() {
             exit(1);
         });
     }
+    
+    validator.hook_signals();
+
     info!("Validator initialized");
+
+    //let boot_flusher = validator.boot_flusher.clone();
+    
     validator.join();
+    
+    info!("Validator flushing boot snapshot");
+    //boot_flusher.flush_boot_snapshot();
+    
     info!("Validator exiting..");
 }
 

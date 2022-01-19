@@ -24,7 +24,7 @@ use {
     solana_sdk::{clock::Slot, genesis_config::GenesisConfig, hash::Hash, pubkey::Pubkey},
     std::{
         cmp::{max, Ordering},
-        collections::HashSet,
+        collections::{HashMap, HashSet},
         fmt,
         fs::{self, File},
         io::{BufReader, BufWriter, Error as IoError, ErrorKind, Read, Seek, SeekFrom, Write},
@@ -39,9 +39,11 @@ use {
 
 pub const SNAPSHOT_STATUS_CACHE_FILE_NAME: &str = "status_cache";
 
-pub const MAX_SNAPSHOTS: usize = 8; // Save some snapshots but not too many
-const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
+pub const MAX_SNAPSHOTS: usize = 8;
+// Save some snapshots but not too many
 const MAX_SNAPSHOT_VERSION_FILE_SIZE: u64 = 8; // byte
+const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024;
+// 32 GiB
 const VERSION_STRING_V1_2_0: &str = "1.2.0";
 const DEFAULT_SNAPSHOT_VERSION: SnapshotVersion = SnapshotVersion::V1_2_0;
 const TMP_SNAPSHOT_PREFIX: &str = "tmp-snapshot-";
@@ -131,6 +133,7 @@ pub enum SnapshotError {
     #[error("source({1}) - I/O error: {0}")]
     IoWithSource(std::io::Error, &'static str),
 }
+
 pub type Result<T> = std::result::Result<T, SnapshotError>;
 
 impl PartialOrd for SlotSnapshotPaths {
@@ -204,6 +207,7 @@ fn get_archive_ext(archive_format: ArchiveFormat) -> &'static str {
         ArchiveFormat::TarGzip => "tar.gz",
         ArchiveFormat::TarZstd => "tar.zst",
         ArchiveFormat::Tar => "tar",
+        ArchiveFormat::Boot => "boot",
     }
 }
 
@@ -229,6 +233,55 @@ pub fn remove_tmp_snapshot_archives(snapshot_path: &Path) {
             }
         }
     }
+}
+
+pub fn flush_boot_snapshot(ledger_path: &Path, bank: &Bank, snapshot_version: SnapshotVersion) {
+    let boot_snapshot_dir = ledger_path.join("boot-snapshot");
+
+    if boot_snapshot_dir.exists() {
+        if let Err(e) = fs::remove_dir_all(&boot_snapshot_dir) {
+            panic!("failed to delete temp boot snapshot dir: {:?}", e);
+        };
+    }
+
+    if let Err(e) = fs::create_dir(&boot_snapshot_dir.clone()) {
+        panic!("failed to create temp boot snapshot dir: {:?}", e);
+    };
+    info!("temp boot snapshot dir: {:?}", boot_snapshot_dir);
+    
+    assert!(bank.is_complete());
+    bank.force_flush_accounts_cache();
+    bank.clean_accounts(true, false);
+    bank.update_accounts_hash(); // TODO: on boot, it'll check hash of the accounts state, double check.
+    bank.rehash();
+
+    let storages: Vec<_> = bank.get_snapshot_storages();
+    
+    storages.iter().for_each(|e| {
+	e.iter().for_each(|t| {
+	    t.accounts.set_no_remove_on_drop_unchecked();
+	});
+    });
+    
+    if let Err(e) = add_snapshot(&boot_snapshot_dir, bank, &storages, snapshot_version) {
+        panic!("failed to add snapshot: {:?}", e);
+    };
+
+    match serialize_status_cache(
+        bank.slot(),
+        &bank.src.slot_deltas(&bank.src.roots()),
+        &boot_snapshot_dir.join(SNAPSHOT_STATUS_CACHE_FILE_NAME),
+    ) {
+        Ok(_) => {}
+        Err(e) => panic!("failed to serialize status cache: {:?}", e),
+    };
+
+    let staging_version_file = boot_snapshot_dir.join("version");
+
+    match write_version_file(staging_version_file, snapshot_version) {
+        Ok(_) => return,
+        Err(e) => panic!("failed to write snapshot version: {:?}", e),
+    };
 }
 
 pub fn archive_snapshot_package(
@@ -300,13 +353,7 @@ pub fn archive_snapshot_package(
         }
     }
 
-    // Write version file
-    {
-        let mut f = fs::File::create(staging_version_file)
-            .map_err(|e| SnapshotError::IoWithSource(e, "create version file"))?;
-        f.write_all(snapshot_package.snapshot_version.as_str().as_bytes())
-            .map_err(|e| SnapshotError::IoWithSource(e, "write version file"))?;
-    }
+    write_version_file(staging_version_file, snapshot_package.snapshot_version)?;
 
     let file_ext = get_archive_ext(snapshot_package.archive_format);
 
@@ -350,6 +397,7 @@ pub fn archive_snapshot_package(
             ArchiveFormat::Tar => {
                 do_archive_files(&mut archive_file)?;
             }
+            ArchiveFormat::Boot => {}
         };
     }
 
@@ -379,6 +427,13 @@ pub fn archive_snapshot_package(
         ("size", metadata.len(), i64)
     );
     Ok(())
+}
+
+fn write_version_file(version_file: PathBuf, snapshot_version: SnapshotVersion) -> Result<()> {
+    let mut f = fs::File::create(version_file)
+        .map_err(|e| SnapshotError::IoWithSource(e, "create version file"))?;
+    f.write_all(snapshot_version.as_str().as_bytes())
+        .map_err(|e| SnapshotError::IoWithSource(e, "write version file"))
 }
 
 pub fn get_snapshot_paths<P: AsRef<Path>>(snapshot_path: P) -> Vec<SlotSnapshotPaths>
@@ -509,7 +564,16 @@ pub fn add_snapshot<P: AsRef<Path>>(
     let slot = bank.slot();
     // snapshot_path/slot
     let slot_snapshot_dir = get_bank_snapshot_dir(snapshot_path, slot);
-    fs::create_dir_all(slot_snapshot_dir.clone())?;
+
+    if let Err(e) = fs::create_dir_all(slot_snapshot_dir.clone()) {
+        return Err(SnapshotError::Io(IoError::new(
+            ErrorKind::Other,
+            format!(
+                "failed to create boot snapshot temp dir: {:?}: {}",
+                slot_snapshot_dir, e
+            ),
+        )));
+    }
 
     // the bank snapshot is stored as snapshot_path/slot/slot
     let snapshot_bank_file_path = slot_snapshot_dir.join(get_snapshot_file_name(slot));
@@ -556,6 +620,7 @@ fn serialize_status_cache(
     status_cache_path: &Path,
 ) -> Result<()> {
     let mut status_cache_serialize = Measure::start("status_cache_serialize-ms");
+    info!("serializing status cache to: {:?}", status_cache_path);
     let consumed_size = serialize_snapshot_data_file(status_cache_path, |stream| {
         serialize_into(stream, slot_deltas)?;
         Ok(())
@@ -615,6 +680,8 @@ pub fn bank_from_archive<P: AsRef<Path> + std::marker::Sync>(
         .prefix(TMP_SNAPSHOT_PREFIX)
         .tempdir_in(snapshot_path)?;
 
+    let unpacked_snapshots_dir = unpack_dir.as_ref().join("snapshots");
+
     let mut untar = Measure::start("snapshot untar");
     let divisions = std::cmp::min(
         PARALLEL_UNTAR_READERS_DEFAULT,
@@ -627,13 +694,12 @@ pub fn bank_from_archive<P: AsRef<Path> + std::marker::Sync>(
         archive_format,
         divisions,
     )?;
-    untar.stop();
+
     info!("{}", untar);
+    untar.stop();
 
     let mut measure = Measure::start("bank rebuild from snapshot");
-    let unpacked_snapshots_dir = unpack_dir.as_ref().join("snapshots");
     let unpacked_version_file = unpack_dir.as_ref().join("version");
-
     let snapshot_version = snapshot_version_from_file(unpacked_version_file)?;
 
     let bank = rebuild_bank_from_snapshots(
@@ -689,6 +755,98 @@ fn snapshot_version_from_file(path: impl AsRef<Path>) -> Result<String> {
     let mut snapshot_version = String::new();
     File::open(path).and_then(|mut f| f.read_to_string(&mut snapshot_version))?;
     Ok(snapshot_version.trim().to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn bank_from_boot_snapshot(
+    account_paths: &[PathBuf],
+    frozen_account_pubkeys: &[Pubkey],
+    boot_path: &Path,
+    genesis_config: &GenesisConfig,
+    debug_keys: Option<Arc<HashSet<Pubkey>>>,
+    additional_builtins: Option<&Builtins>,
+    account_indexes: AccountSecondaryIndexes,
+    accounts_db_caching_enabled: bool,
+    limit_load_slot_count_from_snapshot: Option<usize>,
+    shrink_ratio: AccountShrinkThreshold,
+    test_hash_calculation: bool,
+    accounts_db_skip_shrink: bool,
+    accounts_update_notifier: Option<AccountsUpdateNotifier>,
+) -> Result<(Bank, BankFromArchiveTimings)> {
+    let mut unpacked_append_vec_map: UnpackedAppendVecMap = HashMap::<String, PathBuf>::new();
+
+    unpacked_append_vec_map.insert("status_cache".to_string(), boot_path.join("status_cache"));
+
+    let re = Regex::new(r"^[0-9]*$").unwrap();
+    for entry in fs::read_dir(boot_path)? {
+        let entry = entry?;
+        let mut file_name = entry.file_name().into_string().unwrap();
+        if re.is_match(file_name.as_str()) {
+            file_name = format!("boot-snapshot/{}/{}", file_name, file_name);
+        }
+        info!("from snapshot boot: {} {:?}", file_name, entry.path());
+        unpacked_append_vec_map.insert(file_name, entry.path().into());
+    }
+
+    for path in account_paths {
+        load_account_path(&path, &mut unpacked_append_vec_map)?;
+    }
+
+    info!("Loading bank from boot snapshot: {:?}", boot_path);
+
+    let mut measure = Measure::start("bank rebuild from snapshot");
+    let unpacked_version_file = boot_path.join("version");
+    let mut snapshot_version = String::new();
+    File::open(unpacked_version_file).and_then(|mut f| f.read_to_string(&mut snapshot_version))?;
+
+    let bank = rebuild_bank_from_snapshots(
+        snapshot_version.trim(),
+        frozen_account_pubkeys,
+        &boot_path,
+        account_paths,
+        unpacked_append_vec_map,
+        genesis_config,
+        debug_keys,
+        additional_builtins,
+        account_indexes,
+        accounts_db_caching_enabled,
+        limit_load_slot_count_from_snapshot,
+        shrink_ratio,
+	accounts_update_notifier,
+    )?;
+    measure.stop();
+
+    let mut verify = Measure::start("verify");
+    if !bank.verify_snapshot_bank(test_hash_calculation, accounts_db_skip_shrink)
+        && limit_load_slot_count_from_snapshot.is_none()
+    {
+        panic!("Snapshot bank for slot {} failed to verify", bank.slot());
+    }
+    verify.stop();
+    let timings = BankFromArchiveTimings {
+        rebuild_bank_from_snapshots_us: measure.as_us(),
+        untar_us: 0,
+        verify_snapshot_bank_us: verify.as_us(),
+    };
+
+    Ok((bank, timings))
+}
+
+fn load_account_path(
+    path: &PathBuf,
+    unpacked_append_vec_map: &mut UnpackedAppendVecMap,
+) -> Result<()> {
+    info!("loading account path: {:?}", path);
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let file_name = entry.file_name().into_string().unwrap();
+        if file_name == "accounts" {
+            load_account_path(&entry.path(), unpacked_append_vec_map)?;
+            continue;
+        }
+        unpacked_append_vec_map.insert(file_name, entry.path().into());
+    }
+    Ok(())
 }
 
 pub fn get_snapshot_archive_path(
@@ -858,6 +1016,9 @@ fn untar_snapshot_in<P: AsRef<Path>>(
             account_paths,
             parallel_divisions,
         )?,
+        ArchiveFormat::Boot => {
+            panic!("Boot archive cannot be untar")
+        }
     };
     Ok(account_paths_map)
 }
@@ -877,6 +1038,9 @@ fn verify_snapshot_version_and_folder(
         })?;
     let mut snapshot_paths = get_snapshot_paths(&unpacked_snapshots_dir);
     if snapshot_paths.len() > 1 {
+        for path in snapshot_paths {
+            info!("snapshot_path: {:?}", path)
+        }
         return Err(get_io_error("invalid snapshot format"));
     }
     let root_paths = snapshot_paths
@@ -907,6 +1071,7 @@ fn rebuild_bank_from_snapshots(
         "Loading bank from {}",
         &root_paths.snapshot_file_path.display()
     );
+    // READING: snapshots/110633762/110633762 from the unpacked snapshot file
     let bank = deserialize_snapshot_data_file(&root_paths.snapshot_file_path, |mut stream| {
         Ok(match snapshot_version_enum {
             SnapshotVersion::V1_2_0 => bank_from_stream(
@@ -933,6 +1098,10 @@ fn rebuild_bank_from_snapshots(
             "Rebuilding status cache from {}",
             status_cache_path.display()
         );
+        // READING: snapshots/status_cache
+        // THIS IS WHAT IS STORED IN `status_cache` A VEC of BankSlotDelta
+        // WHO PRODUCES THIS? Is this cleaned up on booot? On shutdown?
+        // Do we NEED this to boot properly? Can it be regerenated by some other process?
         let slot_deltas: Vec<BankSlotDelta> = bincode::options()
             .with_limit(MAX_SNAPSHOT_DATA_FILE_SIZE)
             .with_fixint_encoding()
@@ -944,6 +1113,11 @@ fn rebuild_bank_from_snapshots(
     bank.src.append(&slot_deltas);
 
     info!("Loaded bank for slot: {}", bank.slot());
+    // WE LOADED THIS FROM THE status_cache AND THE snapshot/12312312/123123123
+    // WHERE DOES IT GO BACK? WAS IT ONLY IN MEMORY? WAS IT REMOVED FROM ROCKSDB?
+    // FROM THIS POINT ON' WHERE IS IT GOING? Into rocksdb? In memory?
+    // Is *this* the only thing we need to restore from disk if we want to pick up from
+    // some `accounts` already present on disk?
     Ok(bank)
 }
 

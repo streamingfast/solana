@@ -24,6 +24,7 @@ pub enum ArchiveFormat {
     TarGzip,
     TarZstd,
     Tar,
+    Boot,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,6 +38,9 @@ pub struct SnapshotConfig {
     // Where to place the snapshots for recent slots
     pub snapshot_path: PathBuf,
 
+    // boot where the fast boot snapshot located
+    pub boot_snapshot_path: PathBuf,
+
     pub archive_format: ArchiveFormat,
 
     // Snapshot version to generate
@@ -47,6 +51,9 @@ pub struct SnapshotConfig {
 
     // Thread niceness adjustment for snapshot packager service
     pub packager_thread_niceness_adj: i8,
+    
+    // Use boot snapshot if available
+    pub use_boot_snapshot: bool,
 }
 
 struct SetRootTimings {
