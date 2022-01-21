@@ -163,12 +163,10 @@ impl Drop for AppendVec {
             info!("AppendVec dropped: {:?}", &self.path);
 
             if let Err(e) = remove_file(&self.path) {
-                info!("AppendVec remove file: {:?}", &self.path);
-                panic!("this is a terrible mistake!");
                 // promote this to panic soon.
                 // disabled due to many false positive warnings while running tests.
                 // blocked by rpc's upgrade to jsonrpc v17
-                //error!("AppendVec failed to remove {:?}: {:?}", &self.path, e);
+                error!("AppendVec failed to remove {:?}: {:?}", &self.path, e);
             }
         }
     }
