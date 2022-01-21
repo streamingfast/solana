@@ -160,9 +160,11 @@ pub struct AppendVec {
 impl Drop for AppendVec {
     fn drop(&mut self) {
         if self.remove_on_drop {
-	    info!("removing AppendVec file on drop: {:?}", &self.path);
+            info!("AppendVec dropped: {:?}", &self.path);
+
             if let Err(e) = remove_file(&self.path) {
-		info!("error removing AppendVec: {:?}", e);
+                info!("AppendVec remove file: {:?}", &self.path);
+                panic!("this is a terrible mistake!");
                 // promote this to panic soon.
                 // disabled due to many false positive warnings while running tests.
                 // blocked by rpc's upgrade to jsonrpc v17
@@ -216,7 +218,7 @@ impl AppendVec {
             std::process::exit(1);
         });
 
-	info!("new append_vec: {:?}", file);
+        info!("new append_vec: {:?}", file);
         AppendVec {
             path: file.to_path_buf(),
             map,
@@ -230,17 +232,17 @@ impl AppendVec {
     }
 
     pub fn set_no_remove_on_drop(&mut self) {
-	//info!("setting no remove on drop safe: {:?}", self.path);
-	self.remove_on_drop = false;
+        //info!("setting no remove on drop safe: {:?}", self.path);
+        self.remove_on_drop = false;
     }
 
     pub fn set_no_remove_on_drop_unchecked(&self) {
-	//info!("setting no remove on drop unchecked: {:?}", self.path);
-	unsafe {
-	    let const_ptr = &self.remove_on_drop as *const bool;
-	    let mut_ptr = const_ptr as *mut bool;
-	    *mut_ptr = false;
-	}
+        //info!("setting no remove on drop unchecked: {:?}", self.path);
+        unsafe {
+            let const_ptr = &self.remove_on_drop as *const bool;
+            let mut_ptr = const_ptr as *mut bool;
+            *mut_ptr = false;
+        }
     }
 
     pub fn new_empty_map(current_len: usize) -> Self {
@@ -311,7 +313,11 @@ impl AppendVec {
         format!("{}.{}", slot, id)
     }
 
-    pub fn new_from_file<P: AsRef<Path>>(path: P, current_len: usize, remove_on_drop: bool) -> io::Result<(Self, usize)> {
+    pub fn new_from_file<P: AsRef<Path>>(
+        path: P,
+        current_len: usize,
+        remove_on_drop: bool,
+    ) -> io::Result<(Self, usize)> {
         let data = OpenOptions::new()
             .read(true)
             .write(true)

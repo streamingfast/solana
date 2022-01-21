@@ -54,7 +54,7 @@ pub fn load(
             snapshot_config.snapshot_path
         );
         if snapshot_config.use_boot_snapshot {
-            info!("Using BOOT snapshot");
+            info!("Using boot snapshot");
             // let _ = fs::remove_dir_all(&snapshot_config.snapshot_path);
             fs::create_dir_all(&snapshot_config.snapshot_path)
                 .expect("Couldn't create snapshot directory");
@@ -68,7 +68,7 @@ pub fn load(
                 process_options,
                 transaction_status_sender,
                 cache_block_meta_sender,
-		accounts_update_notifier,
+                accounts_update_notifier,
             );
         }
 
@@ -235,7 +235,7 @@ fn load_from_boot_snapshot(
         process_options.shrink_ratio,
         process_options.accounts_db_test_hash_calculation,
         process_options.accounts_db_skip_shrink,
-	accounts_update_notifier,
+        accounts_update_notifier,
     )
     .expect("Load from snapshot failed");
     if let Some(shrink_paths) = shrink_paths {

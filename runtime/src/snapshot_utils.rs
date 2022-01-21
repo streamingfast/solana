@@ -239,7 +239,7 @@ pub fn flush_boot_snapshot(ledger_path: &Path, bank: &Bank, snapshot_version: Sn
     let boot_snapshot_dir = ledger_path.join("boot-snapshot");
 
     info!("temp boot snapshot dir: {:?}", boot_snapshot_dir);
-    
+
     assert!(bank.is_complete());
     bank.force_flush_accounts_cache();
     bank.clean_accounts(true, false);
@@ -247,13 +247,13 @@ pub fn flush_boot_snapshot(ledger_path: &Path, bank: &Bank, snapshot_version: Sn
     bank.rehash();
 
     let storages: Vec<_> = bank.get_snapshot_storages();
-    
+
     storages.iter().for_each(|e| {
-	e.iter().for_each(|t| {
-	    t.accounts.set_no_remove_on_drop_unchecked();
-	});
+        e.iter().for_each(|t| {
+            t.accounts.set_no_remove_on_drop_unchecked();
+        });
     });
-    
+
     if boot_snapshot_dir.exists() {
         if let Err(e) = fs::remove_dir_all(&boot_snapshot_dir) {
             panic!("failed to delete temp boot snapshot dir: {:?}", e);
@@ -262,7 +262,7 @@ pub fn flush_boot_snapshot(ledger_path: &Path, bank: &Bank, snapshot_version: Sn
     if let Err(e) = fs::create_dir(&boot_snapshot_dir.clone()) {
         panic!("failed to create temp boot snapshot dir: {:?}", e);
     };
-    
+
     if let Err(e) = add_snapshot(&boot_snapshot_dir, bank, &storages, snapshot_version) {
         panic!("failed to add snapshot: {:?}", e);
     };
@@ -773,6 +773,8 @@ pub fn bank_from_boot_snapshot(
     accounts_db_skip_shrink: bool,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
 ) -> Result<(Bank, BankFromArchiveTimings)> {
+    info!("Loading bank from boot snapshot: {:?}", boot_path);
+
     let mut unpacked_append_vec_map: UnpackedAppendVecMap = HashMap::<String, PathBuf>::new();
 
     unpacked_append_vec_map.insert("status_cache".to_string(), boot_path.join("status_cache"));
@@ -784,15 +786,17 @@ pub fn bank_from_boot_snapshot(
         if re.is_match(file_name.as_str()) {
             file_name = format!("boot-snapshot/{}/{}", file_name, file_name);
         }
-        info!("from snapshot boot: {} {:?}", file_name, entry.path());
+        info!(
+            "adding to unpacked append vecs {} from boot snapshot: {:?}",
+            file_name,
+            entry.path()
+        );
         unpacked_append_vec_map.insert(file_name, entry.path().into());
     }
 
     for path in account_paths {
         load_account_path(&path, &mut unpacked_append_vec_map)?;
     }
-
-    info!("Loading bank from boot snapshot: {:?}", boot_path);
 
     let mut measure = Measure::start("bank rebuild from snapshot");
     let unpacked_version_file = boot_path.join("version");
@@ -812,7 +816,7 @@ pub fn bank_from_boot_snapshot(
         accounts_db_caching_enabled,
         limit_load_slot_count_from_snapshot,
         shrink_ratio,
-	accounts_update_notifier,
+        accounts_update_notifier,
     )?;
     measure.stop();
 
@@ -836,14 +840,19 @@ fn load_account_path(
     path: &PathBuf,
     unpacked_append_vec_map: &mut UnpackedAppendVecMap,
 ) -> Result<()> {
-    info!("loading account path: {:?}", path);
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let file_name = entry.file_name().into_string().unwrap();
+        // TODO: do we want to ignore the "subfolder account"
         if file_name == "accounts" {
             load_account_path(&entry.path(), unpacked_append_vec_map)?;
             continue;
         }
+        info!(
+            "adding to unpacked append vecs {} from boot snapshot: {:?}",
+            file_name,
+            entry.path()
+        );
         unpacked_append_vec_map.insert(file_name, entry.path().into());
     }
     Ok(())
