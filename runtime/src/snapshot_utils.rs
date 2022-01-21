@@ -1242,6 +1242,9 @@ pub fn bank_to_snapshot_archive<P: AsRef<Path>, Q: AsRef<Path>>(
     bank.squash(); // Bank may not be a root
     bank.force_flush_accounts_cache();
     bank.clean_accounts(true, false);
+    bank.shrink_candidate_slots(); // ADD THIS?
+    //bank.shrink_all_slots(true); // ADD THIS? is_startup means you can do in parallel
+    // Q: is `bank.caching_enabld` here?
     bank.update_accounts_hash();
     bank.rehash(); // Bank accounts may have been manually modified by the caller
 
