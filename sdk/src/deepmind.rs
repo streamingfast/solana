@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::{
     borrow::BorrowMut,
     env,
@@ -5,7 +6,6 @@ use std::{
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
 };
-use std::io::Write;
 
 use num_traits::ToPrimitive;
 use prost::Message;
@@ -36,7 +36,7 @@ pub fn deepmind_enabled() -> bool {
 
 pub fn inst_err_to_pb(error: &InstructionError) -> Option<PbInstructionError> {
     return Some(PbInstructionError {
-        error: error.to_string()
+        error: error.to_string(),
     });
 }
 
@@ -44,8 +44,8 @@ impl Instruction {
     pub fn add_account_change(&mut self, pubkey: &Pubkey, _pre: &[u8], post: &[u8]) {
         self.account_changes.push(AccountChange {
             pubkey: pubkey.as_ref().to_vec(),
-            // prev_data: pre.to_vec(),
-            // new_data: post.to_vec(),
+            prev_data: pre.to_vec(),
+            new_data: post.to_vec(),
             new_data_length: post.len().to_u64().expect("length is not a valid size"),
             ..Default::default()
         });
@@ -81,7 +81,7 @@ impl DMTransaction {
     pub fn start_instruction(
         &mut self,
         program_id: &Pubkey,
-        keyed_accounts: &mut dyn Iterator<Item=&Pubkey>,
+        keyed_accounts: &mut dyn Iterator<Item = &Pubkey>,
         instruction_data: &[u8],
     ) {
         let parent_ordinal = *self.call_stack.last().unwrap();
@@ -107,7 +107,7 @@ impl DMTransaction {
 
     pub fn error(&mut self, error: &TransactionError) {
         let pb_trx_error = PbTransactionError {
-            error: error.to_string()
+            error: error.to_string(),
         };
         self.pb_transaction.failed = true;
         self.pb_transaction.error = Some(pb_trx_error)
@@ -134,7 +134,8 @@ pub struct DMBatchContext {
 impl<'a> DMBatchContext {
     pub fn new(batch_id: u64, file_number: usize) -> DMBatchContext {
         let filename = format!("dmlog-{}-{}", file_number + 1, batch_id);
-        let file_dir = env::var("DEEPMIND_BATCH_FILES_PATH").unwrap_or(String::from_str("/tmp").unwrap());
+        let file_dir =
+            env::var("DEEPMIND_BATCH_FILES_PATH").unwrap_or(String::from_str("/tmp").unwrap());
         let file_path = format!("{}/{}", file_dir, filename);
 
         let fl = File::create(&file_path).unwrap();
@@ -191,7 +192,8 @@ impl<'a> DMBatchContext {
         // in a format ConsoleReader appreciated.
 
         let batch = Batch {
-            transactions: self.trxs
+            transactions: self
+                .trxs
                 .drain(..)
                 .into_iter()
                 .map(|x| x.pb_transaction)
@@ -228,7 +230,7 @@ impl<'a> DMBatchContext {
     pub fn start_instruction(
         &mut self,
         program_id: &Pubkey,
-        keyed_accounts: &mut dyn Iterator<Item=&Pubkey>,
+        keyed_accounts: &mut dyn Iterator<Item = &Pubkey>,
         instruction_data: &[u8],
     ) {
         if let Some(transaction) = self.trxs.last_mut() {
