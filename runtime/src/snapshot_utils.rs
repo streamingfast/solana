@@ -240,20 +240,25 @@ pub fn flush_boot_snapshot(ledger_path: &Path, bank: &Bank, snapshot_version: Sn
 
     info!("temp boot snapshot dir: {:?}", boot_snapshot_dir);
 
-    // !accounts_db_caching_enabled ->
-    //      snapshot_root_bank.process_stale_slot_with_budget(0, SHRUNKEN_ACCOUNT_PER_INTERVAL);
-    // accounts_db_caching_enabled ->
-    //      snapshot_root_bank.force_flush_accounts_cache();
-    // snapshot_root_bank.update_accounts_hash_with_index_option(...);
-    // snapshot_root_bank.clean_accounts(true, false);
-    // accounts_db_caching_enabled ->
-    //      snapshot_root_bank.shrink_candidate_slots
-    // snapshot_bank
-
     assert!(bank.is_complete());
+
+    info!("Task: force flush account cache");
     bank.force_flush_accounts_cache();
+    assert!(
+        bank.slot()
+            <= bank
+                .rc
+                .accounts
+                .accounts_db
+                .accounts_cache
+                .fetch_max_flush_root()
+    );
+
+    info!("Task: Update accounts hash");
     bank.update_accounts_hash(); // TODO: on boot, it'll check hash of the accounts state, double check.
+    info!("Task: Cleaning accounts");
     bank.clean_accounts(true, false);
+    info!("Task: shrinking candidate slots");
     bank.shrink_candidate_slots();
     // bank.rehash();
 
@@ -1253,7 +1258,6 @@ pub fn bank_to_snapshot_archive<P: AsRef<Path>, Q: AsRef<Path>>(
     bank.squash(); // Bank may not be a root
     bank.force_flush_accounts_cache();
     bank.clean_accounts(true, false);
-    bank.shrink_candidate_slots();
     bank.update_accounts_hash();
     bank.rehash(); // Bank accounts may have been manually modified by the caller
 
