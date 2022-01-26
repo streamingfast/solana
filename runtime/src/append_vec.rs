@@ -371,8 +371,14 @@ impl AppendVec {
             num_accounts += 1;
         }
         let aligned_current_len = u64_align!(self.current_len.load(Ordering::Relaxed));
-
-        (offset == aligned_current_len, num_accounts)
+        let sanitized = offset == aligned_current_len;
+        if !sanitized {
+            info!(
+                "append vec not sanitized, estimated current_len would be: {}",
+                offset
+            );
+        }
+        (sanitized, num_accounts)
     }
 
     /// Get a reference to the data at `offset` of `size` bytes if that slice
