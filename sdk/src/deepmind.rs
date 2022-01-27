@@ -41,11 +41,11 @@ pub fn inst_err_to_pb(error: &InstructionError) -> Option<PbInstructionError> {
 }
 
 impl Instruction {
-    pub fn add_account_change(&mut self, pubkey: &Pubkey, pre: &[u8], post: &[u8]) {
+    pub fn add_account_change(&mut self, pubkey: &Pubkey, _pre: &[u8], post: &[u8]) {
         self.account_changes.push(AccountChange {
             pubkey: pubkey.as_ref().to_vec(),
-            prev_data: pre.to_vec(),
-            new_data: post.to_vec(),
+            // prev_data: pre.to_vec(),
+            // new_data: post.to_vec(),
             new_data_length: post.len().to_u64().expect("length is not a valid size"),
             ..Default::default()
         });
