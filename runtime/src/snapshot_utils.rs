@@ -1,3 +1,4 @@
+use crate::append_vec::AppendVec;
 use {
     crate::{
         accounts_db::{AccountShrinkThreshold, AccountsDb},
@@ -260,12 +261,15 @@ pub fn flush_boot_snapshot(ledger_path: &Path, bank: &Bank, snapshot_version: Sn
     bank.clean_accounts(true, false);
     info!("Task: shrinking candidate slots");
     bank.shrink_candidate_slots();
-    // bank.rehash();
 
     let storages: Vec<_> = bank.get_snapshot_storages();
 
     storages.iter().for_each(|e| {
         e.iter().for_each(|t| {
+            info!(
+                "boot_flush bank_storage expect account :{:?}",
+                &t.accounts.get_path()
+            );
             t.accounts.set_no_remove_on_drop_unchecked();
         });
     });
