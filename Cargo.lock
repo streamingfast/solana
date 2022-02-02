@@ -5665,6 +5665,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-snapshot-tool"
+version = "1.8.12"
+dependencies = [
+ "clap",
+ "log 0.4.14",
+ "solana-logger 1.8.12",
+ "solana-measure",
+ "solana-runtime",
+ "solana-sdk",
+ "solana-version",
+]
+
+[[package]]
 name = "solana-stake-accounts"
 version = "1.8.12"
 dependencies = [
