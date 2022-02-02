@@ -12,7 +12,7 @@ use {
 fn main() {
     solana_logger::setup_with_default("solana=info");
 
-    let ledger_path_buf = PathBuf::from("/data/sf-data/mindreader/data/testdata");
+    let ledger_path_buf = PathBuf::from("/data/sf-data/mindreader/data/testdata/boot-snapshot");
     let ledger_path = ledger_path_buf.as_path();
 
     // TODO: load genesis_config
