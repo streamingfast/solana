@@ -1,4 +1,3 @@
-use crate::append_vec::AppendVec;
 use {
     crate::{
         accounts_db::{AccountShrinkThreshold, AccountsDb},
