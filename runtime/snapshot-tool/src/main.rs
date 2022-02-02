@@ -12,15 +12,15 @@ use {
 fn main() {
     solana_logger::setup_with_default("solana=info");
 
-    let ledger_path_buf = PathBuf::from("/Users/abourget/dev/solana/testdata");
+    let ledger_path_buf = PathBuf::from("/data/sf-data/mindreader/data/testdata/accounts");
     let ledger_path = ledger_path_buf.as_path();
 
     // TODO: load genesis_config
     let genesis_config = GenesisConfig::load(ledger_path).unwrap();
 
-    let res = bank_from_boot_snapshot(
+    let (bank, _timings) = bank_from_boot_snapshot(
         &[PathBuf::from(
-            "/Users/abourget/dev/solana/testdata/accounts",
+            "/data/sf-data/mindreader/data/testdata/accounts",
         )],
         &[],
         &ledger_path,
@@ -37,7 +37,17 @@ fn main() {
         false,
         false,
         None,
-    );
+    ).unwrap();
+
+    let storages: Vec<_> = bank.get_snapshot_storages();
+
+    storages.iter().for_each(|e| {
+        e.iter().for_each(|t| {
+	    info!("reference to snapshot storage: {:?}", &t.get_path());
+            //t.accounts.set_no_remove_on_drop_unchecked();
+        });
+    });
+    
 }
 
 #[cfg(test)]
