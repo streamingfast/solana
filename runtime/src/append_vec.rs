@@ -160,7 +160,6 @@ pub struct AppendVec {
 impl Drop for AppendVec {
     fn drop(&mut self) {
         if self.remove_on_drop {
-            info!("AppendVec dropped: {:?}", &self.path);
 
             if let Err(e) = remove_file(&self.path) {
                 // promote this to panic soon.

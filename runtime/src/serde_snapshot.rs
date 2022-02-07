@@ -349,7 +349,6 @@ where
             let mut new_slot_storage = HashMap::new();
             for storage_entry in slot_storage {
                 let file_name = AppendVec::file_name(*slot, storage_entry.id());
-                info!("expecting to have: {:?} in unpacked append vecs", file_name);
                 let append_vec_path = unpacked_append_vec_map.get(&file_name).ok_or_else(|| {
                     io::Error::new(
                         io::ErrorKind::NotFound,

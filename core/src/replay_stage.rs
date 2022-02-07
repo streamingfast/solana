@@ -1840,9 +1840,6 @@ impl ReplayStage {
                         bank.hash(),
                         bank.unix_timestamp_from_genesis(),
                         bank.clock().unix_timestamp,
-                        // "replay stage",
-                        // bank.last_blockhash(),
-                        // bank.parent_hash()
                     );
                 }
                 //****************************************************************

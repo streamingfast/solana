@@ -234,9 +234,13 @@ impl BankForks {
         let old_epoch = self.root_bank().epoch();
         self.root = root;
 
+        //****************************************************************
+        // DMLOG
+        //****************************************************************
         if deepmind_enabled() {
             println!("DMLOG BLOCK_ROOT {}", root);
         }
+        //****************************************************************
 
         let set_root_start = Instant::now();
         let root_bank = self
