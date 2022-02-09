@@ -101,6 +101,11 @@ impl DMTransaction {
         });
     }
 
+    pub fn set_instruction_logs(&mut self, logs: Vec<String>) {
+        let mut instruction = self.active_instruction();
+        instruction.logs = logs
+    }
+
     pub fn end_instruction(&mut self) {
         self.call_stack.pop();
     }
@@ -238,6 +243,12 @@ impl<'a> DMBatchContext {
         // Do we panic here? this should never happen?
     }
 
+    pub fn set_instruction_logs(&mut self, logs: Vec<String>) {
+        if let Some(transaction) = self.trxs.last_mut() {
+            transaction.set_instruction_logs(logs)
+        }
+    }
+
     pub fn end_instruction(&mut self) {
         if let Some(transaction) = self.trxs.last_mut() {
             transaction.end_instruction()
@@ -257,6 +268,7 @@ impl<'a> DMBatchContext {
             instruction.add_account_change(pubkey, pre, post);
         }
     }
+
     pub fn lamport_change(&mut self, pubkey: &Pubkey, pre: u64, post: u64) {
         if let Some(transaction) = self.trxs.last_mut() {
             let instruction = transaction.active_instruction();
