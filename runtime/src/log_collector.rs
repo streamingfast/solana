@@ -50,7 +50,7 @@ impl LogCollector {
 
     pub fn get_instruction_message(&self) -> Vec<String> {
         let inner = self.inner.borrow_mut();
-        inner.messages.clone()
+        inner.instruction_messages.clone()
     }
     //****************************************************************
 }
