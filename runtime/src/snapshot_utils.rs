@@ -700,6 +700,7 @@ pub fn bank_from_archive<P: AsRef<Path> + std::marker::Sync>(
         .tempdir_in(snapshot_path)?;
 
     let unpacked_snapshots_dir = unpack_dir.as_ref().join("snapshots");
+    info!("PRINTING {:?}", unpacked_snapshots_dir);
 
     let mut untar = Measure::start("snapshot untar");
     let divisions = std::cmp::min(
