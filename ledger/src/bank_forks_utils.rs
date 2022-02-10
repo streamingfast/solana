@@ -147,7 +147,7 @@ fn load_from_snapshot(
     archive_format: ArchiveFormat,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
 ) -> LoadResult {
-    info!("Loading snapshot package: {:?}", archive_filename);
+    info!("Loading snapshot packagess: {:?}", archive_filename);
 
     // Fail hard here if snapshot fails to load, don't silently continue
     if account_paths.is_empty() {
