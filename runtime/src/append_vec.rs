@@ -160,7 +160,6 @@ pub struct AppendVec {
 impl Drop for AppendVec {
     fn drop(&mut self) {
         if self.remove_on_drop {
-
             if let Err(e) = remove_file(&self.path) {
                 // promote this to panic soon.
                 // disabled due to many false positive warnings while running tests.
@@ -215,7 +214,6 @@ impl AppendVec {
             std::process::exit(1);
         });
 
-        info!("new append_vec: {:?}", file);
         AppendVec {
             path: file.to_path_buf(),
             map,
