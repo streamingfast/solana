@@ -698,9 +698,12 @@ pub fn bank_from_archive<P: AsRef<Path> + std::marker::Sync>(
     let unpack_dir = tempfile::Builder::new()
         .prefix(TMP_SNAPSHOT_PREFIX)
         .tempdir_in(snapshot_path)?;
+    info!(
+        "Loading bank from archive. unpacking here {:?} with accounts paths: {:?}",
+        unpack_dir, account_paths
+    );
 
     let unpacked_snapshots_dir = unpack_dir.as_ref().join("snapshots");
-    info!("PRINTING {:?}", unpacked_snapshots_dir);
 
     let mut untar = Measure::start("snapshot untar");
     let divisions = std::cmp::min(

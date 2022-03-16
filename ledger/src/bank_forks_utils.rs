@@ -50,9 +50,10 @@ pub fn load(
 ) -> LoadResult {
     if let Some(snapshot_config) = snapshot_config.as_ref() {
         info!(
-            "Initializing snapshot path: {:?}",
-            snapshot_config.snapshot_path
+            "Initializing snapshot path: {:?}, snapshot package output path: {:?}",
+            snapshot_config.snapshot_path, snapshot_config.snapshot_package_output_path
         );
+
         if snapshot_config.use_boot_snapshot {
             info!("Using boot snapshot");
             // let _ = fs::remove_dir_all(&snapshot_config.snapshot_path);
@@ -147,7 +148,10 @@ fn load_from_snapshot(
     archive_format: ArchiveFormat,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
 ) -> LoadResult {
-    info!("Loading snapshot packagess: {:?}", archive_filename);
+    info!(
+        "Loading snapshot packages: snapshot tar {:?}, ",
+        archive_filename,
+    );
 
     // Fail hard here if snapshot fails to load, don't silently continue
     if account_paths.is_empty() {
