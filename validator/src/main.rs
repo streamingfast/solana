@@ -2332,7 +2332,7 @@ pub fn main() {
 
     if matches.is_present("deepmind") {
         enable_deepmind();
-        println!("DMLOG INIT VERSION 2");
+        println!("DMLOG INIT VERSION {:?}", solana_version::version!());
     }
 
     let private_rpc = matches.is_present("private_rpc");
@@ -2901,18 +2901,18 @@ pub fn main() {
             exit(1);
         });
     }
-    
+
     validator.hook_signals();
 
     info!("Validator initialized");
 
     //let boot_flusher = validator.boot_flusher.clone();
-    
+
     validator.join();
-    
+
     info!("Validator flushing boot snapshot");
     //boot_flusher.flush_boot_snapshot();
-    
+
     info!("Validator exiting..");
 }
 
