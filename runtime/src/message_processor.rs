@@ -1506,16 +1506,16 @@ impl MessageProcessor {
         //****************************************************************
         // DMLOG: This is the call entry point for top level instructions
         //****************************************************************
-        // if let Some(ctx_ref) = &dmbatch_context {
-        //     let ctx = ctx_ref.deref();
-        //     if let Some(log_collector) = log_collector {
-        //         let logs = log_collector.get_instruction_message();
-        //         ctx.borrow_mut().set_instruction_logs(logs);
-        //         log_collector.clear_instruction_message();
-        //     }
-        //
-        //     ctx.borrow_mut().end_instruction();
-        // }
+        if let Some(ctx_ref) = &dmbatch_context {
+            // let ctx = ctx_ref.deref();
+            // if let Some(log_collector) = log_collector {
+            //     let logs = log_collector.get_instruction_message();
+            //     ctx.borrow_mut().set_instruction_logs(logs);
+            //     log_collector.clear_instruction_message();
+            // }
+
+            ctx.borrow_mut().end_instruction();
+        }
         //****************************************************************
 
         time.stop();
