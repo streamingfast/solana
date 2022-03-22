@@ -3568,7 +3568,7 @@ impl Bank {
                         };
 
                         let log_collector = if enable_log_recording {
-                            Some(Rc::new(LogCollector::default()))
+                            Some(Rc::new(LogCollector::new(dmbatch_context.clone())))
                         } else {
                             None
                         };

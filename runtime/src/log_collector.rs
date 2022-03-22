@@ -1,4 +1,8 @@
+use solana_sdk::deepmind::DMBatchContext;
+use std::borrow::BorrowMut;
 use std::cell::RefCell;
+use std::ops::Deref;
+use std::rc::Rc;
 
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;
 
@@ -16,17 +20,28 @@ struct LogCollectorInner {
 
 #[derive(Default)]
 pub struct LogCollector {
+    dmbatch_context: Option<Rc<RefCell<DMBatchContext>>>,
     inner: RefCell<LogCollectorInner>,
 }
 
 impl LogCollector {
+    pub fn new(dmbatch_context: Option<Rc<RefCell<DMBatchContext>>>) -> Self {
+        return LogCollector {
+            dmbatch_context,
+            inner: RefCell::new(Default::default()),
+        };
+    }
     pub fn log(&self, message: &str) {
         let mut inner = self.inner.borrow_mut();
 
         //****************************************************************
         // DEEPMIND
         //****************************************************************
-        inner.instruction_messages.push(message.to_string());
+        if let Some(ctx_ref) = &self.dmbatch_context {
+            let ctx = ctx_ref.deref();
+            ctx.borrow_mut().add_instruction_log(message.to_string());
+        }
+        // inner.instruction_messages.push(message.to_string());
         //****************************************************************
 
         if inner.bytes_written + message.len() >= LOG_MESSAGES_BYTES_LIMIT {

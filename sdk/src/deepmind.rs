@@ -112,37 +112,47 @@ impl DMTransaction {
         });
     }
 
-    pub fn set_instruction_logs(&mut self, logs: Vec<String>) {
+    // pub fn set_instruction_logs(&mut self, logs: Vec<String>) {
+    //     self.ordinal_count += 1;
+    //     let total_ordinal = self.ordinal_count;
+    //     let mut instruction = self.active_instruction();
+    //     for val in logs.iter() {
+    //         instruction.logs.push(Log {
+    //             message: val.to_string(),
+    //             total_ordinal,
+    //         })
+    //     }
+    // }
+
+    pub fn add_instruction_log(&mut self, log: String) {
         self.ordinal_count += 1;
-        let o = self.ordinal_count;
+        let total_ordinal = self.ordinal_count;
         let mut instruction = self.active_instruction();
-        for val in logs.iter() {
-            instruction.logs.push(Log {
-                message: val.to_string(),
-                total_ordinal: o,
-            })
-        }
+        instruction.logs.push(Log {
+            message: log.to_string(),
+            total_ordinal,
+        })
     }
 
     pub fn add_instruction_account_change(&mut self, pubkey: &Pubkey, pre: &[u8], post: &[u8]) {
         self.ordinal_count += 1;
-        let o = self.ordinal_count;
+        let total_ordinal = self.ordinal_count;
         let mut instruction = self.active_instruction();
-        instruction.add_account_change(pubkey, pre, post, o);
+        instruction.add_account_change(pubkey, pre, post, total_ordinal);
     }
 
     pub fn add_instruction_lamport_change(&mut self, pubkey: &Pubkey, pre: u64, post: u64) {
         self.ordinal_count += 1;
-        let o = self.ordinal_count;
+        let total_ordinal = self.ordinal_count;
         let mut instruction = self.active_instruction();
-        instruction.add_lamport_change(pubkey, pre, post, 0);
+        instruction.add_lamport_change(pubkey, pre, post, total_ordinal);
     }
 
     pub fn end_instruction(&mut self) {
         self.ordinal_count += 1;
-        let o = self.ordinal_count;
+        let total_ordinal = self.ordinal_count;
         let mut instruction = self.active_instruction();
-        instruction.end_total_ordinal = o;
+        instruction.end_total_ordinal = total_ordinal;
         self.call_stack.pop();
     }
 
@@ -280,9 +290,15 @@ impl<'a> DMBatchContext {
         }
     }
 
-    pub fn set_instruction_logs(&mut self, logs: Vec<String>) {
+    // pub fn set_instruction_logs(&mut self, logs: Vec<String>) {
+    //     if let Some(transaction) = self.trxs.last_mut() {
+    //         transaction.set_instruction_logs(logs)
+    //     }
+    // }
+
+    pub fn add_instruction_log(&mut self, log: String) {
         if let Some(transaction) = self.trxs.last_mut() {
-            transaction.set_instruction_logs(logs)
+            transaction.add_instruction_log(log)
         }
     }
 
