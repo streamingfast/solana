@@ -285,7 +285,7 @@ impl PreAccount {
             if is_writable && (pre.data() != post.data()) {
                 let ctx = ctx_ref.deref();
                 ctx.borrow_mut()
-                    .account_change(&self.key, pre.data(), post.data())
+                    .add_account_change(&self.key, pre.data(), post.data())
             }
         }
         //****************************************************************
@@ -1285,8 +1285,11 @@ impl MessageProcessor {
                 let post_lamports = account.lamports();
                 if let Some(ctx_ref) = dmbatch_context {
                     let ctx = ctx_ref.deref();
-                    ctx.borrow_mut()
-                        .lamport_change(account.owner(), pre_lamports, post_lamports)
+                    ctx.borrow_mut().add_lamport_change(
+                        account.owner(),
+                        pre_lamports,
+                        post_lamports,
+                    )
                 }
                 //****************************************************************
 
