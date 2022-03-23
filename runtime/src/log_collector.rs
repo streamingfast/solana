@@ -14,7 +14,7 @@ struct LogCollectorInner {
     //****************************************************************
     // DEEPMIND
     //****************************************************************
-    instruction_messages: Vec<String>,
+    // instruction_messages: Vec<String>,
     //****************************************************************
 }
 
@@ -41,8 +41,7 @@ impl LogCollector {
             let ctx = ctx_ref.deref();
             ctx.borrow_mut().add_instruction_log(message.to_string());
         }
-        println!("DMLOG MESSAGE {}", message.to_string());
-        inner.instruction_messages.push(message.to_string());
+        // inner.instruction_messages.push(message.to_string());
         //****************************************************************
 
         if inner.bytes_written + message.len() >= LOG_MESSAGES_BYTES_LIMIT {
@@ -59,15 +58,15 @@ impl LogCollector {
     //****************************************************************
     // DEEPMIND
     //****************************************************************
-    pub fn clear_instruction_message(&self) {
-        let mut inner = self.inner.borrow_mut();
-        inner.instruction_messages.clear()
-    }
-
-    pub fn get_instruction_message(&self) -> Vec<String> {
-        let inner = self.inner.borrow_mut();
-        inner.instruction_messages.clone()
-    }
+    // pub fn clear_instruction_message(&self) {
+    //     let mut inner = self.inner.borrow_mut();
+    //     inner.instruction_messages.clear()
+    // }
+    //
+    // pub fn get_instruction_message(&self) -> Vec<String> {
+    //     let inner = self.inner.borrow_mut();
+    //     inner.instruction_messages.clone()
+    // }
     //****************************************************************
 }
 
