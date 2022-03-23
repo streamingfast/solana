@@ -164,10 +164,6 @@ impl DMTransaction {
         self.pb_transaction.error = Some(pb_trx_error)
     }
 
-    pub fn add_log(&mut self, log: String) {
-        self.pb_transaction.log_messages.push(log)
-    }
-
     pub fn active_instruction(&mut self) -> &mut Instruction {
         return self.pb_transaction.instructions[(self.call_stack.last().unwrap() - 1)]
             .borrow_mut();
@@ -324,12 +320,6 @@ impl<'a> DMBatchContext {
         if let Some(transaction) = self.trxs.last_mut() {
             let instruction = transaction.active_instruction();
             instruction.error(error);
-        }
-    }
-
-    pub fn add_log(&mut self, log: String) {
-        if let Some(transaction) = self.trxs.last_mut() {
-            transaction.add_log(log);
         }
     }
 }

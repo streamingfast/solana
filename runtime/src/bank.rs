@@ -3626,19 +3626,6 @@ impl Bank {
                             &tx.message,
                         ));
 
-                        //****************************************************************
-                        // DMLOG
-                        //****************************************************************
-                        if let Some(ctx_ref) = &dmbatch_context {
-                            let ctx = ctx_ref.deref();
-                            for logs in dm_log_messages.clone() {
-                                for log in logs {
-                                    ctx.borrow_mut().add_log(log);
-                                }
-                            }
-                        }
-                        //****************************************************************
-
                         if let Err(e) = Self::refcells_to_accounts(
                             &mut loaded_transaction.accounts,
                             &mut loaded_transaction.loaders,

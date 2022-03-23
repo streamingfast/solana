@@ -78,19 +78,16 @@ pub struct Transaction {
     /// From the original Message object
     #[prost(bytes = "vec", tag = "6")]
     pub recent_blockhash: ::prost::alloc::vec::Vec<u8>,
-    /// What follows Once executed these can be set:
-    #[prost(string, repeated, tag = "7")]
-    pub log_messages: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// Instructions, containing both top-level and nested transactions
-    #[prost(message, repeated, tag = "8")]
+    #[prost(message, repeated, tag = "7")]
     pub instructions: ::prost::alloc::vec::Vec<Instruction>,
-    #[prost(bool, tag = "9")]
+    #[prost(bool, tag = "8")]
     pub failed: bool,
-    #[prost(message, optional, tag = "10")]
+    #[prost(message, optional, tag = "9")]
     pub error: ::core::option::Option<TransactionError>,
-    #[prost(uint64, tag = "11")]
+    #[prost(uint64, tag = "10")]
     pub begin_total_ordinal: u64,
-    #[prost(uint64, tag = "12")]
+    #[prost(uint64, tag = "11")]
     pub end_total_ordinal: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
