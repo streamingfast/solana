@@ -41,6 +41,7 @@ impl LogCollector {
             let ctx = ctx_ref.deref();
             ctx.borrow_mut().add_instruction_log(message.to_string());
         }
+        println!("DMLOG MESSAGE {}", message.to_string());
         inner.instruction_messages.push(message.to_string());
         //****************************************************************
 
