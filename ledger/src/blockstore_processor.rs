@@ -936,6 +936,9 @@ pub fn confirm_slot(
             }
         }
 
+        if slot == 117503057 {
+            panic!("DONE");
+        }
         println!(
             "DMLOG BLOCK_WORK {} {} {} {} {} {} {} {} {} {} {} {} T;{}",
             bank.parent_slot(),
@@ -1375,9 +1378,9 @@ fn process_single_slot(
     })?;
 
     bank.freeze(); // all banks handled by this routine are created from complete slots
-   //****************************************************************
-   // DMLOG
-   //****************************************************************
+                   //****************************************************************
+                   // DMLOG
+                   //****************************************************************
     if deepmind_enabled() {
         println!(
             "DMLOG BLOCK_END {} {:?} {} {}",

@@ -41,7 +41,7 @@ impl LogCollector {
             let ctx = ctx_ref.deref();
             ctx.borrow_mut().add_instruction_log(message.to_string());
         }
-        // inner.instruction_messages.push(message.to_string());
+        inner.instruction_messages.push(message.to_string());
         //****************************************************************
 
         if inner.bytes_written + message.len() >= LOG_MESSAGES_BYTES_LIMIT {

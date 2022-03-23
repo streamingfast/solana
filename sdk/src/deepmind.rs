@@ -53,15 +53,15 @@ impl Instruction {
     pub fn add_account_change(
         &mut self,
         pubkey: &Pubkey,
-        _pre: &[u8],
+        pre: &[u8],
         post: &[u8],
         total_ordinal: u64,
     ) {
         self.account_changes.push(AccountChange {
             pubkey: pubkey.as_ref().to_vec(),
             total_ordinal,
-            // prev_data: pre.to_vec(),
-            // new_data: post.to_vec(),
+            prev_data: pre.to_vec(),
+            new_data: post.to_vec(),
             new_data_length: post.len().to_u64().expect("length is not a valid size"),
             ..Default::default()
         });
@@ -112,17 +112,17 @@ impl DMTransaction {
         });
     }
 
-    // pub fn set_instruction_logs(&mut self, logs: Vec<String>) {
-    //     self.ordinal_count += 1;
-    //     let total_ordinal = self.ordinal_count;
-    //     let mut instruction = self.active_instruction();
-    //     for val in logs.iter() {
-    //         instruction.logs.push(Log {
-    //             message: val.to_string(),
-    //             total_ordinal,
-    //         })
-    //     }
-    // }
+    pub fn set_instruction_logs(&mut self, logs: Vec<String>) {
+        self.ordinal_count += 1;
+        let total_ordinal = self.ordinal_count;
+        let mut instruction = self.active_instruction();
+        for val in logs.iter() {
+            instruction.logs.push(Log {
+                message: val.to_string(),
+                total_ordinal,
+            })
+        }
+    }
 
     pub fn add_instruction_log(&mut self, log: String) {
         self.ordinal_count += 1;
@@ -290,11 +290,11 @@ impl<'a> DMBatchContext {
         }
     }
 
-    // pub fn set_instruction_logs(&mut self, logs: Vec<String>) {
-    //     if let Some(transaction) = self.trxs.last_mut() {
-    //         transaction.set_instruction_logs(logs)
-    //     }
-    // }
+    pub fn set_instruction_logs(&mut self, logs: Vec<String>) {
+        if let Some(transaction) = self.trxs.last_mut() {
+            transaction.set_instruction_logs(logs)
+        }
+    }
 
     pub fn add_instruction_log(&mut self, log: String) {
         if let Some(transaction) = self.trxs.last_mut() {
