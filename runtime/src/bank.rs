@@ -3567,7 +3567,8 @@ impl Bank {
                             None
                         };
 
-                        let log_collector = if enable_log_recording {
+                        let should_log = enable_log_recording || dmbatch_context.is_some();
+                        let log_collector = if should_log {
                             Some(Rc::new(LogCollector::new(dmbatch_context.clone())))
                         } else {
                             None
