@@ -123,9 +123,9 @@ pub struct Instruction {
     pub data: ::prost::alloc::vec::Vec<u8>,
     // What follows is execution trace data, could be empty for un-executed transactions.
     #[prost(uint32, tag = "6")]
-    pub ordinal: u32,
+    pub index: u32,
     #[prost(uint32, tag = "7")]
-    pub parent_ordinal: u32,
+    pub parent_index: u32,
     #[prost(uint32, tag = "8")]
     pub depth: u32,
     #[prost(message, repeated, tag = "9")]

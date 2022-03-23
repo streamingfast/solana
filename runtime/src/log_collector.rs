@@ -11,11 +11,6 @@ struct LogCollectorInner {
     messages: Vec<String>,
     bytes_written: usize,
     limit_warning: bool,
-    //****************************************************************
-    // DEEPMIND
-    //****************************************************************
-    // instruction_messages: Vec<String>,
-    //****************************************************************
 }
 
 #[derive(Default)]
@@ -41,7 +36,6 @@ impl LogCollector {
             let ctx = ctx_ref.deref();
             ctx.borrow_mut().add_instruction_log(message.to_string());
         }
-        // inner.instruction_messages.push(message.to_string());
         //****************************************************************
 
         if inner.bytes_written + message.len() >= LOG_MESSAGES_BYTES_LIMIT {
@@ -54,20 +48,6 @@ impl LogCollector {
             inner.messages.push(message.to_string());
         }
     }
-
-    //****************************************************************
-    // DEEPMIND
-    //****************************************************************
-    // pub fn clear_instruction_message(&self) {
-    //     let mut inner = self.inner.borrow_mut();
-    //     inner.instruction_messages.clear()
-    // }
-    //
-    // pub fn get_instruction_message(&self) -> Vec<String> {
-    //     let inner = self.inner.borrow_mut();
-    //     inner.instruction_messages.clone()
-    // }
-    //****************************************************************
 }
 
 impl From<LogCollector> for Vec<String> {

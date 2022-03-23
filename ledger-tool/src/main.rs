@@ -1515,7 +1515,7 @@ fn main() {
 
     if matches.is_present("deepmind") {
         enable_deepmind();
-        println!("DMLOG INIT VERSION {:?}", solana_version::version!());
+        println!("DMLOG INIT VERSION {}", solana_version::version!());
     }
 
     let snapshot_archive_path = value_t!(matches, "snapshot_archive_path", String)
