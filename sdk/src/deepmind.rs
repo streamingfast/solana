@@ -50,16 +50,9 @@ impl Instruction {
         }
     }
 
-    pub fn add_account_change(
-        &mut self,
-        pubkey: &Pubkey,
-        pre: &[u8],
-        post: &[u8],
-        total_ordinal: u64,
-    ) {
+    pub fn add_account_change(&mut self, pubkey: &Pubkey, pre: &[u8], post: &[u8]) {
         self.account_changes.push(AccountChange {
             pubkey: pubkey.as_ref().to_vec(),
-            total_ordinal,
             prev_data: pre.to_vec(),
             new_data: post.to_vec(),
             new_data_length: post.len().to_u64().expect("length is not a valid size"),
@@ -67,12 +60,11 @@ impl Instruction {
         });
     }
 
-    pub fn add_lamport_change(&mut self, pubkey: &Pubkey, pre: u64, post: u64, total_ordinal: u64) {
+    pub fn add_lamport_change(&mut self, pubkey: &Pubkey, pre: u64, post: u64) {
         self.balance_changes.push(BalanceChange {
             pubkey: pubkey.as_ref().to_vec(),
             prev_lamports: pre,
             new_lamports: post,
-            total_ordinal,
             ..Default::default()
         });
     }
@@ -107,52 +99,36 @@ impl DMTransaction {
             depth: (self.call_stack.len() - 1) as u32,
             balance_changes: Vec::new(),
             account_changes: Vec::new(),
-            begin_total_ordinal: self.ordinal_count,
+            begin_ordinal: self.ordinal_count,
             ..Default::default()
         });
     }
 
-    pub fn set_instruction_logs(&mut self, logs: Vec<String>) {
-        self.ordinal_count += 1;
-        let total_ordinal = self.ordinal_count;
-        let mut instruction = self.active_instruction();
-        for val in logs.iter() {
-            instruction.logs.push(Log {
-                message: val.to_string(),
-                total_ordinal,
-            })
-        }
-    }
-
     pub fn add_instruction_log(&mut self, log: String) {
         self.ordinal_count += 1;
-        let total_ordinal = self.ordinal_count;
+        let ordinal = self.ordinal_count;
         let mut instruction = self.active_instruction();
         instruction.logs.push(Log {
             message: log.to_string(),
-            total_ordinal,
+            ordinal,
         })
     }
 
     pub fn add_instruction_account_change(&mut self, pubkey: &Pubkey, pre: &[u8], post: &[u8]) {
-        self.ordinal_count += 1;
-        let total_ordinal = self.ordinal_count;
         let mut instruction = self.active_instruction();
-        instruction.add_account_change(pubkey, pre, post, total_ordinal);
+        instruction.add_account_change(pubkey, pre, post);
     }
 
     pub fn add_instruction_lamport_change(&mut self, pubkey: &Pubkey, pre: u64, post: u64) {
-        self.ordinal_count += 1;
-        let total_ordinal = self.ordinal_count;
         let mut instruction = self.active_instruction();
-        instruction.add_lamport_change(pubkey, pre, post, total_ordinal);
+        instruction.add_lamport_change(pubkey, pre, post);
     }
 
     pub fn end_instruction(&mut self) {
         self.ordinal_count += 1;
-        let total_ordinal = self.ordinal_count;
+        let ordinal = self.ordinal_count;
         let mut instruction = self.active_instruction();
-        instruction.end_total_ordinal = total_ordinal;
+        instruction.end_ordinal = ordinal;
         self.call_stack.pop();
     }
 
@@ -215,7 +191,7 @@ impl<'a> DMBatchContext {
             ordinal_count: 1,
             call_stack: vec![0],
             pb_transaction: Transaction {
-                begin_total_ordinal: 1,
+                begin_ordinal: 1,
                 id: sigs[0].as_ref().to_vec(),
                 additional_signatures: sigs[1..].iter().map(|sig| sig.as_ref().to_vec()).collect(),
                 header: Some(header),
@@ -283,12 +259,6 @@ impl<'a> DMBatchContext {
     ) {
         if let Some(transaction) = self.trxs.last_mut() {
             transaction.start_instruction(program_id, keyed_accounts, instruction_data)
-        }
-    }
-
-    pub fn set_instruction_logs(&mut self, logs: Vec<String>) {
-        if let Some(transaction) = self.trxs.last_mut() {
-            transaction.set_instruction_logs(logs)
         }
     }
 

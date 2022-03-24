@@ -936,9 +936,6 @@ pub fn confirm_slot(
             }
         }
 
-        if slot == 117503057 {
-            panic!("DONE");
-        }
         println!(
             "DMLOG BLOCK_WORK {} {} {} {} {} {} {} {} {} {} {} {} T;{}",
             bank.parent_slot(),

@@ -86,9 +86,9 @@ pub struct Transaction {
     #[prost(message, optional, tag = "9")]
     pub error: ::core::option::Option<TransactionError>,
     #[prost(uint64, tag = "10")]
-    pub begin_total_ordinal: u64,
+    pub begin_ordinal: u64,
     #[prost(uint64, tag = "11")]
-    pub end_total_ordinal: u64,
+    pub end_ordinal: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MessageHeader {
@@ -136,9 +136,9 @@ pub struct Instruction {
     #[prost(message, optional, tag = "16")]
     pub error: ::core::option::Option<InstructionError>,
     #[prost(uint64, tag = "17")]
-    pub begin_total_ordinal: u64,
+    pub begin_ordinal: u64,
     #[prost(uint64, tag = "18")]
-    pub end_total_ordinal: u64,
+    pub end_ordinal: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BalanceChange {
@@ -148,8 +148,6 @@ pub struct BalanceChange {
     pub prev_lamports: u64,
     #[prost(uint64, tag = "3")]
     pub new_lamports: u64,
-    #[prost(uint64, tag = "4")]
-    pub total_ordinal: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AccountChange {
@@ -161,15 +159,13 @@ pub struct AccountChange {
     pub new_data: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint64, tag = "4")]
     pub new_data_length: u64,
-    #[prost(uint64, tag = "5")]
-    pub total_ordinal: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Log {
     #[prost(string, tag = "1")]
     pub message: ::prost::alloc::string::String,
     #[prost(uint64, tag = "2")]
-    pub total_ordinal: u64,
+    pub ordinal: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TransactionError {
