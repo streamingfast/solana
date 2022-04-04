@@ -619,9 +619,13 @@ fn do_process_blockstore_from_root(
         panic!("starting slot isn't root and can't update due to being secondary blockstore access: {}", start_slot);
     }
 
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
     if deepmind_enabled() {
         println!("DMLOG BLOCK_ROOT {}", &start_slot);
     }
+    //****************************************************************
 
     if let Ok(metas) = blockstore.slot_meta_iterator(start_slot) {
         if let Some((slot, _meta)) = metas.last() {
@@ -1236,6 +1240,14 @@ fn load_frozen_forks(
 
             if let Some(new_root_bank) = new_root_bank {
                 *root = new_root_bank.slot();
+                //****************************************************************
+                // DMLOG
+                //****************************************************************
+                if deepmind_enabled() {
+                    println!("DMLOG BLOCK_ROOT {}", &root);
+                }
+                //****************************************************************
+
                 last_root = new_root_bank.slot();
 
                 leader_schedule_cache.set_root(new_root_bank);

@@ -1,7 +1,6 @@
 //! The `validator` module hosts all the validator microservices.
 
 pub use solana_perf::report_target_features;
-use std::{env, fs, str::FromStr, thread};
 use {
     crate::{
         broadcast_stage::BroadcastStageType,
@@ -20,7 +19,9 @@ use {
         tvu::{Sockets, Tvu, TvuConfig},
     },
     crossbeam_channel::{bounded, unbounded},
+    libc::{SIGINT, SIGTERM},
     rand::{thread_rng, Rng},
+    signal_hook::iterator::Signals,
     solana_accountsdb_plugin_manager::accountsdb_plugin_service::AccountsDbPluginService,
     solana_gossip::{
         cluster_info::{
@@ -68,6 +69,8 @@ use {
         commitment::BlockCommitmentCache,
         cost_model::CostModel,
         hardened_unpack::{open_genesis_config, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
+        snapshot_utils,
+        snapshot_utils::SnapshotVersion,
     },
     solana_sdk::{
         clock::Slot,
@@ -85,15 +88,18 @@ use {
     solana_vote_program::vote_state::VoteState,
     std::{
         collections::{HashMap, HashSet},
+        env, fs,
         net::SocketAddr,
         ops::Deref,
         path::{Path, PathBuf},
+        process::exit,
+        str::FromStr,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             mpsc::Receiver,
             Arc, Mutex, RwLock,
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{sleep, spawn, Builder, JoinHandle},
         time::{Duration, Instant},
     },
 };
@@ -276,6 +282,7 @@ pub struct Validator {
     tvu: Tvu,
     ip_echo_server: Option<solana_net_utils::IpEchoServer>,
     accountsdb_plugin_service: Option<AccountsDbPluginService>,
+    boot_flusher: BootFlusher,
     pub cluster_info: Arc<ClusterInfo>,
 }
 
@@ -390,19 +397,23 @@ impl Validator {
             }
         }
 
-        info!("Cleaning accounts paths..");
-        *start_progress.write().unwrap() = ValidatorStartProgress::CleaningAccounts;
-        let mut start = Measure::start("clean_accounts_paths");
-        for accounts_path in &config.account_paths {
-            cleanup_accounts_path(accounts_path);
-        }
-        if let Some(ref shrink_paths) = config.account_shrink_paths {
-            for accounts_path in shrink_paths {
-                cleanup_accounts_path(accounts_path);
+        if let Some(snapshot_config) = &config.snapshot_config {
+            if !snapshot_config.use_boot_snapshot {
+                info!("Cleaning accounts paths..");
+                *start_progress.write().unwrap() = ValidatorStartProgress::CleaningAccounts;
+                let mut start = Measure::start("clean_accounts_paths");
+                for accounts_path in &config.account_paths {
+                    cleanup_accounts_path(accounts_path);
+                }
+                if let Some(ref shrink_paths) = config.account_shrink_paths {
+                    for accounts_path in shrink_paths {
+                        cleanup_accounts_path(accounts_path);
+                    }
+                }
+                start.stop();
+                info!("done. {}", start);
             }
         }
-        start.stop();
-        info!("done. {}", start);
 
         let exit = Arc::new(AtomicBool::new(false));
         {
@@ -411,7 +422,10 @@ impl Validator {
                 .validator_exit
                 .write()
                 .unwrap()
-                .register_exit(Box::new(move || exit.store(true, Ordering::Relaxed)));
+                .register_exit(Box::new(move || {
+                    info!("storing exit 'true' relaxed (exit)");
+                    exit.store(true, Ordering::Relaxed)
+                }));
         }
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
@@ -632,7 +646,10 @@ impl Validator {
                         .validator_exit
                         .write()
                         .unwrap()
-                        .register_exit(Box::new(move || trigger.cancel()));
+                        .register_exit(Box::new(move || {
+                            info!("pub sub trigger cancel (exit)");
+                            trigger.cancel()
+                        }));
 
                     Some(pubsub_service)
                 },
@@ -848,7 +865,7 @@ impl Validator {
             &exit,
             node.info.shred_version,
             vote_tracker,
-            bank_forks,
+            bank_forks.clone(),
             verified_vote_sender,
             gossip_verified_vote_hash_sender,
             replay_vote_receiver,
@@ -882,16 +899,22 @@ impl Validator {
             ip_echo_server,
             validator_exit: config.validator_exit.clone(),
             accountsdb_plugin_service,
+            boot_flusher: BootFlusher {
+                bank_forks: bank_forks.clone(),
+                ledger_path: ledger_path.to_path_buf(),
+            },
             cluster_info,
         }
     }
 
     // Used for notifying many nodes in parallel to exit
     pub fn exit(&mut self) {
+        info!("validator exiting");
         self.validator_exit.write().unwrap().exit();
     }
 
     pub fn close(mut self) {
+        info!("validator closing");
         self.exit();
         self.join();
     }
@@ -921,7 +944,27 @@ impl Validator {
         );
     }
 
+    pub fn hook_signals(&self) {
+        let validator_exit = self.validator_exit.clone();
+
+        let signals = match Signals::new(&[SIGTERM, SIGINT]) {
+            Ok(signals) => signals,
+            Err(e) => panic!("failed to start signals listener: {:?}", e),
+        };
+
+        std::thread::spawn(move || {
+            for sig in signals.forever() {
+                info!("Received signal {:?}", sig);
+                validator_exit.write().unwrap().exit();
+                // WARN: as noted in AdminRpc's `exit` call, we might want to add
+                // a few seconds of sleep if rocksdb or other things need to shutdown.
+            }
+        });
+    }
+
     pub fn join(self) {
+        info!("validator joining");
+        
         drop(self.cluster_info);
 
         self.poh_service.join().expect("poh_service");
@@ -999,6 +1042,26 @@ impl Validator {
                 .join()
                 .expect("accountsdb_plugin_service");
         }
+        
+        info!("validator join completed");
+
+        self.boot_flusher.flush_boot_snapshot()
+    }
+}
+
+struct BootFlusher {
+    bank_forks: Arc<RwLock<BankForks>>,
+    ledger_path: PathBuf,
+}
+
+impl BootFlusher {
+    pub fn flush_boot_snapshot(&self) {
+        let root_bank = self.bank_forks.read().unwrap().root_bank();
+        snapshot_utils::flush_boot_snapshot(
+            self.ledger_path.as_path(),
+            root_bank.as_ref(),
+            SnapshotVersion::V1_2_0,
+        )
     }
 }
 

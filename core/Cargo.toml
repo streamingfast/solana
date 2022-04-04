@@ -74,6 +74,7 @@ thiserror = "1.0"
 solana-rayon-threadlimit = { path = "../rayon-threadlimit", version = "=1.8.13" }
 sys-info = "0.9.1"
 trees = "0.2.1"
+signal-hook = "0.1.15"
 
 [dev-dependencies]
 jsonrpc-core = "18.0.0"

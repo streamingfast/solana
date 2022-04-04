@@ -3567,8 +3567,9 @@ impl Bank {
                             None
                         };
 
-                        let log_collector = if enable_log_recording {
-                            Some(Rc::new(LogCollector::default()))
+                        let should_log = enable_log_recording || dmbatch_context.is_some();
+                        let log_collector = if should_log {
+                            Some(Rc::new(LogCollector::new(dmbatch_context.clone())))
                         } else {
                             None
                         };
@@ -3630,19 +3631,6 @@ impl Bank {
                             instruction_recorders,
                             &tx.message,
                         ));
-
-                        //****************************************************************
-                        // DMLOG
-                        //****************************************************************
-                        if let Some(ctx_ref) = &dmbatch_context {
-                            let ctx = ctx_ref.deref();
-                            for logs in dm_log_messages.clone() {
-                                for log in logs {
-                                    ctx.borrow_mut().add_log(log);
-                                }
-                            }
-                        }
-                        //****************************************************************
 
                         if let Err(e) = Self::refcells_to_accounts(
                             &mut loaded_transaction.accounts,

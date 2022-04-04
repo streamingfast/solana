@@ -78,16 +78,17 @@ pub struct Transaction {
     /// From the original Message object
     #[prost(bytes = "vec", tag = "6")]
     pub recent_blockhash: ::prost::alloc::vec::Vec<u8>,
-    /// What follows Once executed these can be set:
-    #[prost(string, repeated, tag = "7")]
-    pub log_messages: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// Instructions, containing both top-level and nested transactions
-    #[prost(message, repeated, tag = "8")]
+    #[prost(message, repeated, tag = "7")]
     pub instructions: ::prost::alloc::vec::Vec<Instruction>,
-    #[prost(bool, tag = "9")]
+    #[prost(bool, tag = "8")]
     pub failed: bool,
-    #[prost(message, optional, tag = "10")]
+    #[prost(message, optional, tag = "9")]
     pub error: ::core::option::Option<TransactionError>,
+    #[prost(uint64, tag = "10")]
+    pub begin_ordinal: u64,
+    #[prost(uint64, tag = "11")]
+    pub end_ordinal: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MessageHeader {
@@ -119,19 +120,25 @@ pub struct Instruction {
     pub data: ::prost::alloc::vec::Vec<u8>,
     // What follows is execution trace data, could be empty for un-executed transactions.
     #[prost(uint32, tag = "6")]
-    pub ordinal: u32,
+    pub index: u32,
     #[prost(uint32, tag = "7")]
-    pub parent_ordinal: u32,
+    pub parent_index: u32,
     #[prost(uint32, tag = "8")]
     pub depth: u32,
     #[prost(message, repeated, tag = "9")]
     pub balance_changes: ::prost::alloc::vec::Vec<BalanceChange>,
     #[prost(message, repeated, tag = "10")]
     pub account_changes: ::prost::alloc::vec::Vec<AccountChange>,
+    #[prost(message, repeated, tag = "11")]
+    pub logs: ::prost::alloc::vec::Vec<Log>,
     #[prost(bool, tag = "15")]
     pub failed: bool,
     #[prost(message, optional, tag = "16")]
     pub error: ::core::option::Option<InstructionError>,
+    #[prost(uint64, tag = "17")]
+    pub begin_ordinal: u64,
+    #[prost(uint64, tag = "18")]
+    pub end_ordinal: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BalanceChange {
@@ -152,6 +159,13 @@ pub struct AccountChange {
     pub new_data: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint64, tag = "4")]
     pub new_data_length: u64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Log {
+    #[prost(string, tag = "1")]
+    pub message: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub ordinal: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TransactionError {

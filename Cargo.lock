@@ -4699,6 +4699,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serial_test",
+ "signal-hook",
  "solana-account-decoder",
  "solana-accountsdb-plugin-manager",
  "solana-banks-server",
@@ -5661,6 +5662,19 @@ dependencies = [
  "rand 0.7.3",
  "solana-logger 1.8.13",
  "solana-sdk",
+]
+
+[[package]]
+name = "solana-snapshot-tool"
+version = "1.8.12"
+dependencies = [
+ "clap",
+ "log 0.4.14",
+ "solana-logger 1.8.13",
+ "solana-measure",
+ "solana-runtime",
+ "solana-sdk",
+ "solana-version",
 ]
 
 [[package]]

@@ -457,7 +457,10 @@ impl JsonRpcService {
         validator_exit
             .write()
             .unwrap()
-            .register_exit(Box::new(move || close_handle_.close()));
+            .register_exit(Box::new(move || {
+                info!("json rpc shutting down (exit)");
+                close_handle_.close()
+            }));
         Self {
             thread_hdl,
             #[cfg(test)]
@@ -608,10 +611,12 @@ mod tests {
                 snapshot_interval_slots: 0,
                 snapshot_package_output_path: PathBuf::from("/"),
                 snapshot_path: PathBuf::from("/"),
+                boot_snapshot_path: Default::default(),
                 archive_format: ArchiveFormat::TarBzip2,
                 snapshot_version: SnapshotVersion::default(),
                 maximum_snapshots_to_retain: DEFAULT_MAX_SNAPSHOTS_TO_RETAIN,
                 packager_thread_niceness_adj: 0,
+                use_boot_snapshot: false
             }),
             bank_forks,
             RpcHealth::stub(),

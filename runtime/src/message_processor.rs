@@ -192,7 +192,7 @@ impl PreAccount {
             if is_writable && (pre.data() != post.data()) {
                 let ctx = ctx_ref.deref();
                 ctx.borrow_mut()
-                    .account_change(&self.key, pre.data(), post.data())
+                    .add_account_change(&self.key, pre.data(), post.data())
             }
         }
         //****************************************************************
@@ -589,6 +589,7 @@ impl<'a> InvokeContext for ThisInvokeContext<'a> {
 pub struct ThisLogger {
     log_collector: Option<Rc<LogCollector>>,
 }
+
 impl Logger for ThisLogger {
     fn log_enabled(&self) -> bool {
         log_enabled!(log::Level::Info) || self.log_collector.is_some()
@@ -1188,6 +1189,8 @@ impl MessageProcessor {
                         err
                     })?;
 
+                //
+
                 //****************************************************************
                 // DMLOG
                 //****************************************************************
@@ -1195,8 +1198,11 @@ impl MessageProcessor {
                 let post_lamports = account.lamports();
                 if let Some(ctx_ref) = dmbatch_context {
                     let ctx = ctx_ref.deref();
-                    ctx.borrow_mut()
-                        .lamport_change(account.owner(), pre_lamports, post_lamports)
+                    ctx.borrow_mut().add_lamport_change(
+                        account.owner(),
+                        pre_lamports,
+                        post_lamports,
+                    )
                 }
                 //****************************************************************
 
@@ -1361,7 +1367,7 @@ impl MessageProcessor {
             executable_accounts,
             accounts,
             &self.programs,
-            log_collector,
+            log_collector.clone(),
             bpf_compute_budget,
             compute_meter,
             executors,
@@ -1412,6 +1418,11 @@ impl MessageProcessor {
         //****************************************************************
         if let Some(ctx_ref) = &dmbatch_context {
             let ctx = ctx_ref.deref();
+            // if let Some(log_collector) = log_collector {
+            //     let logs = log_collector.get_instruction_message();
+            //     ctx.borrow_mut().set_instruction_logs(logs);
+            //     log_collector.clear_instruction_message();
+            // }
             ctx.borrow_mut().end_instruction();
         }
         //****************************************************************

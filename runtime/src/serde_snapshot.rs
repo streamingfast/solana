@@ -256,6 +256,9 @@ fn reconstruct_bank_from_fields<E>(
 where
     E: SerializableStorage + std::marker::Sync,
 {
+    // THE `bank_fields` and `accounts_db_fields` WERE LOADED FROM A SNAPSHOT
+    // FILE LIKE `snapshots/110633762/110633762`
+
     let mut accounts_db = reconstruct_accountsdb_from_fields(
         accounts_db_fields,
         account_paths,
@@ -298,7 +301,7 @@ where
     E: SerializableStorage,
 {
     let (accounts, num_accounts) =
-        AppendVec::new_from_file(append_vec_path, storage_entry.current_len())?;
+        AppendVec::new_from_file(append_vec_path, storage_entry.current_len(), false)?; // TODO: revert to 'true' once our testing is completed.
     let u_storage_entry =
         AccountStorageEntry::new_existing(*slot, storage_entry.id(), accounts, num_accounts);
 
@@ -346,7 +349,6 @@ where
             let mut new_slot_storage = HashMap::new();
             for storage_entry in slot_storage {
                 let file_name = AppendVec::file_name(*slot, storage_entry.id());
-
                 let append_vec_path = unpacked_append_vec_map.get(&file_name).ok_or_else(|| {
                     io::Error::new(
                         io::ErrorKind::NotFound,

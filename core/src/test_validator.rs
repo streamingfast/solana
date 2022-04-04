@@ -521,6 +521,8 @@ impl TestValidator {
                 snapshot_version: SnapshotVersion::default(),
                 maximum_snapshots_to_retain: DEFAULT_MAX_SNAPSHOTS_TO_RETAIN,
                 packager_thread_niceness_adj: 0,
+                use_boot_snapshot: false,
+                boot_snapshot_path: Default::default(),
             }),
             enforce_ulimit_nofile: false,
             warp_slot: config.warp_slot,
