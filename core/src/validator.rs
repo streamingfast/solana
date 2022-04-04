@@ -80,6 +80,7 @@ use {
     },
     solana_sdk::{
         clock::Slot,
+        deepmind::deepmind_enabled,
         epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
         exit::Exit,
         genesis_config::GenesisConfig,
@@ -372,6 +373,22 @@ impl Validator {
                 ledger_path
             );
             abort();
+        }
+
+        if deepmind_enabled() {
+            // cleanup the batch files path
+            let file_dir =
+                env::var("DEEPMIND_BATCH_FILES_PATH").unwrap_or(String::from_str("/tmp").unwrap());
+            info!("removing DEEPMIND_BATCH_FILES_PATH: {:?}", &file_dir);
+            fs::remove_dir_all(&file_dir).unwrap_or_else(|why| {
+                warn!("error removing DEEPMIND_BATCH_FILES_PATH: {:?}", why.kind());
+            });
+            if !Path::new(&file_dir).is_dir() {
+                info!("creating DEEPMIND_BATCH_FILES_PATH: {:?}", &file_dir);
+                fs::create_dir_all(&file_dir).unwrap_or_else(|why| {
+                    warn!("error creating DEEPMIND_BATCH_FILES_PATH: {:?}", why.kind());
+                });
+            }
         }
 
         if let Some(shred_version) = config.expected_shred_version {

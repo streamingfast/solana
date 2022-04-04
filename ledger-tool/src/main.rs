@@ -46,6 +46,7 @@ use {
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         account_utils::StateMut,
         clock::{Epoch, Slot},
+        deepmind::enable_deepmind,
         genesis_config::{ClusterType, GenesisConfig},
         hash::Hash,
         inflation::Inflation,
@@ -1026,6 +1027,12 @@ fn main() {
                 .help("Use DIR as ledger location"),
         )
         .arg(
+            Arg::with_name("deepmind")
+                .long("deepmind")
+                .takes_value(false)
+                .help("Activate/deactivate deep-mind instrumentation, disabled by default. You can override output directory using the DEEPMIND_BATCH_FILES_PATH environment variable."),
+        )
+        .arg(
             Arg::with_name("wal_recovery_mode")
                 .long("wal-recovery-mode")
                 .value_name("MODE")
@@ -1630,6 +1637,11 @@ fn main() {
     info!("{} {}", crate_name!(), solana_version::version!());
 
     let ledger_path = parse_ledger_path(&matches, "ledger_path");
+
+    if matches.is_present("deepmind") {
+        enable_deepmind();
+        println!("DMLOG INIT VERSION {}", solana_version::version!());
+    }
 
     let snapshot_archive_path = value_t!(matches, "snapshot_archive_path", String)
         .ok()

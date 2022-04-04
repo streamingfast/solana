@@ -8,10 +8,21 @@ pub struct LogCollector {
     messages: Vec<String>,
     bytes_written: usize,
     limit_warning: bool,
+
+    dmbatch_context: Option<Rc<RefCell<DMBatchContext>>>,
 }
 
 impl LogCollector {
     pub fn log(&mut self, message: &str) {
+        //****************************************************************
+        // DEEPMIND
+        //****************************************************************
+        if let Some(ctx_ref) = &self.dmbatch_context {
+            let ctx = ctx_ref.deref();
+            ctx.borrow_mut().add_instruction_log(message.to_string());
+        }
+        //****************************************************************
+
         let bytes_written = self.bytes_written.saturating_add(message.len());
         if bytes_written >= LOG_MESSAGES_BYTES_LIMIT {
             if !self.limit_warning {
@@ -28,8 +39,11 @@ impl LogCollector {
         self.messages.as_slice()
     }
 
-    pub fn new_ref() -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self::default()))
+    pub fn new_ref(dmbatch_context: Option<Rc<RefCell<DMBatchContext>>>) -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(LogCollector {
+            dmbatch_context,
+            ..LogCollector::default()
+        }))
     }
 }
 

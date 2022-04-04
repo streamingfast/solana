@@ -1,3 +1,5 @@
+use solana_sdk::deepmind::DMBatchContext;
+use std::ops::Deref;
 use {
     serde::{Deserialize, Serialize},
     solana_measure::measure::Measure,
@@ -56,6 +58,7 @@ impl MessageProcessor {
         sysvars: &[(Pubkey, Vec<u8>)],
         blockhash: Hash,
         lamports_per_signature: u64,
+        dmbatch_context: Option<Rc<RefCell<DMBatchContext>>>,
     ) -> Result<(), TransactionError> {
         let mut invoke_context = InvokeContext::new(
             rent,
@@ -68,6 +71,7 @@ impl MessageProcessor {
             feature_set,
             blockhash,
             lamports_per_signature,
+            &dmbatch_context,
         );
 
         debug_assert_eq!(program_indices.len(), message.instructions.len());
@@ -105,11 +109,27 @@ impl MessageProcessor {
                     Some(&instruction_recorders[instruction_index]);
             }
             let pre_remaining_units = invoke_context.get_compute_meter().borrow().get_remaining();
+
             let mut time = Measure::start("execute_instruction");
             invoke_context
                 .process_instruction(message, instruction, program_indices, &[], &[])
                 .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;
             time.stop();
+
+            //****************************************************************
+            // DMLOG
+            //****************************************************************
+
+            if let Some(ctx_ref) = &dmbatch_context {
+                let ctx = ctx_ref.deref();
+                if execute_result.is_err() {
+                    if let Some(error) = &execute_result.clone().err() {
+                        ctx.borrow_mut().error_instruction(error);
+                    }
+                }
+            }
+            //****************************************************************
+
             let post_remaining_units = invoke_context.get_compute_meter().borrow().get_remaining();
             timings.accumulate_program(
                 instruction.program_id(&message.account_keys),
@@ -243,6 +263,7 @@ mod tests {
             &[],
             Hash::default(),
             0,
+            &None,
         );
         assert_eq!(result, Ok(()));
         assert_eq!(accounts[0].1.borrow().lamports(), 100);
@@ -272,6 +293,7 @@ mod tests {
             &[],
             Hash::default(),
             0,
+            &None,
         );
         assert_eq!(
             result,
@@ -305,6 +327,7 @@ mod tests {
             &[],
             Hash::default(),
             0,
+            &None,
         );
         assert_eq!(
             result,
@@ -449,6 +472,7 @@ mod tests {
             &[],
             Hash::default(),
             0,
+            &None,
         );
         assert_eq!(
             result,
@@ -482,6 +506,7 @@ mod tests {
             &[],
             Hash::default(),
             0,
+            &None,
         );
         assert_eq!(result, Ok(()));
 
@@ -512,6 +537,7 @@ mod tests {
             &[],
             Hash::default(),
             0,
+            &None,
         );
         assert_eq!(result, Ok(()));
         assert_eq!(accounts[0].1.borrow().lamports(), 80);
@@ -569,6 +595,7 @@ mod tests {
             &[],
             Hash::default(),
             0,
+            &None,
         );
         assert_eq!(
             result,

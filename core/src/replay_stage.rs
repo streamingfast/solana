@@ -71,6 +71,7 @@ use {
         time::{Duration, Instant},
     },
 };
+use solana_sdk::deepmind::deepmind_enabled;
 
 pub const MAX_ENTRY_RECV_PER_ITER: usize = 512;
 pub const SUPERMINORITY_THRESHOLD: f64 = 1f64 / 3f64;
@@ -2143,6 +2144,19 @@ impl ReplayStage {
                     }
                 }
                 Self::record_rewards(&bank, rewards_recorder_sender);
+                //****************************************************************
+                // DMLOG
+                //****************************************************************
+                if deepmind_enabled() {
+                    println!(
+                        "DMLOG BLOCK_END {} {:?} {} {}",
+                        bank.slot(),
+                        bank.hash(),
+                        bank.unix_timestamp_from_genesis(),
+                        bank.clock().unix_timestamp,
+                    );
+                }
+                //****************************************************************
             } else {
                 trace!(
                     "bank {} not completed tick_height: {}, max_tick_height: {}",
