@@ -882,6 +882,13 @@ fn rpc_bootstrap(
                 }
             }
 
+            if let Some(snapshot_config) = &validator_config.snapshot_config {
+                if snapshot_config.use_boot_snapshot {
+                    info!("Skipping local snapshot check and download, will use boot snapshot instead");
+                    return Ok(())
+                }
+            }
+
             if let Some(snapshot_hash) = snapshot_hash {
                 let mut use_local_snapshot = false;
 
@@ -2325,7 +2332,7 @@ pub fn main() {
 
     if matches.is_present("deepmind") {
         enable_deepmind();
-        println!("DMLOG INIT VERSION 2");
+        println!("DMLOG INIT VERSION {:?}", solana_version::version!());
     }
 
     let private_rpc = matches.is_present("private_rpc");
@@ -2661,6 +2668,10 @@ pub fn main() {
         }
     };
 
+    let boot_snapshot_path = snapshot_output_dir.join("boot-snapshot");
+    let use_boot_snapshot = boot_snapshot_path.as_path().exists();
+    info!("use boot snapshot: {:?}", use_boot_snapshot);
+
     let snapshot_version =
         matches
             .value_of("snapshot_version")
@@ -2677,11 +2688,13 @@ pub fn main() {
             std::u64::MAX
         },
         snapshot_path,
+        boot_snapshot_path: boot_snapshot_path,
         snapshot_package_output_path: snapshot_output_dir.clone(),
         archive_format,
         snapshot_version,
         maximum_snapshots_to_retain,
         packager_thread_niceness_adj: snapshot_packager_niceness_adj,
+        use_boot_snapshot,
     });
 
     validator_config.accounts_hash_interval_slots =
@@ -2888,8 +2901,18 @@ pub fn main() {
             exit(1);
         });
     }
+
+    validator.hook_signals();
+
     info!("Validator initialized");
+
+    //let boot_flusher = validator.boot_flusher.clone();
+
     validator.join();
+
+    info!("Validator flushing boot snapshot");
+    //boot_flusher.flush_boot_snapshot();
+
     info!("Validator exiting..");
 }
 
