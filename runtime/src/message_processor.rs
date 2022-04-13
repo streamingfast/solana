@@ -156,6 +156,16 @@ impl PreAccount {
             if pre.executable() {
                 return Err(InstructionError::ExecutableLamportChange);
             }
+
+            //****************************************************************
+            // DMLOG
+            //****************************************************************
+            if let Some(ctx_ref) = dmbatch_context {
+                let ctx = ctx_ref.deref();
+                ctx.borrow_mut()
+                    .add_lamport_change(&self.key, pre.lamports(), post.lamports())
+            }
+            //****************************************************************
         }
 
         // Only the system program can change the size of the data
@@ -1188,23 +1198,6 @@ impl MessageProcessor {
                         );
                         err
                     })?;
-
-                //
-
-                //****************************************************************
-                // DMLOG
-                //****************************************************************
-                let pre_lamports = pre_accounts[unique_index].lamports();
-                let post_lamports = account.lamports();
-                if let Some(ctx_ref) = dmbatch_context {
-                    let ctx = ctx_ref.deref();
-                    ctx.borrow_mut().add_lamport_change(
-                        account.owner(),
-                        pre_lamports,
-                        post_lamports,
-                    )
-                }
-                //****************************************************************
 
                 pre_sum += u128::from(pre_accounts[unique_index].lamports());
                 post_sum += u128::from(account.lamports());

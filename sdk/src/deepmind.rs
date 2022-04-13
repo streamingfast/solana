@@ -161,12 +161,15 @@ impl<'a> DMBatchContext {
             env::var("DEEPMIND_BATCH_FILES_PATH").unwrap_or(String::from_str("/tmp").unwrap());
         let file_path = format!("{}/{}", file_dir, filename);
 
-        let fl = File::create(&file_path).unwrap();
+        let fl = File::create(&file_path);
+        if let Err(e) = fl {
+            panic!("Unable to create file {:?} {:?}", file_path, e);
+        }
         DMBatchContext {
             batch_number: batch_id,
             filename,
             trxs: Vec::new(),
-            file: fl,
+            file: fl.unwrap(),
             path: file_path,
         }
     }
