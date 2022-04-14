@@ -1,18 +1,16 @@
-use std::io::Write;
-use std::ops::Add;
-use std::{
-    borrow::BorrowMut,
-    env,
-    fs::File,
-    str::FromStr,
-    sync::atomic::{AtomicBool, Ordering},
-};
-
 use num_traits::ToPrimitive;
 use prost::Message;
 use solana_program::hash::Hash;
 use solana_program::instruction::InstructionError;
 use solana_sdk::{pubkey::Pubkey, signature::Signature};
+use std::{
+    borrow::BorrowMut,
+    env,
+    fs::File,
+    io::Write,
+    str::FromStr,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use crate::pb::codec::{
     AccountChange, BalanceChange, Batch, Instruction, InstructionError as PbInstructionError, Log,
@@ -88,6 +86,7 @@ impl DMTransaction {
         self.ordinal_count += 1;
         let parent_ordinal = *self.call_stack.last().unwrap();
         let inst_ordinal = self.pb_transaction.instructions.len() + 1;
+
         self.call_stack.push(inst_ordinal);
 
         self.pb_transaction.instructions.push(Instruction {
@@ -107,7 +106,7 @@ impl DMTransaction {
     pub fn add_instruction_log(&mut self, log: String) {
         self.ordinal_count += 1;
         let ordinal = self.ordinal_count;
-        let mut instruction = self.active_instruction();
+        let instruction = self.active_instruction();
         instruction.logs.push(Log {
             message: log.to_string(),
             ordinal,
@@ -115,12 +114,12 @@ impl DMTransaction {
     }
 
     pub fn add_instruction_account_change(&mut self, pubkey: &Pubkey, pre: &[u8], post: &[u8]) {
-        let mut instruction = self.active_instruction();
+        let instruction = self.active_instruction();
         instruction.add_account_change(pubkey, pre, post);
     }
 
     pub fn add_instruction_lamport_change(&mut self, pubkey: &Pubkey, pre: u64, post: u64) {
-        let mut instruction = self.active_instruction();
+        let instruction = self.active_instruction();
         instruction.add_lamport_change(pubkey, pre, post);
     }
 

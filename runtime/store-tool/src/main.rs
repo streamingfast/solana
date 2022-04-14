@@ -27,7 +27,7 @@ fn main() {
 
     let file = value_t_or_exit!(matches, "file", String);
     let len = value_t_or_exit!(matches, "len", usize);
-    let (mut store, num_accounts) = AppendVec::new_from_file(file, len, false).expect("should succeed");
+    let (store, num_accounts) = AppendVec::new_from_file(file, len, false).expect("should succeed");
     info!(
         "store: len: {} capacity: {} accounts: {}",
         store.len(),

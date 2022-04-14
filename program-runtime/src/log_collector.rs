@@ -1,4 +1,6 @@
 pub use log;
+use solana_sdk::deepmind::DMBatchContext;
+use std::ops::Deref;
 use std::{cell::RefCell, rc::Rc};
 
 const LOG_MESSAGES_BYTES_LIMIT: usize = 10 * 1000;

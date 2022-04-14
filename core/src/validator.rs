@@ -1,6 +1,7 @@
 //! The `validator` module hosts all the validator microservices.
 
 pub use solana_perf::report_target_features;
+use std::{env, fs};
 use {
     crate::{
         broadcast_stage::BroadcastStageType,
@@ -377,8 +378,7 @@ impl Validator {
 
         if deepmind_enabled() {
             // cleanup the batch files path
-            let file_dir =
-                env::var("DEEPMIND_BATCH_FILES_PATH").unwrap_or(String::from_str("/tmp").unwrap());
+            let file_dir = env::var("DEEPMIND_BATCH_FILES_PATH").unwrap_or(String::from("/tmp"));
             info!("removing DEEPMIND_BATCH_FILES_PATH: {:?}", &file_dir);
             fs::remove_dir_all(&file_dir).unwrap_or_else(|why| {
                 warn!("error removing DEEPMIND_BATCH_FILES_PATH: {:?}", why.kind());

@@ -1,5 +1,3 @@
-use solana_sdk::deepmind::DMBatchContext;
-use std::ops::Deref;
 use {
     serde::{Deserialize, Serialize},
     solana_measure::measure::Measure,
@@ -12,6 +10,7 @@ use {
     solana_sdk::{
         account::WritableAccount,
         compute_budget::ComputeBudget,
+        deepmind::DMBatchContext,
         feature_set::{prevent_calling_precompiles_as_programs, FeatureSet},
         hash::Hash,
         message::Message,
@@ -58,7 +57,7 @@ impl MessageProcessor {
         sysvars: &[(Pubkey, Vec<u8>)],
         blockhash: Hash,
         lamports_per_signature: u64,
-        dmbatch_context: Option<Rc<RefCell<DMBatchContext>>>,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> Result<(), TransactionError> {
         let mut invoke_context = InvokeContext::new(
             rent,
@@ -115,20 +114,6 @@ impl MessageProcessor {
                 .process_instruction(message, instruction, program_indices, &[], &[])
                 .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;
             time.stop();
-
-            //****************************************************************
-            // DMLOG
-            //****************************************************************
-
-            if let Some(ctx_ref) = &dmbatch_context {
-                let ctx = ctx_ref.deref();
-                if execute_result.is_err() {
-                    if let Some(error) = &execute_result.clone().err() {
-                        ctx.borrow_mut().error_instruction(error);
-                    }
-                }
-            }
-            //****************************************************************
 
             let post_remaining_units = invoke_context.get_compute_meter().borrow().get_remaining();
             timings.accumulate_program(

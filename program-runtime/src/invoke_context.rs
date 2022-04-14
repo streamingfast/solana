@@ -207,12 +207,13 @@ impl<'a> InvokeContext<'a> {
             accounts,
             builtin_programs,
             &[],
-            Some(LogCollector::new_ref()),
+            Some(LogCollector::new_ref(None)),
             ComputeBudget::default(),
             Rc::new(RefCell::new(Executors::default())),
             Arc::new(FeatureSet::all_enabled()),
             Hash::default(),
             0,
+            &None,
         )
     }
 
@@ -387,18 +388,6 @@ impl<'a> InvokeContext<'a> {
                     );
                     err
                 })?;
-
-            //****************************************************************
-            // DMLOG
-            //****************************************************************
-            let pre_lamports = pre_account.lamports();
-            let post_lamports = account.lamports();
-            if let Some(ctx_ref) = self.dmbatch_context {
-                let ctx = ctx_ref.deref();
-                ctx.borrow_mut()
-                    .add_lamport_change(account.owner(), pre_lamports, post_lamports)
-            }
-            //****************************************************************
 
             pre_sum = pre_sum
                 .checked_add(u128::from(pre_account.lamports()))
@@ -684,6 +673,7 @@ impl<'a> InvokeContext<'a> {
                 // 2) The current ordinal number will be the parent for the next calls
                 // 3) Increment the ordinal number
 
+                let program_id = instruction.program_id(&message.account_keys);
                 let mut instruction_accounts = instruction
                     .accounts
                     .iter()
@@ -716,10 +706,20 @@ impl<'a> InvokeContext<'a> {
         // Pop the invoke_stack to restore previous state
         self.pop();
 
+        if let Some(ctx_ref) = &self.dmbatch_context {
+            let ctx = ctx_ref.deref();
+            if result.is_err() {
+                if let Some(error) = &result.clone().err() {
+                    ctx.borrow_mut().error_instruction(error);
+                }
+            }
+        }
+        //****************************************************************
+
         //*********************************************************************************
         // DMLOG: The inner call is completed..
         //**********************************************************************************
-        invoke_context.dmbatch_end_instruction();
+        self.dmbatch_end_instruction();
         //****************************************************************
 
         result

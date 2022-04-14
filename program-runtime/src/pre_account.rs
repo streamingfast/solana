@@ -84,7 +84,7 @@ impl PreAccount {
             if let Some(ctx_ref) = dmbatch_context {
                 let ctx = ctx_ref.deref();
                 ctx.borrow_mut()
-                    .add_lamport_change(pre.owner(), pre.lamports(), post.lamports())
+                    .add_lamport_change(&self.key(), pre.lamports(), post.lamports())
             }
             //****************************************************************
         }

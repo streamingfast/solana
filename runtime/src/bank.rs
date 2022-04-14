@@ -35,6 +35,7 @@
 //! already been signed and verified.
 #[allow(deprecated)]
 use solana_sdk::recent_blockhashes_account;
+use std::ops::Deref;
 use {
     crate::{
         accounts::{AccountAddressFilter, Accounts, TransactionAccounts, TransactionLoadResult},
@@ -92,7 +93,6 @@ use {
             INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_RECENT_BLOCKHASHES,
             MAX_TRANSACTION_FORWARDING_DELAY, SECONDS_PER_DAY,
         },
-        compute_budget::ComputeBudget,
         compute_budget::ComputeBudget,
         ed25519_program,
         epoch_info::EpochInfo,
@@ -447,6 +447,7 @@ pub struct BankRc {
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 use solana_frozen_abi::abi_example::AbiExample;
+use solana_sdk::deepmind::DMBatchContext;
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 impl AbiExample for BankRc {
@@ -3587,20 +3588,21 @@ impl Bank {
                             //****************************************************************
                             // DMLOG
                             //****************************************************************
-                            let msg = tx.message();
+                            // let msg = tx.message();
                             let account_keys: Vec<&Pubkey> =
-                                msg.account_keys.iter().map(|key| key).collect();
-                            let sigs: Vec<&Signature> = tx.signatures.iter().map(|i| i).collect();
+                                legacy_message.account_keys.iter().map(|key| key).collect();
+
+                            let sigs: Vec<&Signature> = tx.signatures().iter().map(|i| i).collect();
 
                             if let Some(ctx_ref) = &dmbatch_context {
                                 let ctx = ctx_ref.deref();
                                 ctx.borrow_mut().start_trx(
                                     &sigs,
-                                    msg.header.num_required_signatures,
-                                    msg.header.num_readonly_signed_accounts,
-                                    msg.header.num_readonly_unsigned_accounts,
+                                    legacy_message.header.num_required_signatures,
+                                    legacy_message.header.num_readonly_signed_accounts,
+                                    legacy_message.header.num_readonly_unsigned_accounts,
                                     &account_keys,
-                                    &msg.recent_blockhash,
+                                    &legacy_message.recent_blockhash,
                                 );
                             }
                             //****************************************************************
@@ -3633,12 +3635,6 @@ impl Bank {
                                     .map(|log_collector| log_collector.into_inner().into())
                                     .ok()
                             });
-
-                        //****************************************************************
-                        // DMLOG
-                        //****************************************************************
-                        let dm_log_messages = log_messages.clone();
-                        //****************************************************************
 
                         transaction_log_messages.push(log_messages);
                         let inner_instruction_list: Option<InnerInstructionsList> =
