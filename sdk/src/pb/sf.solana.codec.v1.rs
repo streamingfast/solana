@@ -17,17 +17,15 @@ pub struct Block {
     pub genesis_unix_timestamp: u64,
     #[prost(uint64, tag = "7")]
     pub clock_unix_timestamp: u64,
-    #[prost(uint64, tag = "8")]
-    pub root_num: u64,
-    #[prost(bytes = "vec", tag = "9")]
+    #[prost(bytes = "vec", tag = "8")]
     pub last_entry_hash: ::prost::alloc::vec::Vec<u8>,
-    #[prost(message, repeated, tag = "10")]
+    #[prost(message, repeated, tag = "9")]
     pub transactions: ::prost::alloc::vec::Vec<Transaction>,
-    #[prost(uint32, tag = "11")]
+    #[prost(uint32, tag = "10")]
     pub transaction_count: u32,
-    #[prost(bool, tag = "12")]
+    #[prost(bool, tag = "11")]
     pub has_split_account_changes: bool,
-    #[prost(string, tag = "13")]
+    #[prost(string, tag = "12")]
     pub account_changes_file_ref: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
