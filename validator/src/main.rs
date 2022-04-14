@@ -1963,7 +1963,7 @@ pub fn main() {
 
     if matches.is_present("deepmind") {
         enable_deepmind();
-        println!("DMLOG INIT VERSION {:?}", solana_version::version!());
+        println!("DMLOG INIT VERSION {}", solana_version::version!());
     }
 
     let private_rpc = matches.is_present("private_rpc");
