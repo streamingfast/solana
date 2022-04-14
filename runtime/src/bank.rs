@@ -35,6 +35,7 @@
 //! already been signed and verified.
 #[allow(deprecated)]
 use solana_sdk::recent_blockhashes_account;
+use std::ops::Deref;
 use {
     crate::{
         accounts::{AccountAddressFilter, Accounts, TransactionAccounts, TransactionLoadResult},
@@ -446,6 +447,7 @@ pub struct BankRc {
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 use solana_frozen_abi::abi_example::AbiExample;
+use solana_sdk::deepmind::DMBatchContext;
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 impl AbiExample for BankRc {
@@ -3134,6 +3136,7 @@ impl Bank {
             false,
             true,
             &mut timings,
+            &None,
         );
 
         let result = executed[0].0.clone().map(|_| ());
@@ -3472,6 +3475,7 @@ impl Bank {
         enable_cpi_recording: bool,
         enable_log_recording: bool,
         timings: &mut ExecuteTimings,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> (
         Vec<TransactionLoadResult>,
         Vec<TransactionExecutionResult>,
@@ -3570,8 +3574,9 @@ impl Bank {
                             None
                         };
 
-                        let log_collector = if enable_log_recording {
-                            Some(LogCollector::new_ref())
+                        let should_log = enable_log_recording || dmbatch_context.is_some();
+                        let log_collector = if should_log {
+                            Some(LogCollector::new_ref(dmbatch_context.clone()))
                         } else {
                             None
                         };
@@ -3580,6 +3585,28 @@ impl Bank {
                             self.last_blockhash_and_lamports_per_signature();
 
                         if let Some(legacy_message) = tx.message().legacy_message() {
+                            //****************************************************************
+                            // DMLOG
+                            //****************************************************************
+                            // let msg = tx.message();
+                            let account_keys: Vec<&Pubkey> =
+                                legacy_message.account_keys.iter().map(|key| key).collect();
+
+                            let sigs: Vec<&Signature> = tx.signatures().iter().map(|i| i).collect();
+
+                            if let Some(ctx_ref) = &dmbatch_context {
+                                let ctx = ctx_ref.deref();
+                                ctx.borrow_mut().start_trx(
+                                    &sigs,
+                                    legacy_message.header.num_required_signatures,
+                                    legacy_message.header.num_readonly_signed_accounts,
+                                    legacy_message.header.num_readonly_unsigned_accounts,
+                                    &account_keys,
+                                    &legacy_message.recent_blockhash,
+                                );
+                            }
+                            //****************************************************************
+
                             process_result = MessageProcessor::process_message(
                                 &self.builtin_programs.vec,
                                 legacy_message,
@@ -3595,6 +3622,7 @@ impl Bank {
                                 &*self.sysvar_cache.read().unwrap(),
                                 blockhash,
                                 lamports_per_signature,
+                                dmbatch_context,
                             );
                         } else {
                             // TODO: support versioned messages
@@ -3607,6 +3635,7 @@ impl Bank {
                                     .map(|log_collector| log_collector.into_inner().into())
                                     .ok()
                             });
+
                         transaction_log_messages.push(log_messages);
                         let inner_instruction_list: Option<InnerInstructionsList> =
                             instruction_recorders.and_then(|instruction_recorders| {
@@ -3632,6 +3661,19 @@ impl Bank {
                         transaction_log_messages.push(None);
                         inner_instructions.push(None);
                     }
+
+                    //****************************************************************
+                    // DMLOG
+                    //****************************************************************
+                    if let Some(ctx_ref) = &dmbatch_context {
+                        if process_result.is_err() {
+                            if let Some(error) = &process_result.clone().err() {
+                                let ctx = ctx_ref.deref();
+                                ctx.borrow_mut().error_trx(error);
+                            }
+                        }
+                    }
+                    //****************************************************************
 
                     let nonce = match &process_result {
                         Ok(_) => nonce.clone(), // May need to calculate the fee based on the nonce
@@ -4572,6 +4614,7 @@ impl Bank {
         enable_cpi_recording: bool,
         enable_log_recording: bool,
         timings: &mut ExecuteTimings,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> (
         TransactionResults,
         TransactionBalancesSet,
@@ -4598,6 +4641,7 @@ impl Bank {
             enable_cpi_recording,
             enable_log_recording,
             timings,
+            dmbatch_context,
         );
 
         let results = self.commit_transactions(
@@ -4684,6 +4728,7 @@ impl Bank {
             false,
             false,
             &mut ExecuteTimings::default(),
+            &None,
         )
         .0
         .fee_collection_results
@@ -9137,6 +9182,7 @@ pub(crate) mod tests {
                 false,
                 false,
                 &mut ExecuteTimings::default(),
+                &None,
             )
             .0
             .fee_collection_results;
@@ -11368,6 +11414,7 @@ pub(crate) mod tests {
                 false,
                 false,
                 &mut ExecuteTimings::default(),
+                &None,
             );
 
         assert!(inner_instructions.iter().all(Option::is_none));
@@ -14470,6 +14517,7 @@ pub(crate) mod tests {
                 false,
                 true,
                 &mut ExecuteTimings::default(),
+                &None,
             )
             .3;
         assert_eq!(log_results.len(), 3);
