@@ -499,6 +499,7 @@ pub struct BankRc {
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 use solana_frozen_abi::abi_example::AbiExample;
+use solana_sdk::deepmind::DMBatchContext;
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 impl AbiExample for BankRc {
@@ -3307,6 +3308,7 @@ impl Bank {
             false,
             true,
             &mut timings,
+            &None,
         );
 
         let post_simulation_accounts = loaded_transactions
@@ -3695,6 +3697,7 @@ impl Bank {
         enable_log_recording: bool,
         timings: &mut ExecuteTimings,
         error_counters: &mut ErrorCounters,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> TransactionExecutionResult {
         let mut get_executors_time = Measure::start("get_executors_time");
         let executors = self.get_executors(
@@ -3720,7 +3723,7 @@ impl Bank {
         };
 
         let log_collector = if enable_log_recording {
-            Some(LogCollector::new_ref())
+            Some(LogCollector::new_ref(dmbatch_context.clone()))
         } else {
             None
         };
@@ -3744,6 +3747,7 @@ impl Bank {
             blockhash,
             lamports_per_signature,
             self.load_accounts_data_len(),
+            dmbatch_context,
         );
         process_message_time.stop();
         saturating_add_assign!(
@@ -3806,6 +3810,7 @@ impl Bank {
         enable_cpi_recording: bool,
         enable_log_recording: bool,
         timings: &mut ExecuteTimings,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> (
         Vec<TransactionLoadResult>,
         Vec<TransactionExecutionResult>,
@@ -3903,6 +3908,7 @@ impl Bank {
                         enable_log_recording,
                         timings,
                         &mut error_counters,
+                        dmbatch_context,
                     )
                 }
             })
@@ -4844,6 +4850,7 @@ impl Bank {
         enable_cpi_recording: bool,
         enable_log_recording: bool,
         timings: &mut ExecuteTimings,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> (TransactionResults, TransactionBalancesSet) {
         let pre_balances = if collect_balances {
             self.collect_balances(batch)
@@ -4858,6 +4865,7 @@ impl Bank {
                 enable_cpi_recording,
                 enable_log_recording,
                 timings,
+                dmbatch_context,
             );
 
         let results = self.commit_transactions(
@@ -4942,6 +4950,7 @@ impl Bank {
             false,
             false,
             &mut ExecuteTimings::default(),
+            &None,
         )
         .0
         .fee_collection_results
@@ -9398,6 +9407,7 @@ pub(crate) mod tests {
                 false,
                 false,
                 &mut ExecuteTimings::default(),
+                &None,
             )
             .0
             .fee_collection_results;
@@ -11629,6 +11639,7 @@ pub(crate) mod tests {
                 false,
                 false,
                 &mut ExecuteTimings::default(),
+                &None,
             );
 
         assert_eq!(transaction_balances_set.pre_balances.len(), 3);
@@ -14827,6 +14838,7 @@ pub(crate) mod tests {
                 false,
                 true,
                 &mut ExecuteTimings::default(),
+                &None,
             )
             .0
             .execution_results;
