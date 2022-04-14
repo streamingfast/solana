@@ -1,3 +1,5 @@
+use solana_sdk::deepmind::DMBatchContext;
+use std::ops::Deref;
 use {
     crate::{
         ic_logger_msg, ic_msg, instruction_recorder::InstructionRecorder,
@@ -155,6 +157,8 @@ pub struct InvokeContext<'a> {
     pub blockhash: Hash,
     pub lamports_per_signature: u64,
     pub return_data: (Pubkey, Vec<u8>),
+
+    dmbatch_context: &'a Option<Rc<RefCell<DMBatchContext>>>,
 }
 
 impl<'a> InvokeContext<'a> {
@@ -170,6 +174,7 @@ impl<'a> InvokeContext<'a> {
         feature_set: Arc<FeatureSet>,
         blockhash: Hash,
         lamports_per_signature: u64,
+        dmbatch_context: &'a Option<Rc<RefCell<DMBatchContext>>>,
     ) -> Self {
         Self {
             invoke_stack: Vec::with_capacity(compute_budget.max_invoke_depth),
@@ -189,6 +194,7 @@ impl<'a> InvokeContext<'a> {
             blockhash,
             lamports_per_signature,
             return_data: (Pubkey::default(), Vec::new()),
+            dmbatch_context,
         }
     }
 
@@ -201,12 +207,13 @@ impl<'a> InvokeContext<'a> {
             accounts,
             builtin_programs,
             &[],
-            Some(LogCollector::new_ref()),
+            Some(LogCollector::new_ref(None)),
             ComputeBudget::default(),
             Rc::new(RefCell::new(Executors::default())),
             Arc::new(FeatureSet::all_enabled()),
             Hash::default(),
             0,
+            &None,
         )
     }
 
@@ -370,6 +377,7 @@ impl<'a> InvokeContext<'a> {
                     &mut self.timings,
                     true,
                     do_support_realloc,
+                    self.dmbatch_context,
                 )
                 .map_err(|err| {
                     ic_logger_msg!(
@@ -380,6 +388,7 @@ impl<'a> InvokeContext<'a> {
                     );
                     err
                 })?;
+
             pre_sum = pre_sum
                 .checked_add(u128::from(pre_account.lamports()))
                 .ok_or(InstructionError::UnbalancedInstruction)?;
@@ -444,6 +453,7 @@ impl<'a> InvokeContext<'a> {
                                 timings,
                                 false,
                                 do_support_realloc,
+                                self.dmbatch_context,
                             )
                             .map_err(|err| {
                                 ic_logger_msg!(
@@ -657,6 +667,25 @@ impl<'a> InvokeContext<'a> {
         let result = self
             .push(message, instruction, program_indices, account_indices)
             .and_then(|_| {
+                //*********************************************************************************
+                // DMLOG: This is the call entry point for inner instruction
+                // 1) Store the current parent ordinal number to restore after the inner call is completed
+                // 2) The current ordinal number will be the parent for the next calls
+                // 3) Increment the ordinal number
+
+                let program_id = instruction.program_id(&message.account_keys);
+                let mut instruction_accounts = instruction
+                    .accounts
+                    .iter()
+                    .map(|index| &message.account_keys[*index as usize]);
+
+                self.dmbatch_start_instruction(
+                    program_id,
+                    &mut instruction_accounts,
+                    &instruction.data,
+                );
+                //****************************************************************
+
                 self.return_data = (*instruction.program_id(&message.account_keys), Vec::new());
                 self.process_executable_chain(&instruction.data)?;
 
@@ -676,6 +705,23 @@ impl<'a> InvokeContext<'a> {
 
         // Pop the invoke_stack to restore previous state
         self.pop();
+
+        if let Some(ctx_ref) = &self.dmbatch_context {
+            let ctx = ctx_ref.deref();
+            if result.is_err() {
+                if let Some(error) = &result.clone().err() {
+                    ctx.borrow_mut().error_instruction(error);
+                }
+            }
+        }
+        //****************************************************************
+
+        //*********************************************************************************
+        // DMLOG: The inner call is completed..
+        //**********************************************************************************
+        self.dmbatch_end_instruction();
+        //****************************************************************
+
         result
     }
 
@@ -825,6 +871,30 @@ impl<'a> InvokeContext<'a> {
                 InstructionError::UnsupportedSysvar
             })
     }
+
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
+    fn dmbatch_start_instruction(
+        &self,
+        program_id: &Pubkey,
+        keyed_accounts: &mut dyn Iterator<Item = &Pubkey>,
+        instruction_data: &[u8],
+    ) {
+        if let Some(ctx_ref) = &self.dmbatch_context {
+            let ctx = ctx_ref.deref();
+            ctx.borrow_mut()
+                .start_instruction(program_id, keyed_accounts, instruction_data);
+        }
+    }
+
+    fn dmbatch_end_instruction(&self) {
+        if let Some(ctx_ref) = &self.dmbatch_context {
+            let ctx = ctx_ref.deref();
+            ctx.borrow_mut().end_instruction();
+        }
+    }
+    //****************************************************************
 }
 
 pub struct MockInvokeContextPreparation {
