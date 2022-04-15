@@ -35,6 +35,7 @@
 //! already been signed and verified.
 #[allow(deprecated)]
 use solana_sdk::recent_blockhashes_account;
+use std::ops::Deref;
 use {
     crate::{
         accounts::{
@@ -3627,13 +3628,36 @@ impl Bank {
             None
         };
 
-        let log_collector = if enable_log_recording {
+        let log_collector = if enable_log_recording || dmbatch_context.is_some() {
             Some(LogCollector::new_ref(dmbatch_context.clone()))
         } else {
             None
         };
 
         let (blockhash, lamports_per_signature) = self.last_blockhash_and_lamports_per_signature();
+
+        //****************************************************************
+        // DMLOG
+        //****************************************************************
+        // let msg = tx.message();
+        let account_keys: Vec<&Pubkey> =
+            legacy_message.account_keys.iter().map(|key| key).collect();
+
+        let sigs: Vec<&Signature> = tx.signatures().iter().map(|i| i).collect();
+
+        if let Some(ctx_ref) = &dmbatch_context {
+            let ctx = ctx_ref.deref();
+            ctx.borrow_mut().start_trx(
+                &sigs,
+                legacy_message.header.num_required_signatures,
+                legacy_message.header.num_readonly_signed_accounts,
+                legacy_message.header.num_readonly_unsigned_accounts,
+                &account_keys,
+                &legacy_message.recent_blockhash,
+            );
+        }
+        //****************************************************************
+
         let process_result = MessageProcessor::process_message(
             &self.builtin_programs.vec,
             legacy_message,
@@ -3683,6 +3707,19 @@ impl Bank {
                 error_counters.instruction_error += 1;
                 err
             });
+
+        //****************************************************************
+        // DMLOG
+        //****************************************************************
+        if let Some(ctx_ref) = &dmbatch_context {
+            if status.is_err() {
+                if let Some(error) = &status.clone().err() {
+                    let ctx = ctx_ref.deref();
+                    ctx.borrow_mut().error_trx(error);
+                }
+            }
+        }
+        //****************************************************************
 
         TransactionExecutionResult::Executed(TransactionExecutionDetails {
             status,
