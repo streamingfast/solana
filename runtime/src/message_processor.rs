@@ -1,3 +1,4 @@
+use solana_sdk::deepmind::DMBatchContext;
 use {
     serde::{Deserialize, Serialize},
     solana_measure::measure::Measure,
@@ -68,6 +69,7 @@ impl MessageProcessor {
         blockhash: Hash,
         lamports_per_signature: u64,
         current_accounts_data_len: u64,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> Result<ProcessedMessageInfo, TransactionError> {
         let mut invoke_context = InvokeContext::new(
             rent,
@@ -81,6 +83,7 @@ impl MessageProcessor {
             blockhash,
             lamports_per_signature,
             current_accounts_data_len,
+            &dmbatch_context,
         );
 
         debug_assert_eq!(program_indices.len(), message.instructions().len());
@@ -271,6 +274,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            &None,
         );
         assert!(result.is_ok());
         assert_eq!(accounts[0].1.borrow().lamports(), 100);
@@ -301,6 +305,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            &None,
         );
         assert_eq!(
             result,
@@ -335,6 +340,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            &None,
         );
         assert_eq!(
             result,
@@ -481,6 +487,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            &None,
         );
         assert_eq!(
             result,
@@ -515,6 +522,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            &None,
         );
         assert!(result.is_ok());
 
@@ -546,6 +554,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            &None,
         );
         assert!(result.is_ok());
         assert_eq!(accounts[0].1.borrow().lamports(), 80);
@@ -604,6 +613,7 @@ mod tests {
             Hash::default(),
             0,
             0,
+            &None,
         );
         assert_eq!(
             result,
