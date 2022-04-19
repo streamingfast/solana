@@ -1,6 +1,7 @@
 //! The `banking_stage` processes Transaction messages. It is intended to be used
 //! to contruct a software pipeline. The stage uses all available CPU cores and
 //! can do its processing in parallel with signature verification on the GPU.
+use solana_sdk::deepmind::deepmind_enabled;
 use {
     crate::qos_service::QosService,
     crossbeam_channel::{Receiver as CrossbeamReceiver, RecvTimeoutError},
@@ -970,12 +971,16 @@ impl BankingStage {
         };
 
         let mut execute_timings = ExecuteTimings::default();
+        if deepmind_enabled() {
+            println!("DMLOG HALT tpu code path. only consider tvu codepath");
+        }
         let load_and_execute_transactions_output = bank.load_and_execute_transactions(
             batch,
             MAX_PROCESSING_AGE,
             transaction_status_sender.is_some(),
             transaction_status_sender.is_some(),
             &mut execute_timings,
+            &None,
         );
         load_execute_time.stop();
 

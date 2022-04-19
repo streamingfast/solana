@@ -800,6 +800,10 @@ impl AccountStorageEntry {
         }
     }
 
+    pub fn set_no_remove_on_drop(&mut self) {
+        self.accounts.set_no_remove_on_drop();
+    }
+
     pub fn all_accounts(&self) -> Vec<StoredAccountMeta> {
         self.accounts.accounts(0)
     }
