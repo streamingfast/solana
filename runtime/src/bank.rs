@@ -35,6 +35,7 @@
 //! already been signed and verified.
 #[allow(deprecated)]
 use solana_sdk::recent_blockhashes_account;
+use std::ops::Deref;
 use {
     crate::{
         accounts::{
@@ -514,6 +515,7 @@ pub struct BankRc {
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 use solana_frozen_abi::abi_example::AbiExample;
+use solana_sdk::deepmind::DMBatchContext;
 
 #[cfg(RUSTC_WITH_SPECIALIZATION)]
 impl AbiExample for BankRc {
@@ -3533,6 +3535,7 @@ impl Bank {
             false,
             true,
             &mut timings,
+            &None,
         );
 
         let post_simulation_accounts = loaded_transactions
@@ -3917,6 +3920,7 @@ impl Bank {
         enable_log_recording: bool,
         timings: &mut ExecuteTimings,
         error_counters: &mut ErrorCounters,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> TransactionExecutionResult {
         let mut get_executors_time = Measure::start("get_executors_time");
         let executors = self.get_executors(&loaded_transaction.accounts);
@@ -3932,13 +3936,34 @@ impl Bank {
             self.get_transaction_account_state_info(&account_refcells, tx.message());
 
         let mut instruction_trace = Vec::with_capacity(tx.message().instructions().len());
-        let log_collector = if enable_log_recording {
-            Some(LogCollector::new_ref())
+        let log_collector = if enable_log_recording || dmbatch_context.is_some() {
+            Some(LogCollector::new_ref(dmbatch_context.clone()))
         } else {
             None
         };
 
         let (blockhash, lamports_per_signature) = self.last_blockhash_and_lamports_per_signature();
+
+        //****************************************************************
+        // DMLOG
+        //****************************************************************
+        let msg = tx.message();
+        let account_keys: Vec<&Pubkey> = msg.account_keys_iter().map(|key| key).collect();
+
+        let sigs: Vec<&Signature> = tx.signatures().iter().map(|i| i).collect();
+
+        if let Some(ctx_ref) = &dmbatch_context {
+            let ctx = ctx_ref.deref();
+            ctx.borrow_mut().start_trx(
+                &sigs,
+                msg.header().num_required_signatures,
+                msg.header().num_readonly_signed_accounts,
+                msg.header().num_readonly_unsigned_accounts,
+                &account_keys,
+                &msg.recent_blockhash(),
+            );
+        }
+        //****************************************************************
 
         let mut process_message_time = Measure::start("process_message_time");
         let process_result = MessageProcessor::process_message(
@@ -3957,6 +3982,7 @@ impl Bank {
             blockhash,
             lamports_per_signature,
             self.load_accounts_data_len(),
+            dmbatch_context,
         );
         process_message_time.stop();
         saturating_add_assign!(
@@ -4018,6 +4044,19 @@ impl Bank {
             return TransactionExecutionResult::NotExecuted(e);
         }
 
+        //****************************************************************
+        // DMLOG
+        //****************************************************************
+        if let Some(ctx_ref) = &dmbatch_context {
+            if status.is_err() {
+                if let Some(error) = &status.clone().err() {
+                    let ctx = ctx_ref.deref();
+                    ctx.borrow_mut().error_trx(error);
+                }
+            }
+        }
+        //****************************************************************
+
         TransactionExecutionResult::Executed(TransactionExecutionDetails {
             status,
             log_messages,
@@ -4034,6 +4073,7 @@ impl Bank {
         enable_cpi_recording: bool,
         enable_log_recording: bool,
         timings: &mut ExecuteTimings,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> LoadAndExecuteTransactionsOutput {
         let sanitized_txs = batch.sanitized_transactions();
         debug!("processing transactions: {}", sanitized_txs.len());
@@ -4132,6 +4172,7 @@ impl Bank {
                         enable_log_recording,
                         timings,
                         &mut error_counters,
+                        dmbatch_context,
                     )
                 }
             })
@@ -5170,6 +5211,7 @@ impl Bank {
         enable_cpi_recording: bool,
         enable_log_recording: bool,
         timings: &mut ExecuteTimings,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> (TransactionResults, TransactionBalancesSet) {
         let pre_balances = if collect_balances {
             self.collect_balances(batch)
@@ -5190,6 +5232,7 @@ impl Bank {
             enable_cpi_recording,
             enable_log_recording,
             timings,
+            dmbatch_context,
         );
 
         let results = self.commit_transactions(
@@ -5276,6 +5319,7 @@ impl Bank {
             false,
             false,
             &mut ExecuteTimings::default(),
+            &None,
         )
         .0
         .fee_collection_results
@@ -9977,6 +10021,7 @@ pub(crate) mod tests {
                 false,
                 false,
                 &mut ExecuteTimings::default(),
+                &None,
             )
             .0
             .fee_collection_results;
@@ -12510,6 +12555,7 @@ pub(crate) mod tests {
                 false,
                 false,
                 &mut ExecuteTimings::default(),
+                &None,
             );
 
         assert_eq!(transaction_balances_set.pre_balances.len(), 3);
@@ -15681,6 +15727,7 @@ pub(crate) mod tests {
                 false,
                 true,
                 &mut ExecuteTimings::default(),
+                &None,
             )
             .0
             .execution_results;

@@ -1,3 +1,4 @@
+use log::*;
 use std::fmt;
 
 #[derive(Default)]
@@ -16,6 +17,7 @@ impl Exit {
     }
 
     pub fn exit(&mut self) {
+        info!("exiting");
         self.exited = true;
         for exit in self.exits.drain(..) {
             exit();
