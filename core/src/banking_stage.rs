@@ -1,6 +1,7 @@
 //! The `banking_stage` processes Transaction messages. It is intended to be used
 //! to contruct a software pipeline. The stage uses all available CPU cores and
 //! can do its processing in parallel with signature verification on the GPU.
+use solana_sdk::deepmind::deepmind_enabled;
 use {
     crate::{
         leader_slot_banking_stage_metrics::{LeaderSlotMetricsTracker, ProcessTransactionsSummary},
@@ -1163,6 +1164,9 @@ impl BankingStage {
             "collect_balances",
         );
         execute_and_commit_timings.collect_balances_us = collect_balances_time.as_us();
+        if deepmind_enabled() {
+            println!("DMLOG HALT tpu code path. only consider tvu codepath");
+        }
 
         let (load_and_execute_transactions_output, load_execute_time) = Measure::this(
             |_| {
@@ -1172,6 +1176,7 @@ impl BankingStage {
                     transaction_status_sender.is_some(),
                     transaction_status_sender.is_some(),
                     &mut execute_and_commit_timings.execute_timings,
+                    &None,
                 )
             },
             (),

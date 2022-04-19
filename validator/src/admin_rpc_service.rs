@@ -236,6 +236,7 @@ pub fn run(ledger_path: &Path, metadata: AdminRpcRequestMetadata) {
                         .write()
                         .unwrap()
                         .register_exit(Box::new(move || {
+                            info!("admin rpc shutting down (exit)");
                             close_handle.close();
                         }));
 
