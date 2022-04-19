@@ -8,7 +8,7 @@ use {
     },
     log::*,
     solana_measure::measure::Measure,
-    solana_sdk::{clock::Slot, hash::Hash, timing},
+    solana_sdk::{clock::Slot, deepmind::deepmind_enabled, hash::Hash, timing},
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
         ops::Index,
@@ -198,6 +198,15 @@ impl BankForks {
     ) -> (Vec<Arc<Bank>>, SetRootTimings) {
         let old_epoch = self.root_bank().epoch();
         self.root = root;
+
+        //****************************************************************
+        // DMLOG
+        //****************************************************************
+        if deepmind_enabled() {
+            println!("DMLOG BLOCK_ROOT {}", root);
+        }
+        //****************************************************************
+
         let root_bank = self
             .banks
             .get(&root)

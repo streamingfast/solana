@@ -1,4 +1,5 @@
 //! The `replay_stage` replays transactions broadcast by the leader.
+use solana_sdk::deepmind::deepmind_enabled;
 use {
     crate::{
         ancestor_hashes_service::AncestorHashesReplayUpdateSender,
@@ -2218,6 +2219,19 @@ impl ReplayStage {
                         Some(bank.block_height()),
                     )
                 }
+                //****************************************************************
+                // DMLOG
+                //****************************************************************
+                if deepmind_enabled() {
+                    println!(
+                        "DMLOG BLOCK_END {} {:?} {} {}",
+                        bank.slot(),
+                        bank.hash(),
+                        bank.unix_timestamp_from_genesis(),
+                        bank.clock().unix_timestamp,
+                    );
+                }
+                //****************************************************************
             } else {
                 trace!(
                     "bank {} not completed tick_height: {}, max_tick_height: {}",

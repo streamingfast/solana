@@ -76,6 +76,7 @@ members = [
     "cli",
     "rayon-threadlimit",
     "watchtower",
+    "deepmind-pb",
     "replica-node",
     "replica-lib",
     "test-validator",
