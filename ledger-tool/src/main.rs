@@ -46,7 +46,10 @@ use {
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         account_utils::StateMut,
         clock::{Epoch, Slot},
-        deepmind::enable_deepmind,
+        deepmind::{
+            enable_augmented_mode, enable_deepmind, DEEPMIND_VARIANT_AUGMENTED,
+            DEEPMIND_VARIANT_STANDARD, DEEPMIND_VERSION,
+        },
         genesis_config::{ClusterType, GenesisConfig},
         hash::Hash,
         inflation::Inflation,
@@ -1030,6 +1033,12 @@ fn main() {
                 .help("Activate/deactivate deep-mind instrumentation, disabled by default. You can override output directory using the DEEPMIND_BATCH_FILES_PATH environment variable."),
         )
         .arg(
+            Arg::with_name("deepmind_augmented")
+                .long("deepmind-augmented")
+                .takes_value(false)
+                .help("Enables deep-mind augmented mode. Deepmind will output the rich instrumented block"),
+        )
+        .arg(
             Arg::with_name("wal_recovery_mode")
                 .long("wal-recovery-mode")
                 .value_name("MODE")
@@ -1637,7 +1646,24 @@ fn main() {
 
     if matches.is_present("deepmind") {
         enable_deepmind();
-        println!("DMLOG INIT VERSION {}", solana_version::version!());
+        let version = DEEPMIND_VERSION;
+        let mut variant = DEEPMIND_VARIANT_STANDARD;
+
+        if matches.is_present("deepmind_augmented") {
+            enable_augmented_mode();
+            variant = DEEPMIND_VARIANT_AUGMENTED;
+        } else {
+            if !matches.is_present("enable_rpc_transaction_history") {
+                eprintln!("Deepmind standard mode requires rpc transaction history to be enabled (--enable_rpc_transaction_history)");
+                exit(1);
+            }
+        }
+        println!(
+            "DMLOG INIT {} {} {}",
+            version,
+            variant,
+            solana_version::version!()
+        );
     }
 
     let snapshot_archive_path = value_t!(matches, "snapshot_archive_path", String)

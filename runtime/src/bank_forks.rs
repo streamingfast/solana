@@ -1,5 +1,6 @@
 //! The `bank_forks` module implements BankForks a DAG of checkpointed Banks
 
+use solana_sdk::deepmind::{deepmind_enabled_augmented, deepmind_enabled_standard};
 use {
     crate::{
         accounts_background_service::{AbsRequestSender, SnapshotRequest},
@@ -8,7 +9,7 @@ use {
     },
     log::*,
     solana_measure::measure::Measure,
-    solana_sdk::{clock::Slot, deepmind::deepmind_enabled, hash::Hash, timing},
+    solana_sdk::{clock::Slot, hash::Hash, timing},
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
         ops::Index,
@@ -202,7 +203,7 @@ impl BankForks {
         //****************************************************************
         // DMLOG
         //****************************************************************
-        if deepmind_enabled() {
+        if deepmind_enabled_augmented() || deepmind_enabled_standard() {
             println!("DMLOG BLOCK_ROOT {}", root);
         }
         //****************************************************************
