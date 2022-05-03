@@ -23,10 +23,12 @@ crossbeam-channel = "0.5"
 dashmap = { version = "4.0.2", features = ["rayon", "raw-api"] }
 etcd-client = { version = "0.8.1", features = ["tls"]}
 fs_extra = "1.2.0"
+hex = "0.4.1"
 histogram = "0.6.9"
 itertools = "0.10.1"
 log = "0.4.14"
 lru = "0.7.0"
+prost = "0.9.0"
 rand = "0.7.0"
 rand_chacha = "0.2.2"
 raptorq = "1.6.4"
@@ -52,6 +54,7 @@ solana-sdk = { path = "../sdk", version = "=1.9.0" }
 solana-frozen-abi = { path = "../frozen-abi", version = "=1.9.0" }
 solana-frozen-abi-macro = { path = "../frozen-abi/macro", version = "=1.9.0" }
 solana-send-transaction-service = { path = "../send-transaction-service", version = "=1.9.0" }
+solana-storage-proto = { path = "../storage-proto", version = "=1.9.0" }
 solana-streamer = { path = "../streamer", version = "=1.9.0" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.9.0" }
 solana-vote-program = { path = "../programs/vote", version = "=1.9.0" }
