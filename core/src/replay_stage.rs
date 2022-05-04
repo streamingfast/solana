@@ -1,5 +1,6 @@
 //! The `replay_stage` replays transactions broadcast by the leader.
-use solana_sdk::deepmind::deepmind_enabled;
+
+use prost::Message;
 use {
     crate::{
         ancestor_hashes_service::AncestorHashesReplayUpdateSender,
@@ -55,6 +56,7 @@ use {
     },
     solana_sdk::{
         clock::{BankId, Slot, MAX_PROCESSING_AGE, NUM_CONSECUTIVE_LEADER_SLOTS},
+        deepmind::{deepmind_enabled_augmented, deepmind_enabled_standard},
         genesis_config::ClusterType,
         hash::Hash,
         pubkey::Pubkey,
@@ -63,6 +65,7 @@ use {
         timing::timestamp,
         transaction::Transaction,
     },
+    solana_storage_proto::convert::generated,
     solana_vote_program::vote_state::Vote,
     std::{
         collections::{HashMap, HashSet},
@@ -2220,7 +2223,7 @@ impl ReplayStage {
                 //****************************************************************
                 // DMLOG
                 //****************************************************************
-                if deepmind_enabled() {
+                if deepmind_enabled_augmented() {
                     println!(
                         "DMLOG BLOCK_END {} {:?} {} {}",
                         bank.slot(),
@@ -2228,6 +2231,14 @@ impl ReplayStage {
                         bank.unix_timestamp_from_genesis(),
                         bank.clock().unix_timestamp,
                     );
+                }
+
+                if deepmind_enabled_standard() {
+                    let block = blockstore.get_complete_block(bank.slot(), true).unwrap();
+                    let proto_bloc: generated::ConfirmedBlock = block.into();
+                    let mut buf = Vec::with_capacity(proto_bloc.encoded_len());
+                    proto_bloc.encode(&mut buf).unwrap();
+                    println!("DMLOG COMPLETE_BLOCK {}", hex::encode(buf));
                 }
                 //****************************************************************
             } else {
