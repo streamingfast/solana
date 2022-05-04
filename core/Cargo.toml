@@ -28,7 +28,7 @@ histogram = "0.6.9"
 itertools = "0.10.1"
 log = "0.4.14"
 lru = "0.7.1"
-prost = "0.9.0"
+prost = "0.10.0"
 rand = "0.7.0"
 rand_chacha = "0.2.2"
 raptorq = "1.6.4"
@@ -56,7 +56,7 @@ solana-sdk = { path = "../sdk", version = "=1.9.15" }
 solana-frozen-abi = { path = "../frozen-abi", version = "=1.9.15" }
 solana-frozen-abi-macro = { path = "../frozen-abi/macro", version = "=1.9.15" }
 solana-send-transaction-service = { path = "../send-transaction-service", version = "=1.9.15" }
-solana-storage-proto = { path = "../storage-proto", version = "=1.9.14" }
+solana-storage-proto = { path = "../storage-proto", version = "=1.9.15" }
 solana-streamer = { path = "../streamer", version = "=1.9.15" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.9.15" }
 solana-vote-program = { path = "../programs/vote", version = "=1.9.15" }

@@ -5020,7 +5020,7 @@ dependencies = [
  "log 0.4.14",
  "lru",
  "matches",
- "prost 0.9.0",
+ "prost 0.10.0",
  "rand 0.7.3",
  "rand_chacha 0.2.2",
  "raptorq",
