@@ -9,8 +9,12 @@ use std::{
     fs::File,
     io::Write,
     str::FromStr,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU8, Ordering},
 };
+
+pub const DEEPMIND_VERSION: &str = "0.1";
+pub const DEEPMIND_VARIANT_STANDARD: &str = "vanilla-standard";
+pub const DEEPMIND_VARIANT_AUGMENTED: &str = "vanilla-augmented";
 
 use crate::pb::codec::{
     AccountChange, BalanceChange, Batch, Instruction, InstructionError as PbInstructionError, Log,
@@ -19,17 +23,29 @@ use crate::pb::codec::{
 use crate::transaction::TransactionError;
 
 pub static DEEPMIND_ENABLED: AtomicBool = AtomicBool::new(false);
+pub static DEEPMIND_MODE: AtomicU8 = AtomicU8::new(DeepmindMode::STANDARD as u8);
+
+enum DeepmindMode {
+    STANDARD,  // mode that outputs completed blocks (same ones that are in  bigtable)
+    AUGMENTED, // mode that outputs our rich instrumented block
+}
 
 pub fn enable_deepmind() {
     DEEPMIND_ENABLED.store(true, Ordering::Relaxed)
 }
 
-pub fn disable_deepmind() {
-    DEEPMIND_ENABLED.store(false, Ordering::Relaxed)
+pub fn enable_augmented_mode() {
+    DEEPMIND_MODE.store(DeepmindMode::AUGMENTED as u8, Ordering::Relaxed)
 }
 
-pub fn deepmind_enabled() -> bool {
-    return DEEPMIND_ENABLED.load(Ordering::Relaxed);
+pub fn deepmind_enabled_augmented() -> bool {
+    return DEEPMIND_ENABLED.load(Ordering::Relaxed)
+        && DEEPMIND_MODE.load(Ordering::Relaxed) == (DeepmindMode::AUGMENTED as u8);
+}
+
+pub fn deepmind_enabled_standard() -> bool {
+    return DEEPMIND_ENABLED.load(Ordering::Relaxed)
+        && DEEPMIND_MODE.load(Ordering::Relaxed) == (DeepmindMode::STANDARD as u8);
 }
 
 pub fn inst_err_to_pb(error: &InstructionError) -> Option<PbInstructionError> {
