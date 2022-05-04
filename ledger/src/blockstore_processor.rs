@@ -1,3 +1,4 @@
+use prost::Message;
 use solana_sdk::bs58;
 use {
     crate::{
@@ -39,7 +40,8 @@ use {
     },
     solana_sdk::{
         clock::{Slot, MAX_PROCESSING_AGE},
-        deepmind::{deepmind_enabled, DMBatchContext},
+        deepmind::DMBatchContext,
+        deepmind::{deepmind_enabled_augmented, deepmind_enabled_standard},
         feature_set,
         genesis_config::GenesisConfig,
         hash::Hash,
@@ -51,6 +53,7 @@ use {
             VersionedTransaction,
         },
     },
+    solana_storage_proto::convert::generated,
     solana_transaction_status::token_balances::{
         collect_token_balances, TransactionTokenBalancesSet,
     },
@@ -284,7 +287,7 @@ fn execute_batches(
                         // DMLOG
                         //****************************************************************
                         let mut dmbatch_ctx_opt: Option<Rc<RefCell<DMBatchContext>>> = None;
-                        if deepmind_enabled() {
+                        if deepmind_enabled_augmented() {
                             let batch_id = i.fetch_add(1, Ordering::Relaxed);
                             let file_number =
                                 GLOBAL_DEEP_MIND_FILE_NUMBER.fetch_add(1, Ordering::SeqCst);
@@ -326,7 +329,7 @@ fn execute_batches(
         timings.accumulate(&timing);
     }
 
-    if deepmind_enabled() && batches.len() > 0 {
+    if deepmind_enabled_augmented() && batches.len() > 0 {
         println!("DMLOG BATCHES_END");
     }
 
@@ -662,7 +665,7 @@ fn do_process_blockstore_from_root(
     //****************************************************************
     // DMLOG
     //****************************************************************
-    if deepmind_enabled() {
+    if deepmind_enabled_augmented() || deepmind_enabled_standard() {
         println!("DMLOG BLOCK_ROOT {}", &start_slot);
     }
     //****************************************************************
@@ -993,7 +996,7 @@ pub fn confirm_slot(
     //****************************************************************
     // DMLOG
     //****************************************************************
-    if deepmind_enabled() && num_entries != 0 {
+    if deepmind_enabled_augmented() && num_entries != 0 {
         let mut ids = Vec::<String>::new();
         for entry in &entries {
             for trx in &entry.transactions {
@@ -1081,7 +1084,7 @@ pub fn confirm_slot(
             //****************************************************************
             // DMLOG
             //****************************************************************
-            if deepmind_enabled() {
+            if deepmind_enabled_augmented() {
                 if process_result.is_err() {
                     println!("DMLOG BLOCK_FAILED {} {:#?}", slot, process_result);
                 }
@@ -1133,7 +1136,7 @@ fn process_bank_0(
     //****************************************************************
     // DMLOG
     //****************************************************************
-    if deepmind_enabled() {
+    if deepmind_enabled_augmented() {
         println!(
             "DMLOG BLOCK_END {} {:?} {} {}",
             bank0.slot(),
@@ -1141,6 +1144,14 @@ fn process_bank_0(
             bank0.unix_timestamp_from_genesis(),
             bank0.clock().unix_timestamp
         );
+    }
+
+    if deepmind_enabled_standard() {
+        let block = blockstore.get_complete_block(bank0.slot(), true).unwrap();
+        let proto_bloc: generated::ConfirmedBlock = block.into();
+        let mut buf = Vec::with_capacity(proto_bloc.encoded_len());
+        proto_bloc.encode(&mut buf).unwrap();
+        println!("DMLOG COMPLETE_BLOCK {}", hex::encode(buf));
     }
     //****************************************************************
 
@@ -1341,7 +1352,7 @@ fn load_frozen_forks(
                 //****************************************************************
                 // DMLOG
                 //****************************************************************
-                if deepmind_enabled() {
+                if deepmind_enabled_augmented() || deepmind_enabled_standard() {
                     println!("DMLOG BLOCK_ROOT {}", &root);
                 }
                 //****************************************************************
@@ -1514,7 +1525,7 @@ fn process_single_slot(
     //****************************************************************
     // DMLOG
     //****************************************************************
-    if deepmind_enabled() {
+    if deepmind_enabled_augmented() {
         println!(
             "DMLOG BLOCK_END {} {:?} {} {}",
             bank.slot(),
@@ -1522,6 +1533,13 @@ fn process_single_slot(
             bank.unix_timestamp_from_genesis(),
             bank.clock().unix_timestamp,
         );
+    }
+    if deepmind_enabled_standard() {
+        let block = blockstore.get_complete_block(bank.slot(), true).unwrap();
+        let proto_bloc: generated::ConfirmedBlock = block.into();
+        let mut buf = Vec::with_capacity(proto_bloc.encoded_len());
+        proto_bloc.encode(&mut buf).unwrap();
+        println!("DMLOG COMPLETE_BLOCK {}", hex::encode(buf));
     }
     //****************************************************************
 
