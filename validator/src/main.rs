@@ -57,7 +57,10 @@ use {
     solana_sdk::{
         clock::{Slot, DEFAULT_S_PER_SLOT},
         commitment_config::CommitmentConfig,
-        deepmind::enable_deepmind,
+        deepmind::{
+            enable_augmented_mode, enable_deepmind, DEEPMIND_VARIANT_AUGMENTED,
+            DEEPMIND_VARIANT_STANDARD, DEEPMIND_VERSION,
+        },
         hash::Hash,
         pubkey::Pubkey,
         signature::{Keypair, Signer},
@@ -1652,6 +1655,12 @@ pub fn main() {
                 .takes_value(false)
                 .help("Activate/deactivate deep-mind instrumentation, disabled by default. You can override output directory using the DEEPMIND_BATCH_FILES_PATH environment variable."),
         )
+        .arg(
+            Arg::with_name("deepmind_augmented")
+                .long("deepmind-augmented")
+                .takes_value(false)
+                .help("Enables deep-mind augmented mode. Deepmind will output the rich instrumented block"),
+        )
         .after_help("The default subcommand is run")
         .subcommand(
             SubCommand::with_name("exit")
@@ -2023,7 +2032,24 @@ pub fn main() {
 
     if matches.is_present("deepmind") {
         enable_deepmind();
-        println!("DMLOG INIT VERSION {}", solana_version::version!());
+        let version = DEEPMIND_VERSION;
+        let mut variant = DEEPMIND_VARIANT_STANDARD;
+
+        if matches.is_present("deepmind_augmented") {
+            enable_augmented_mode();
+            variant = DEEPMIND_VARIANT_AUGMENTED;
+        } else {
+            if !matches.is_present("enable_rpc_transaction_history") {
+                eprintln!("Deepmind standard mode requires rpc transaction history to be enabled (--enable_rpc_transaction_history)");
+                exit(1);
+            }
+        }
+        println!(
+            "DMLOG INIT {} {} {}",
+            version,
+            variant,
+            solana_version::version!()
+        );
     }
 
     let private_rpc = matches.is_present("private_rpc");
