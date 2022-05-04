@@ -81,7 +81,7 @@ use {
     },
     solana_sdk::{
         clock::Slot,
-        deepmind::deepmind_enabled,
+        deepmind::deepmind_enabled_augmented,
         epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
         exit::Exit,
         genesis_config::GenesisConfig,
@@ -385,7 +385,7 @@ impl Validator {
             abort();
         }
 
-        if deepmind_enabled() {
+        if deepmind_enabled_augmented() {
             // cleanup the batch files path
             let file_dir = env::var("DEEPMIND_BATCH_FILES_PATH").unwrap_or(String::from("/tmp"));
             info!("removing DEEPMIND_BATCH_FILES_PATH: {:?}", &file_dir);
