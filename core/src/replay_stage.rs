@@ -2236,11 +2236,14 @@ impl ReplayStage {
                 }
 
                 if deepmind_enabled_standard() {
-                    let block = blockstore.get_complete_block(bank.slot(), true).unwrap();
-                    let proto_bloc: generated::ConfirmedBlock = block.into();
-                    let mut buf = Vec::with_capacity(proto_bloc.encoded_len());
-                    proto_bloc.encode(&mut buf).unwrap();
-                    println!("DMLOG COMPLETE_BLOCK {}", hex::encode(buf));
+                    let resp = blockstore.get_complete_block(bank.slot(), true);
+                    if resp.is_ok() {
+                        let block = resp.unwrap();
+                        let proto_bloc: generated::ConfirmedBlock = block.into();
+                        let mut buf = Vec::with_capacity(proto_bloc.encoded_len());
+                        proto_bloc.encode(&mut buf).unwrap();
+                        println!("DMLOG COMPLETE_BLOCK {}", hex::encode(buf));
+                    }
                 }
                 //****************************************************************
             } else {
