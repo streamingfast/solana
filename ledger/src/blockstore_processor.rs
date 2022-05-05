@@ -1,3 +1,5 @@
+use prost::Message;
+use solana_sdk::bs58;
 use {
     crate::{
         block_error::BlockError, blockstore::Blockstore, blockstore_db::BlockstoreError,
@@ -39,6 +41,8 @@ use {
     },
     solana_sdk::{
         clock::{Slot, MAX_PROCESSING_AGE},
+        deepmind::DMBatchContext,
+        deepmind::{deepmind_enabled_augmented, deepmind_enabled_standard},
         feature_set,
         genesis_config::GenesisConfig,
         hash::Hash,
@@ -51,6 +55,7 @@ use {
             VersionedTransaction,
         },
     },
+    solana_storage_proto::convert::generated,
     solana_transaction_status::token_balances::{
         collect_token_balances, TransactionTokenBalancesSet,
     },
@@ -59,8 +64,12 @@ use {
         cell::RefCell,
         collections::{HashMap, HashSet},
         path::PathBuf,
+        rc::Rc,
         result,
-        sync::{Arc, RwLock},
+        sync::{
+            atomic::{AtomicU64, AtomicUsize, Ordering},
+            Arc, RwLock,
+        },
         time::{Duration, Instant},
     },
     thiserror::Error,
@@ -167,6 +176,7 @@ fn execute_batch(
     replay_vote_sender: Option<&ReplayVoteSender>,
     timings: &mut ExecuteTimings,
     cost_capacity_meter: Arc<RwLock<BlockCostCapacityMeter>>,
+    dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
 ) -> Result<()> {
     let record_token_balances = transaction_status_sender.is_some();
 
@@ -187,6 +197,7 @@ fn execute_batch(
         transaction_status_sender.is_some(),
         transaction_status_sender.is_some(),
         timings,
+        dmbatch_context,
     );
 
     if bank
@@ -257,6 +268,8 @@ fn execute_batch(
     first_err.map(|(result, _)| result).unwrap_or(Ok(()))
 }
 
+static GLOBAL_DEEP_MIND_FILE_NUMBER: AtomicUsize = AtomicUsize::new(0);
+
 fn execute_batches_internal(
     bank: &Arc<Bank>,
     batches: &[TransactionBatch],
@@ -270,10 +283,29 @@ fn execute_batches_internal(
     let (results, new_timings): (Vec<Result<()>>, Vec<ExecuteTimings>) =
         PAR_THREAD_POOL.with(|thread_pool| {
             thread_pool.borrow().install(|| {
+                //****************************************************************
+                // DMLOG
+                //****************************************************************
+                let i: AtomicU64 = AtomicU64::new(0);
+                //****************************************************************
                 batches
                     .into_par_iter()
                     .map(|batch| {
                         let mut timings = ExecuteTimings::default();
+
+                        //****************************************************************
+                        // DMLOG
+                        //****************************************************************
+                        let mut dmbatch_ctx_opt: Option<Rc<RefCell<DMBatchContext>>> = None;
+                        if deepmind_enabled_augmented() {
+                            let batch_id = i.fetch_add(1, Ordering::Relaxed);
+                            let file_number =
+                                GLOBAL_DEEP_MIND_FILE_NUMBER.fetch_add(1, Ordering::SeqCst);
+                            let ctx = DMBatchContext::new(batch_id, file_number);
+                            dmbatch_ctx_opt = Some(Rc::new(RefCell::new(ctx)));
+                        }
+                        //****************************************************************
+
                         let result = execute_batch(
                             batch,
                             bank,
@@ -281,10 +313,20 @@ fn execute_batches_internal(
                             replay_vote_sender,
                             &mut timings,
                             cost_capacity_meter.clone(),
+                            &dmbatch_ctx_opt,
                         );
                         if let Some(entry_callback) = entry_callback {
                             entry_callback(bank);
                         }
+
+                        //****************************************************************
+                        // DMLOG
+                        //****************************************************************
+                        if let Some(ctx_ref) = &dmbatch_ctx_opt {
+                            ctx_ref.borrow_mut().flush();
+                        }
+                        //****************************************************************
+
                         (result, timings)
                     })
                     .unzip()
@@ -295,6 +337,10 @@ fn execute_batches_internal(
     timings.num_execute_batches += 1;
     for timing in new_timings {
         timings.accumulate(&timing);
+    }
+
+    if deepmind_enabled_augmented() && batches.len() > 0 {
+        println!("DMLOG BATCHES_END");
     }
 
     first_err(&results)
@@ -695,6 +741,14 @@ fn do_process_blockstore_from_root(
         assert!(blockstore.is_root(start_slot), "starting slot isn't root and can't update due to being secondary blockstore access: {}", start_slot);
     }
 
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
+    if deepmind_enabled_augmented() || deepmind_enabled_standard() {
+        println!("DMLOG BLOCK_ROOT {}", &start_slot);
+    }
+    //****************************************************************
+
     if let Ok(metas) = blockstore.slot_meta_iterator(start_slot) {
         if let Some((slot, _meta)) = metas.last() {
             info!("ledger holds data through slot {}", slot);
@@ -1018,6 +1072,36 @@ pub fn confirm_slot(
         }
     };
 
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
+    if deepmind_enabled_augmented() && num_entries != 0 {
+        let mut ids = Vec::<String>::new();
+        for entry in &entries {
+            for trx in &entry.transactions {
+                ids.push(bs58::encode(&trx.signatures[0]).into_string());
+            }
+        }
+
+        println!(
+            "DMLOG BLOCK_WORK {} {} {} {} {} {} {} {} {} {} {} {} T;{}",
+            bank.parent_slot(),
+            slot,
+            if slot_full { "full" } else { "partial" },
+            bank.parent_hash(), // previous BLOCK hash, not slot hash (in case we skipped one)
+            num_entries,
+            num_txs,
+            num_shreds,
+            progress.num_entries,
+            progress.num_txs,
+            progress.num_shreds,
+            progress.last_entry,
+            progress.tick_hash_count,
+            ids.join(";"),
+        );
+    }
+    //****************************************************************
+
     let check_start = Instant::now();
     let check_result = entry::start_verify_transactions(
         entries,
@@ -1076,6 +1160,16 @@ pub fn confirm_slot(
                 }
             }
 
+            //****************************************************************
+            // DMLOG
+            //****************************************************************
+            if deepmind_enabled_augmented() {
+                if process_result.is_err() {
+                    println!("DMLOG BLOCK_FAILED {} {:#?}", slot, process_result);
+                }
+            }
+            //****************************************************************
+
             process_result?;
 
             progress.num_shreds += num_shreds;
@@ -1117,6 +1211,32 @@ fn process_bank_0(
     .expect("processing for bank 0 must succeed");
     bank0.freeze();
     blockstore.insert_bank_hash(bank0.slot(), bank0.hash(), false);
+
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
+    if deepmind_enabled_augmented() {
+        println!(
+            "DMLOG BLOCK_END {} {:?} {} {}",
+            bank0.slot(),
+            bank0.hash(),
+            bank0.unix_timestamp_from_genesis(),
+            bank0.clock().unix_timestamp
+        );
+    }
+
+    if deepmind_enabled_standard() {
+        let resp = blockstore.get_complete_block(bank0.slot(), true);
+        if resp.is_ok() {
+            let block = resp.unwrap();
+            let proto_bloc: generated::ConfirmedBlock = block.into();
+            let mut buf = Vec::with_capacity(proto_bloc.encoded_len());
+            proto_bloc.encode(&mut buf).unwrap();
+            println!("DMLOG COMPLETE_BLOCK {}", hex::encode(buf));
+        }
+    }
+    //****************************************************************
+
     cache_block_meta(bank0, cache_block_meta_sender);
 }
 
@@ -1311,6 +1431,14 @@ fn load_frozen_forks(
                 *root = new_root_bank.slot();
                 last_root = new_root_bank.slot();
 
+                //****************************************************************
+                // DMLOG
+                //****************************************************************
+                if deepmind_enabled_augmented() || deepmind_enabled_standard() {
+                    println!("DMLOG BLOCK_ROOT {}", &root);
+                }
+                //****************************************************************
+
                 leader_schedule_cache.set_root(new_root_bank);
                 new_root_bank.squash();
 
@@ -1477,6 +1605,30 @@ fn process_single_slot(
     bank.freeze(); // all banks handled by this routine are created from complete slots
     blockstore.insert_bank_hash(bank.slot(), bank.hash(), false);
     cache_block_meta(bank, cache_block_meta_sender);
+
+    //****************************************************************
+    // DMLOG
+    //****************************************************************
+    if deepmind_enabled_augmented() {
+        println!(
+            "DMLOG BLOCK_END {} {:?} {} {}",
+            bank.slot(),
+            bank.hash(),
+            bank.unix_timestamp_from_genesis(),
+            bank.clock().unix_timestamp,
+        );
+    }
+    if deepmind_enabled_standard() {
+        let resp = blockstore.get_complete_block(bank.slot(), true);
+        if resp.is_ok() {
+            let block = resp.unwrap();
+            let proto_bloc: generated::ConfirmedBlock = block.into();
+            let mut buf = Vec::with_capacity(proto_bloc.encoded_len());
+            proto_bloc.encode(&mut buf).unwrap();
+            println!("DMLOG COMPLETE_BLOCK {}", hex::encode(buf));
+        }
+    }
+    //****************************************************************
 
     Ok(())
 }
@@ -3044,7 +3196,7 @@ pub mod tests {
                 vec![entry_1, tick, entry_2.clone()],
                 true,
                 None,
-                None
+                None,
             ),
             Ok(())
         );
@@ -3602,6 +3754,7 @@ pub mod tests {
             false,
             false,
             &mut ExecuteTimings::default(),
+            &None,
         );
         let (err, signature) = get_first_error(&batch, fee_collection_results).unwrap();
         assert_eq!(err.unwrap_err(), TransactionError::AccountNotFound);
