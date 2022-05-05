@@ -116,6 +116,10 @@ impl SnapshotRequestHandler {
                     Hash::default()
                 };
 
+                info!(
+                    "DEBUG - snapshot request receiver {:?}",
+                    accounts_db_caching_enabled
+                );
                 let mut shrink_time = Measure::start("shrink_time");
                 if !accounts_db_caching_enabled {
                     snapshot_root_bank
