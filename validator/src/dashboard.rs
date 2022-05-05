@@ -1,3 +1,4 @@
+use log::info;
 use {
     crate::{
         admin_rpc_service, format_name_value, new_spinner_progress_bar, println_name_value,
@@ -48,7 +49,10 @@ impl Dashboard {
         let exit = Arc::new(AtomicBool::new(false));
         if let Some(validator_exit) = validator_exit {
             let exit = exit.clone();
-            validator_exit.register_exit(Box::new(move || exit.store(true, Ordering::Relaxed)));
+            validator_exit.register_exit(Box::new(move || {
+                info!("dashboard snapshot (exit)");
+                exit.store(true, Ordering::Relaxed)
+            }));
         }
 
         Ok(Self {
