@@ -1,5 +1,6 @@
 //! The `bank_forks` module implements BankForks a DAG of checkpointed Banks
 
+use solana_sdk::deepmind::{deepmind_enabled_augmented, deepmind_enabled_standard};
 use {
     crate::{
         accounts_background_service::{AbsRequestSender, SnapshotRequest},
@@ -198,6 +199,15 @@ impl BankForks {
     ) -> (Vec<Arc<Bank>>, SetRootTimings) {
         let old_epoch = self.root_bank().epoch();
         self.root = root;
+
+        //****************************************************************
+        // DMLOG
+        //****************************************************************
+        if deepmind_enabled_augmented() || deepmind_enabled_standard() {
+            println!("DMLOG BLOCK_ROOT {}", root);
+        }
+        //****************************************************************
+
         let root_bank = self
             .banks
             .get(&root)
