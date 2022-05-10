@@ -19,3 +19,4 @@ solana-program-runtime = { path = "../program-runtime", version = "=1.9.19" }
 solana-sdk = { path = "../sdk", version = "=1.9.19" }
 solana_rbpf = "=0.2.24"
 time = "0.3.5"
+
