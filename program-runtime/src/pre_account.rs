@@ -1,3 +1,5 @@
+use solana_sdk::deepmind::DMBatchContext;
+use std::ops::Deref;
 use {
     crate::timings::ExecuteDetailsTimings,
     solana_sdk::{
@@ -41,6 +43,7 @@ impl PreAccount {
         timings: &mut ExecuteDetailsTimings,
         outermost_call: bool,
         do_support_realloc: bool,
+        dmbatch_context: &Option<Rc<RefCell<DMBatchContext>>>,
     ) -> Result<(), InstructionError> {
         let pre = self.account.borrow();
 
@@ -74,6 +77,16 @@ impl PreAccount {
             if pre.executable() {
                 return Err(InstructionError::ExecutableLamportChange);
             }
+
+            //****************************************************************
+            // DMLOG
+            //****************************************************************
+            if let Some(ctx_ref) = dmbatch_context {
+                let ctx = ctx_ref.deref();
+                ctx.borrow_mut()
+                    .add_lamport_change(&self.key(), pre.lamports(), post.lamports())
+            }
+            //****************************************************************
         }
 
         let data_len_changed = if do_support_realloc {
@@ -117,6 +130,18 @@ impl PreAccount {
                 return Err(InstructionError::ReadonlyDataModified);
             }
         }
+
+        //****************************************************************
+        // DMLOG
+        //****************************************************************
+        if let Some(ctx_ref) = &dmbatch_context {
+            if is_writable && (pre.data() != post.data()) {
+                let ctx = ctx_ref.deref();
+                ctx.borrow_mut()
+                    .add_account_change(&self.key, pre.data(), post.data())
+            }
+        }
+        //****************************************************************
 
         // executable is one-way (false->true) and only the account owner may set it.
         let executable_changed = pre.executable() != post.executable();

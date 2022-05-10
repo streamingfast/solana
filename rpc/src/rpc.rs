@@ -197,7 +197,7 @@ impl JsonRpcRequestProcessor {
                 .unwrap()
                 .bank
                 .clone();
-            debug!("RPC using optimistically confirmed slot: {:?}", bank.slot());
+            info!("RPC using optimistically confirmed slot: {:?}", bank.slot());
             return bank;
         }
 
@@ -4278,7 +4278,10 @@ fn sanitize_transaction(transaction: VersionedTransaction) -> Result<SanitizedTr
 pub(crate) fn create_validator_exit(exit: &Arc<AtomicBool>) -> Arc<RwLock<Exit>> {
     let mut validator_exit = Exit::default();
     let exit_ = exit.clone();
-    validator_exit.register_exit(Box::new(move || exit_.store(true, Ordering::Relaxed)));
+    validator_exit.register_exit(Box::new(move || {
+        info!("validator setting atomic exit to 'true'  (exit)");
+        exit_.store(true, Ordering::Relaxed)
+    }));
     Arc::new(RwLock::new(validator_exit))
 }
 

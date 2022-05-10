@@ -1,6 +1,5 @@
 #![allow(clippy::integer_arithmetic)]
-#[cfg(not(target_env = "msvc"))]
-use jemallocator::Jemalloc;
+
 use {
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, App,
@@ -58,6 +57,10 @@ use {
     solana_sdk::{
         clock::{Slot, DEFAULT_S_PER_SLOT},
         commitment_config::CommitmentConfig,
+        deepmind::{
+            enable_augmented_mode, enable_deepmind, DEEPMIND_VARIANT_AUGMENTED,
+            DEEPMIND_VARIANT_STANDARD, DEEPMIND_VERSION,
+        },
         hash::Hash,
         pubkey::Pubkey,
         signature::{Keypair, Signer},
@@ -81,7 +84,10 @@ use {
     },
 };
 
-#[cfg(not(target_env = "msvc"))]
+#[cfg(not(any(target_env = "msvc", target_os = "macos")))]
+use jemallocator::Jemalloc;
+
+#[cfg(not(any(target_env = "msvc", target_os = "macos")))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
@@ -1651,6 +1657,18 @@ pub fn main() {
                 .help("Allow contacting private ip addresses")
                 .hidden(true),
         )
+        .arg(
+            Arg::with_name("deepmind")
+                .long("deepmind")
+                .takes_value(false)
+                .help("Activate/deactivate deep-mind instrumentation, disabled by default. You can override output directory using the DEEPMIND_BATCH_FILES_PATH environment variable."),
+        )
+        .arg(
+            Arg::with_name("deepmind_augmented")
+                .long("deepmind-augmented")
+                .takes_value(false)
+                .help("Enables deep-mind augmented mode. Deepmind will output the rich instrumented block"),
+        )
         .after_help("The default subcommand is run")
         .subcommand(
             SubCommand::with_name("exit")
@@ -2019,6 +2037,28 @@ pub fn main() {
         ),
         incremental_snapshot_fetch: matches.is_present("incremental_snapshots"),
     };
+
+    if matches.is_present("deepmind") {
+        enable_deepmind();
+        let version = DEEPMIND_VERSION;
+        let mut variant = DEEPMIND_VARIANT_STANDARD;
+
+        if matches.is_present("deepmind_augmented") {
+            enable_augmented_mode();
+            variant = DEEPMIND_VARIANT_AUGMENTED;
+        } else {
+            if !matches.is_present("enable_rpc_transaction_history") {
+                eprintln!("Deepmind standard mode requires rpc transaction history to be enabled (--enable_rpc_transaction_history)");
+                exit(1);
+            }
+        }
+        println!(
+            "DMLOG INIT {} {} {}",
+            version,
+            variant,
+            solana_version::version!()
+        );
+    }
 
     let private_rpc = matches.is_present("private_rpc");
     let do_port_check = !matches.is_present("no_port_check");

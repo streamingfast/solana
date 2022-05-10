@@ -46,6 +46,10 @@ use {
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         account_utils::StateMut,
         clock::{Epoch, Slot},
+        deepmind::{
+            enable_augmented_mode, enable_deepmind, DEEPMIND_VARIANT_AUGMENTED,
+            DEEPMIND_VARIANT_STANDARD, DEEPMIND_VERSION,
+        },
         genesis_config::{ClusterType, GenesisConfig},
         hash::Hash,
         inflation::Inflation,
@@ -818,10 +822,10 @@ fn assert_capitalization(bank: &Bank) {
     let debug_verify = true;
     assert!(bank.calculate_and_verify_capitalization(debug_verify));
 }
-#[cfg(not(target_env = "msvc"))]
+#[cfg(not(any(target_env = "msvc", target_os = "macos")))]
 use jemallocator::Jemalloc;
 
-#[cfg(not(target_env = "msvc"))]
+#[cfg(not(any(target_env = "msvc", target_os = "macos")))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
@@ -1005,6 +1009,18 @@ fn main() {
                 .global(true)
                 .default_value("ledger")
                 .help("Use DIR as ledger location"),
+        )
+        .arg(
+            Arg::with_name("deepmind")
+                .long("deepmind")
+                .takes_value(false)
+                .help("Activate/deactivate deep-mind instrumentation, disabled by default. You can override output directory using the DEEPMIND_BATCH_FILES_PATH environment variable."),
+        )
+        .arg(
+            Arg::with_name("deepmind_augmented")
+                .long("deepmind-augmented")
+                .takes_value(false)
+                .help("Enables deep-mind augmented mode. Deepmind will output the rich instrumented block"),
         )
         .arg(
             Arg::with_name("wal_recovery_mode")
@@ -1611,6 +1627,28 @@ fn main() {
     info!("{} {}", crate_name!(), solana_version::version!());
 
     let ledger_path = parse_ledger_path(&matches, "ledger_path");
+
+    if matches.is_present("deepmind") {
+        enable_deepmind();
+        let version = DEEPMIND_VERSION;
+        let mut variant = DEEPMIND_VARIANT_STANDARD;
+
+        if matches.is_present("deepmind_augmented") {
+            enable_augmented_mode();
+            variant = DEEPMIND_VARIANT_AUGMENTED;
+        } else {
+            if !matches.is_present("enable_rpc_transaction_history") {
+                eprintln!("Deepmind standard mode requires rpc transaction history to be enabled (--enable_rpc_transaction_history)");
+                exit(1);
+            }
+        }
+        println!(
+            "DMLOG INIT {} {} {}",
+            version,
+            variant,
+            solana_version::version!()
+        );
+    }
 
     let snapshot_archive_path = value_t!(matches, "snapshot_archive_path", String)
         .ok()

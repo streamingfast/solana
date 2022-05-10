@@ -42,6 +42,7 @@ use {
             Slot, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY,
             MAX_TRANSACTION_FORWARDING_DELAY_GPU,
         },
+        deepmind::{deepmind_enabled_augmented, deepmind_enabled_standard},
         feature_set,
         message::{
             v0::{LoadedAddresses, MessageAddressTableLookup},
@@ -1170,6 +1171,9 @@ impl BankingStage {
             "collect_balances",
         );
         execute_and_commit_timings.collect_balances_us = collect_balances_time.as_us();
+        if deepmind_enabled_augmented() || deepmind_enabled_standard() {
+            println!("DMLOG HALT tpu code path. only consider tvu codepath");
+        }
 
         let (load_and_execute_transactions_output, load_execute_time) = Measure::this(
             |_| {
@@ -1180,6 +1184,7 @@ impl BankingStage {
                     transaction_status_sender.is_some(),
                     &mut execute_and_commit_timings.execute_timings,
                     None, // account_overrides
+                    &None,
                 )
             },
             (),

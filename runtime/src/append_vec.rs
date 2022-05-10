@@ -164,11 +164,11 @@ pub struct AppendVec {
 impl Drop for AppendVec {
     fn drop(&mut self) {
         if self.remove_on_drop {
-            if let Err(_e) = remove_file(&self.path) {
+            if let Err(e) = remove_file(&self.path) {
                 // promote this to panic soon.
                 // disabled due to many false positive warnings while running tests.
                 // blocked by rpc's upgrade to jsonrpc v17
-                //error!("AppendVec failed to remove {:?}: {:?}", &self.path, e);
+                error!("AppendVec failed to remove {:?}: {:?}", &self.path, e);
             }
         }
     }
@@ -231,7 +231,17 @@ impl AppendVec {
     }
 
     pub fn set_no_remove_on_drop(&mut self) {
+        //info!("setting no remove on drop safe: {:?}", self.path);
         self.remove_on_drop = false;
+    }
+
+    pub fn set_no_remove_on_drop_unchecked(&self) {
+        //info!("setting no remove on drop unchecked: {:?}", self.path);
+        unsafe {
+            let const_ptr = &self.remove_on_drop as *const bool;
+            let mut_ptr = const_ptr as *mut bool;
+            *mut_ptr = false;
+        }
     }
 
     pub fn new_empty_map(current_len: usize) -> Self {
@@ -305,7 +315,11 @@ impl AppendVec {
         format!("{}.{}", slot, id)
     }
 
-    pub fn new_from_file<P: AsRef<Path>>(path: P, current_len: usize) -> io::Result<(Self, usize)> {
+    pub fn new_from_file<P: AsRef<Path>>(
+        path: P,
+        current_len: usize,
+        remove_on_drop: bool,
+    ) -> io::Result<(Self, usize)> {
         let data = OpenOptions::new()
             .read(true)
             .write(true)
@@ -330,7 +344,7 @@ impl AppendVec {
             append_lock: Mutex::new(()),
             current_len: AtomicUsize::new(current_len),
             file_size,
-            remove_on_drop: true,
+            remove_on_drop,
         };
 
         let (sanitized, num_accounts) = new.sanitize_layout_and_length();
@@ -361,8 +375,14 @@ impl AppendVec {
             num_accounts += 1;
         }
         let aligned_current_len = u64_align!(self.current_len.load(Ordering::Relaxed));
-
-        (offset == aligned_current_len, num_accounts)
+        let sanitized = offset == aligned_current_len;
+        if !sanitized {
+            info!(
+                "append vec not sanitized, estimated current_len would be: {}",
+                offset
+            );
+        }
+        (sanitized, num_accounts)
     }
 
     /// Get a reference to the data at `offset` of `size` bytes if that slice
@@ -679,7 +699,7 @@ pub mod tests {
             .open(&path)
             .expect("create a test file for mmap");
 
-        let result = AppendVec::new_from_file(path, 0);
+        let result = AppendVec::new_from_file(path, 0, true);
         assert_matches!(result, Err(ref message) if message.to_string() == *"too small file size 0 for AppendVec");
     }
 
@@ -808,7 +828,7 @@ pub mod tests {
         av.flush().unwrap();
         let accounts_len = av.len();
         drop(av);
-        let result = AppendVec::new_from_file(path, accounts_len);
+        let result = AppendVec::new_from_file(path, accounts_len, true);
         assert_matches!(result, Err(ref message) if message.to_string() == *"incorrect layout/length/data");
     }
 
@@ -836,7 +856,7 @@ pub mod tests {
         av.flush().unwrap();
         let accounts_len = av.len();
         drop(av);
-        let result = AppendVec::new_from_file(path, accounts_len);
+        let result = AppendVec::new_from_file(path, accounts_len, true);
         assert_matches!(result, Err(ref message) if message.to_string() == *"incorrect layout/length/data");
     }
 
@@ -862,7 +882,7 @@ pub mod tests {
         av.flush().unwrap();
         let accounts_len = av.len();
         drop(av);
-        let result = AppendVec::new_from_file(path, accounts_len);
+        let result = AppendVec::new_from_file(path, accounts_len, true);
         assert_matches!(result, Err(ref message) if message.to_string() == *"incorrect layout/length/data");
     }
 
@@ -918,7 +938,7 @@ pub mod tests {
         av.flush().unwrap();
         let accounts_len = av.len();
         drop(av);
-        let result = AppendVec::new_from_file(path, accounts_len);
+        let result = AppendVec::new_from_file(path, accounts_len, true);
         assert_matches!(result, Err(ref message) if message.to_string() == *"incorrect layout/length/data");
     }
 }
