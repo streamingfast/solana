@@ -2251,9 +2251,6 @@ impl ReplayStage {
                 }
                 //****************************************************************
             } else {
-                if deepmind_enabled_standard() || deepmind_enabled_augmented() {
-                    println!("DMLOG DEBUG BANK WAS NOT COMPLETE");
-                }
                 trace!(
                     "bank {} not completed tick_height: {}, max_tick_height: {}",
                     bank.slot(),
