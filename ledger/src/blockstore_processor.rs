@@ -1232,7 +1232,7 @@ fn process_bank_0(
             let proto_bloc: generated::ConfirmedBlock = block.into();
             let mut buf = Vec::with_capacity(proto_bloc.encoded_len());
             proto_bloc.encode(&mut buf).unwrap();
-            println!("DMLOG COMPLETE_BLOCK {}", hex::encode(buf));
+            println!("DMLOG COMPLETE_BLOCK {} {}", bank0.slot(), hex::encode(buf));
         }
     }
     //****************************************************************
@@ -1625,7 +1625,7 @@ fn process_single_slot(
             let proto_bloc: generated::ConfirmedBlock = block.into();
             let mut buf = Vec::with_capacity(proto_bloc.encoded_len());
             proto_bloc.encode(&mut buf).unwrap();
-            println!("DMLOG COMPLETE_BLOCK {}", hex::encode(buf));
+            println!("DMLOG COMPLETE_BLOCK {} {}", bank.slot(), hex::encode(buf));
         }
     }
     //****************************************************************
