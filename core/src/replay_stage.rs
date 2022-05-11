@@ -2081,6 +2081,9 @@ impl ReplayStage {
                 (num_blocks_on_fork, num_dropped_blocks_on_fork)
             };
 
+            if deepmind_enabled_standard() || deepmind_enabled_augmented() {
+                println!("DMLOG DEBUG REPLAY STAGE");
+            }
             // Insert a progress entry even for slots this node is the leader for, so that
             // 1) confirm_forks can report confirmation, 2) we can cache computations about
             // this bank in `select_forks()`
@@ -2108,6 +2111,10 @@ impl ReplayStage {
                 match replay_result {
                     Ok(replay_tx_count) => tx_count += replay_tx_count,
                     Err(err) => {
+                        if deepmind_enabled_standard() || deepmind_enabled_augmented() {
+                            println!("DMLOG DEBUG REPLAY DEAD SLOT");
+                        }
+
                         // Error means the slot needs to be marked as dead
                         Self::mark_dead_slot(
                             blockstore,
@@ -2244,6 +2251,9 @@ impl ReplayStage {
                 }
                 //****************************************************************
             } else {
+                if deepmind_enabled_standard() || deepmind_enabled_augmented() {
+                    println!("DMLOG DEBUG BANK WAS NOT COMPLETE");
+                }
                 trace!(
                     "bank {} not completed tick_height: {}, max_tick_height: {}",
                     bank.slot(),
