@@ -33,7 +33,7 @@ extern crate solana_metrics;
 extern crate serde_derive;
 
 mod access_token;
-mod bigtable;
+pub mod bigtable;
 mod compression;
 mod root_ca_certificate;
 
@@ -104,15 +104,15 @@ fn key_to_slot(key: &str) -> Option<Slot> {
 // added to ConfirmedBlock, they must either be excluded or set to `default_on_eof` here
 //
 #[derive(Serialize, Deserialize)]
-struct StoredConfirmedBlock {
-    previous_blockhash: String,
-    blockhash: String,
-    parent_slot: Slot,
-    transactions: Vec<StoredConfirmedBlockTransaction>,
-    rewards: StoredConfirmedBlockRewards,
-    block_time: Option<UnixTimestamp>,
+pub struct StoredConfirmedBlock {
+    pub previous_blockhash: String,
+    pub blockhash: String,
+    pub parent_slot: Slot,
+    pub transactions: Vec<StoredConfirmedBlockTransaction>,
+    pub rewards: StoredConfirmedBlockRewards,
+    pub block_time: Option<UnixTimestamp>,
     #[serde(deserialize_with = "default_on_eof")]
-    block_height: Option<u64>,
+    pub block_height: Option<u64>,
 }
 
 #[cfg(test)]
@@ -165,9 +165,9 @@ impl From<StoredConfirmedBlock> for ConfirmedBlockWithOptionalMetadata {
 }
 
 #[derive(Serialize, Deserialize)]
-struct StoredConfirmedBlockTransaction {
-    transaction: Transaction,
-    meta: Option<StoredConfirmedBlockTransactionStatusMeta>,
+pub struct StoredConfirmedBlockTransaction {
+    pub transaction: Transaction,
+    pub meta: Option<StoredConfirmedBlockTransactionStatusMeta>,
 }
 
 #[cfg(test)]
@@ -190,11 +190,11 @@ impl From<StoredConfirmedBlockTransaction> for TransactionWithOptionalMetadata {
 }
 
 #[derive(Serialize, Deserialize)]
-struct StoredConfirmedBlockTransactionStatusMeta {
-    err: Option<TransactionError>,
-    fee: u64,
-    pre_balances: Vec<u64>,
-    post_balances: Vec<u64>,
+pub struct StoredConfirmedBlockTransactionStatusMeta {
+    pub err: Option<TransactionError>,
+    pub fee: u64,
+    pub pre_balances: Vec<u64>,
+    pub post_balances: Vec<u64>,
 }
 
 impl From<StoredConfirmedBlockTransactionStatusMeta> for TransactionStatusMeta {
@@ -241,12 +241,12 @@ impl From<TransactionStatusMeta> for StoredConfirmedBlockTransactionStatusMeta {
     }
 }
 
-type StoredConfirmedBlockRewards = Vec<StoredConfirmedBlockReward>;
+pub type StoredConfirmedBlockRewards = Vec<StoredConfirmedBlockReward>;
 
 #[derive(Serialize, Deserialize)]
-struct StoredConfirmedBlockReward {
-    pubkey: String,
-    lamports: i64,
+pub struct StoredConfirmedBlockReward {
+    pub pubkey: String,
+    pub lamports: i64,
 }
 
 impl From<StoredConfirmedBlockReward> for Reward {

@@ -1,0 +1,21 @@
+[package]
+authors = ["StreamingFast <maintainers@streamingfast.io>"]
+edition = "2021"
+name = "solana-bigtable-decoder"
+description = "Blockchain, Rebuilt for Scale"
+version = "1.9.20"
+repository = "https://github.com/streamingfast/solana"
+license = "Apache-2.0"
+homepage = "https://solana.com/"
+documentation = "https://docs.rs/solana-ledger-tool"
+
+[dependencies]
+solana-storage-bigtable = { path = "../storage-bigtable", version = "=1.9.20" }
+solana-storage-proto = { path = "../storage-proto", version = "=1.9.20" }
+solana-transaction-status = { path = "../transaction-status", version = "=1.9.20" }
+clap = { version = "3.1.18", features = ["derive"] }
+prost = "0.10.0"
+prost-types = "0.10.0"
+hex = "0.4.3"
+
+[dev-dependencies]

@@ -9,6 +9,7 @@ members = [
     "banks-server",
     "bench-streamer",
     "bench-tps",
+    'bigtable-decoder',
     "bucket_map",
     "bloom",
     "clap-utils",
