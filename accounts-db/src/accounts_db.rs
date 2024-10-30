@@ -6636,17 +6636,23 @@ impl AccountsDb {
                     .unwrap_or_default();
                 let account_info = AccountInfo::new(StorageLocation::Cached, account.lamports());
 
-                self.notify_account_at_accounts_update(
-                    slot,
-                    &account,
-                    txn,
-                    accounts_and_meta_to_store.pubkey(i),
-                    &mut write_version_producer,
-                );
+                let pubkey = accounts_and_meta_to_store.pubkey(i);
+                
+                if let Some(prev) = self.accounts_cache.load(slot, pubkey) {
+                    if prev.account.data() != account.data() {
+                        self.notify_account_at_accounts_update(
+                            slot,
+                            &account,
+                            txn,
+                            accounts_and_meta_to_store.pubkey(i),
+                            &mut write_version_producer,
+                        );
+                    }
+                }
 
                 let cached_account =
                     self.accounts_cache
-                        .store(slot, accounts_and_meta_to_store.pubkey(i), account);
+                        .store(slot, pubkey, account);
                 // hash this account in the bg
                 match &self.sender_bg_hasher {
                     Some(ref sender) => {
