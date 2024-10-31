@@ -6640,7 +6640,7 @@ impl AccountsDb {
                 
                 // Only notify if the account data has changed or if it is a deletion
                 if let Some(prev) = self.accounts_cache.load(slot, pubkey) {
-                    if (prev.account.data() != account.data() || account.lamports() == 0) {
+                    if prev.account.data() != account.data() || account.lamports() == 0 {
                         self.notify_account_at_accounts_update(
                             slot,
                             &account,
