@@ -16,9 +16,13 @@ use {
         clock::Slot,
         pubkey::Pubkey,
         transaction::SanitizedTransaction,
+        vote,
     },
     std::sync::{Arc, RwLock},
 };
+
+const VOTE_BYTES: [u8; 32] = vote::program::id().to_bytes();
+
 #[derive(Debug)]
 pub(crate) struct AccountsUpdateNotifierImpl {
     plugin_manager: Arc<RwLock<GeyserPluginManager>>,
@@ -36,7 +40,9 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
         if let Some(account_info) =
             self.accountinfo_from_shared_account_data(account, txn, pubkey, write_version)
         {
-            self.notify_plugins_of_account_update(account_info, slot, false);
+            if account_info.owner != VOTE_BYTES {
+                self.notify_plugins_of_account_update(account_info, slot, false);
+            }
         }
     }
 
@@ -55,7 +61,9 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
         );
 
         if let Some(account_info) = account {
-            self.notify_plugins_of_account_update(account_info, slot, true);
+            if account_info.owner != VOTE_BYTES {
+                self.notify_plugins_of_account_update(account_info, slot, true);
+            }
         }
         measure_all.stop();
 

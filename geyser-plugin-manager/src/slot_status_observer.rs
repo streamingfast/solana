@@ -59,11 +59,11 @@ impl SlotStatusObserver {
                                     .unwrap()
                                     .notify_slot_confirmed(slot, None);
                             }
-                            SlotNotification::Frozen((slot, parent)) => {
+                            SlotNotification::Frozen((slot, parent, hash, parent_hash, timestamp)) => {
                                 slot_status_notifier
                                     .read()
                                     .unwrap()
-                                    .notify_slot_processed(slot, Some(parent));
+                                    .notify_slot_processed(slot, Some(parent), hash, parent_hash, timestamp);
                             }
                             SlotNotification::Root((slot, parent)) => {
                                 slot_status_notifier
