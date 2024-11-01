@@ -6647,8 +6647,8 @@ impl AccountsDb {
                         }
                     }
                     None => true
-                }
-                if notify {
+                };
+                if notifyPlugin {
                     self.notify_account_at_accounts_update(
                         slot,
                         &account,
