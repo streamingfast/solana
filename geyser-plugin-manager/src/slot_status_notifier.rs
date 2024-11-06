@@ -4,7 +4,7 @@ use {
     log::*,
     solana_measure::measure::Measure,
     solana_metrics::*,
-    solana_sdk::{clock::Slot, hash::Hash as SolHash},
+    solana_sdk::{clock::{Slot, UnixTimestamp}, hash::Hash as SolHash},
     std::sync::{Arc, RwLock},
 };
 
