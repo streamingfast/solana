@@ -7,6 +7,7 @@ use {
         clock::{Slot, UnixTimestamp},
         signature::Signature,
         transaction::SanitizedTransaction,
+        hash::Hash as SolHash,
     },
     solana_transaction_status::{Reward, RewardsAndNumPartitions, TransactionStatusMeta},
     std::{any::Any, error, io},
@@ -408,6 +409,9 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         slot: Slot,
         parent: Option<u64>,
         status: SlotStatus,
+        hash: Option<SolHash>,
+        parent_hash: Option<SolHash>,
+        timestamp: Option<UnixTimestamp>,
     ) -> Result<()> {
         Ok(())
     }

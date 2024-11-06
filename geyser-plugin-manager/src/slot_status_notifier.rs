@@ -4,7 +4,7 @@ use {
     log::*,
     solana_measure::measure::Measure,
     solana_metrics::*,
-    solana_sdk::clock::Slot,
+    solana_sdk::{clock::Slot, hash::Hash as SolHash},
     std::sync::{Arc, RwLock},
 };
 
@@ -13,7 +13,7 @@ pub trait SlotStatusNotifierInterface {
     fn notify_slot_confirmed(&self, slot: Slot, parent: Option<Slot>);
 
     /// Notified when a slot is marked frozen.
-    fn notify_slot_processed(&self, slot: Slot, parent: Option<Slot>);
+    fn notify_slot_processed(&self, slot: Slot, parent: Option<Slot>, hash: SolHash, parent_hash: SolHash, timestamp: UnixTimestamp);
 
     /// Notified when a slot is rooted.
     fn notify_slot_rooted(&self, slot: Slot, parent: Option<Slot>);
@@ -27,15 +27,15 @@ pub struct SlotStatusNotifierImpl {
 
 impl SlotStatusNotifierInterface for SlotStatusNotifierImpl {
     fn notify_slot_confirmed(&self, slot: Slot, parent: Option<Slot>) {
-        self.notify_slot_status(slot, parent, SlotStatus::Confirmed);
+        self.notify_slot_status(slot, parent, SlotStatus::Confirmed, None, None, None);
     }
 
-    fn notify_slot_processed(&self, slot: Slot, parent: Option<Slot>) {
-        self.notify_slot_status(slot, parent, SlotStatus::Processed);
+    fn notify_slot_processed(&self, slot: Slot, parent: Option<Slot>, hash: SolHash, parent_hash: SolHash, timestamp: UnixTimestamp) {
+        self.notify_slot_status(slot, parent, SlotStatus::Processed, Some(hash), Some(parent_hash), Some(timestamp));
     }
 
     fn notify_slot_rooted(&self, slot: Slot, parent: Option<Slot>) {
-        self.notify_slot_status(slot, parent, SlotStatus::Rooted);
+        self.notify_slot_status(slot, parent, SlotStatus::Rooted, None, None, None);
     }
 }
 
@@ -44,7 +44,7 @@ impl SlotStatusNotifierImpl {
         Self { plugin_manager }
     }
 
-    pub fn notify_slot_status(&self, slot: Slot, parent: Option<Slot>, slot_status: SlotStatus) {
+    pub fn notify_slot_status(&self, slot: Slot, parent: Option<Slot>, slot_status: SlotStatus, hash: Option<SolHash>, parent_hash: Option<SolHash>, timestamp: Option<UnixTimestamp>) {
         let plugin_manager = self.plugin_manager.read().unwrap();
         if plugin_manager.plugins.is_empty() {
             return;
@@ -52,7 +52,7 @@ impl SlotStatusNotifierImpl {
 
         for plugin in plugin_manager.plugins.iter() {
             let mut measure = Measure::start("geyser-plugin-update-slot");
-            match plugin.update_slot_status(slot, parent, slot_status) {
+            match plugin.update_slot_status(slot, parent, slot_status, hash, parent_hash, timestamp) {
                 Err(err) => {
                     error!(
                         "Failed to update slot status at slot {}, error: {} to plugin {}",
