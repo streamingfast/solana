@@ -59,7 +59,7 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
             100000
         );
 
-        if account_info.owner != VOTE_BYTES {
+        if account.owner != VOTE_BYTES {
             self.notify_plugins_of_account_update(account, slot, true);
         }
         measure_all.stop();
