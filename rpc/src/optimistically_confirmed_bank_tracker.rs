@@ -15,7 +15,7 @@ use {
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
     },
-    solana_sdk::{clock::{Slot, UnixTimestamp}, timing::timestamp, hash::Hash as SolHash},
+    solana_sdk::{clock::Slot, timing::timestamp},
     std::{
         collections::HashSet,
         sync::{
@@ -51,8 +51,8 @@ pub enum BankNotification {
 #[derive(Clone, Debug)]
 pub enum SlotNotification {
     OptimisticallyConfirmed(Slot),
-    /// The (Slot, Parent Slot, hash, parentHash, timestamp) pair for the slot frozen
-    Frozen((Slot, Slot, SolHash, SolHash, UnixTimestamp)),
+    /// The (Slot, Parent Slot) pair for the slot frozen
+    Frozen((Slot, Slot)),
     /// The (Slot, Parent Slot) pair for the root slot
     Root((Slot, Slot)),
 }
@@ -337,7 +337,7 @@ impl OptimisticallyConfirmedBankTracker {
 
                     Self::notify_slot_status(
                         slot_notification_subscribers,
-                        SlotNotification::Frozen((bank.slot(), bank.parent_slot(), bank.hash(), bank.parent_hash(), bank.clock().unix_timestamp)),
+                        SlotNotification::Frozen((bank.slot(), bank.parent_slot())),
                     );
                 }
 
