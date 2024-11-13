@@ -337,7 +337,7 @@ impl OptimisticallyConfirmedBankTracker {
 
                     Self::notify_slot_status(
                         slot_notification_subscribers,
-                        SlotNotification::Frozen((bank.slot(), bank.parent_slot(), bank.hash(), bank.parent_hash(), bank.clock().unix_timestamp)),
+                        SlotNotification::Frozen((bank.slot(), bank.parent_slot(), bank.last_blockhash(), bank.parent_hash(), bank.clock().unix_timestamp)),
                     );
                 }
 
