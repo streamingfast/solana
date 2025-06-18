@@ -62,7 +62,10 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
             100000
         );
 
-        if account.owner != VOTE_BYTES {
+        // firehoses-specific:
+        // * we don't want votes ever
+        // * we don't empty accounts on startup (we consider them 'deleted')
+        if account.owner != VOTE_BYTES && account.lamports != 0 {
             self.notify_plugins_of_account_update(account, slot, true);
         }
 
