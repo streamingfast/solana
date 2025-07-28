@@ -16,6 +16,10 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     std::sync::{Arc, RwLock},
 };
+
+const VOTE_BYTES: [u8; 32] =
+    Pubkey::from_str_const("Vote111111111111111111111111111111111111111").to_bytes();
+
 #[derive(Debug)]
 pub(crate) struct AccountsUpdateNotifierImpl {
     plugin_manager: Arc<RwLock<GeyserPluginManager>>,
@@ -37,6 +41,12 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
     ) {
         let account_info =
             self.accountinfo_from_shared_account_data(account, txn, pubkey, write_version);
+
+        // firehoses-specific:
+        // * we don't want votes ever
+        if account_info.owner == VOTE_BYTES {
+            return;
+        }
         self.notify_plugins_of_account_update(account_info, slot, false);
     }
 
@@ -60,7 +70,12 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
             100000
         );
 
-        self.notify_plugins_of_account_update(account, slot, true);
+        // firehoses-specific:
+        // * we don't want votes ever
+        // * we don't empty accounts on startup (we consider them 'deleted')
+        if account.owner != VOTE_BYTES && account.lamports != 0 {
+            self.notify_plugins_of_account_update(account, slot, true);
+        }
 
         measure_all.stop();
 
