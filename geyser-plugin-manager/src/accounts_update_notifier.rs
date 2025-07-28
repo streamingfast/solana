@@ -15,6 +15,10 @@ use {
     solana_transaction::sanitized::SanitizedTransaction,
     std::sync::Arc,
 };
+
+const VOTE_BYTES: [u8; 32] =
+    Pubkey::from_str_const("Vote111111111111111111111111111111111111111").to_bytes();
+
 #[derive(Debug)]
 pub(crate) struct AccountsUpdateNotifierImpl {
     plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
@@ -36,6 +40,12 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
     ) {
         let account_info =
             self.accountinfo_from_shared_account_data(account, txn, pubkey, write_version);
+
+        // firehoses-specific:
+        // * we don't want votes ever
+        if account_info.owner == VOTE_BYTES {
+            return;
+        }
         self.notify_plugins_of_account_update(account_info, slot, false);
     }
 
@@ -47,7 +57,11 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
     ) {
         let mut account = self.accountinfo_from_account_for_geyser(account);
         account.write_version = write_version;
-        self.notify_plugins_of_account_update(account, slot, true);
+        // firehoses-specific: we don't want vote accounts ever
+        // note: we DO send account deletions because they can happen with a write_version above an ephemeral account creation, nulling it out on startup
+        if account.owner != VOTE_BYTES {
+            self.notify_plugins_of_account_update(account, slot, true);
+        }
     }
 
     fn notify_end_of_restore_from_snapshot(&self) {
