@@ -1,6 +1,7 @@
 global:
   language: rust
   variant: application
+  repository: streamingfast/solana
 release:
   # For Rust application variant, binaries are not automatically built
   no-binaries: true
