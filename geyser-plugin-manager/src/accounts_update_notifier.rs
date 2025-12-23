@@ -85,8 +85,6 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
             self.notify_plugins_of_account_update(account, slot, true);
         }
 
-        measure_all.stop();
-
         inc_new_counter_debug!(
             "geyser-plugin-notify-account-restore-all-us",
             time_all.unwrap().as_micros() as usize,
