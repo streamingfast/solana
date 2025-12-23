@@ -68,7 +68,11 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
         account.write_version = write_version;
         let time_copy = log_enabled!(Level::Debug).then(|| start.unwrap().elapsed());
 
-        self.notify_plugins_of_account_update(account, slot, true);
+        // firehoses-specific: we don't want vote accounts ever
+        // note: we DO send account deletions because they can happen with a write_version above an ephemeral account creation, nulling it out on startup
+        if account.owner != VOTE_BYTES {
+            self.notify_plugins_of_account_update(account, slot, true);
+        }
 
         let time_all = log_enabled!(Level::Debug).then(|| start.unwrap().elapsed());
 
@@ -78,12 +82,6 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
             100000,
             100000
         );
-
-        // firehoses-specific: we don't want vote accounts ever
-        // note: we DO send account deletions because they can happen with a write_version above an ephemeral account creation, nulling it out on startup
-        if account.owner != VOTE_BYTES {
-            self.notify_plugins_of_account_update(account, slot, true);
-        }
 
         inc_new_counter_debug!(
             "geyser-plugin-notify-account-restore-all-us",
