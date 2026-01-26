@@ -20,6 +20,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Cache key includes Cargo.lock
+          shared-key: "docker-build"
+          # Save cache even if build fails
+          save-if: true
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
