@@ -37,6 +37,7 @@ use {
     crate::{
         account_saver::collect_accounts_to_store,
         bank::{
+            entry_bytes_budget::EntryBytesBudget,
             metrics::*,
             partitioned_epoch_rewards::{
                 CachedVoteAccounts, EpochRewardStatus, RewardCommissionAccounts,
@@ -223,6 +224,7 @@ mod address_lookup_table;
 pub mod bank_hash_details;
 pub mod builtins;
 mod check_transactions;
+pub mod entry_bytes_budget;
 mod fee_distribution;
 mod metrics;
 pub(crate) mod partitioned_epoch_rewards;
@@ -550,6 +552,7 @@ impl PartialEq for Bank {
             transaction_error_count: _,
             transaction_entries_count: _,
             transactions_per_entry_max: _,
+            entry_bytes_consumed: _,
             tick_height,
             signature_count,
             capitalization,
@@ -683,6 +686,7 @@ impl BankFieldsToSerialize {
 pub enum RewardCalculationEvent<'a, 'b> {
     Staking(&'a Pubkey, &'b InflationPointCalculationEvent),
 }
+const MAX_ENTRY_BYTES_PER_SLOT: u64 = 20 * 1024 * 1024; // 20 MiB
 
 /// type alias is not supported for trait in rust yet. As a workaround, we define the
 /// `RewardCalcTracer` trait explicitly and implement it on any type that implement
@@ -790,6 +794,9 @@ pub struct Bank {
 
     /// The max number of transaction in an entry in this slot
     transactions_per_entry_max: AtomicU64,
+
+    /// The number of entry bytes reserved for recording in this slot.
+    entry_bytes_consumed: EntryBytesBudget,
 
     /// Bank tick height
     tick_height: AtomicU64,
@@ -1102,6 +1109,7 @@ impl Bank {
             transaction_error_count: AtomicU64::default(),
             transaction_entries_count: AtomicU64::default(),
             transactions_per_entry_max: AtomicU64::default(),
+            entry_bytes_consumed: EntryBytesBudget::new(MAX_ENTRY_BYTES_PER_SLOT),
             tick_height: AtomicU64::default(),
             signature_count: AtomicU64::default(),
             capitalization: AtomicU64::default(),
@@ -1352,6 +1360,7 @@ impl Bank {
             transaction_error_count: AtomicU64::new(0),
             transaction_entries_count: AtomicU64::new(0),
             transactions_per_entry_max: AtomicU64::new(0),
+            entry_bytes_consumed: EntryBytesBudget::new(parent.entry_bytes_budget().slot_limit()),
             // we will .clone_with_epoch() this soon after stake data update; so just .clone() for now
             stakes_cache,
             epoch_stakes,
@@ -1907,6 +1916,7 @@ impl Bank {
             transaction_error_count: AtomicU64::default(),
             transaction_entries_count: AtomicU64::default(),
             transactions_per_entry_max: AtomicU64::default(),
+            entry_bytes_consumed: EntryBytesBudget::new(MAX_ENTRY_BYTES_PER_SLOT),
             tick_height: AtomicU64::new(fields.tick_height),
             signature_count: AtomicU64::new(fields.signature_count),
             capitalization: AtomicU64::new(fields.capitalization),
@@ -3362,6 +3372,19 @@ impl Bank {
             // Reserved key set may have changed, so we must verify that
             // no writable keys are reserved.
             self.check_reserved_keys(transaction)?;
+
+            if self
+                .feature_set
+                .is_active(&agave_feature_set::limit_instruction_accounts::ID)
+            {
+                for instr in transaction.instructions_iter() {
+                    if instr.accounts.len()
+                        > solana_transaction_context::MAX_ACCOUNTS_PER_INSTRUCTION
+                    {
+                        return Err(solana_transaction_error::TransactionError::SanitizeFailure);
+                    }
+                }
+            }
         }
 
         if self.slot() > alt_invalidation_slot {
@@ -4759,6 +4782,10 @@ impl Bank {
         self.transactions_per_entry_max.load(Relaxed)
     }
 
+    pub fn entry_bytes_budget(&self) -> &EntryBytesBudget {
+        &self.entry_bytes_consumed
+    }
+
     fn increment_transaction_count(&self, tx_count: u64) {
         self.transaction_count.fetch_add(tx_count, Relaxed);
     }
@@ -5037,6 +5064,8 @@ impl Bank {
             .feature_set
             .is_active(&agave_feature_set::limit_instruction_accounts::id());
 
+        // WARNING: Any pending features added here most likely must also be checked in
+        //          `Bank::resanitize_transaction_minimally`.
         let sanitized_tx = {
             let size =
                 bincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
