@@ -2,7 +2,7 @@ use {
     crate::{
         account_info::Offset,
         accounts_db::AccountsFileId,
-        accounts_file::{AccountsFile, AccountsFileError, AccountsFileProvider, StorageAccess},
+        accounts_file::{AccountsFile, AccountsFileError, AccountsFileProvider},
         obsolete_accounts::ObsoleteAccounts,
     },
     solana_clock::Slot,
@@ -61,11 +61,10 @@ impl AccountStorageEntry {
         id: AccountsFileId,
         file_size: u64,
         provider: AccountsFileProvider,
-        storage_access: StorageAccess,
     ) -> Self {
         let tail = AccountsFile::file_name(slot, id);
         let path = Path::new(path).join(tail);
-        let accounts = provider.new_writable(path, file_size, storage_access);
+        let accounts = provider.new_writable(path, file_size);
 
         Self {
             id,
@@ -79,12 +78,7 @@ impl AccountStorageEntry {
     }
 
     /// open a new instance of the storage that is readonly
-    pub(crate) fn reopen_as_readonly(&self, storage_access: StorageAccess) -> Option<Self> {
-        if storage_access != StorageAccess::File {
-            // if we are only using mmap, then no reason to re-open
-            return None;
-        }
-
+    pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
         self.accounts.reopen_as_readonly().map(|accounts| Self {
             id: self.id,
             slot: self.slot,
@@ -215,6 +209,12 @@ impl AccountStorageEntry {
 
     pub fn flush(&self) -> Result<(), AccountsFileError> {
         self.accounts.flush()
+    }
+
+    /// Detach the on-disk file from this storage's lifetime; see
+    /// [`AccountsFile::disable_remove_on_drop`].
+    pub fn disable_remove_on_drop(&self) {
+        self.accounts.disable_remove_on_drop();
     }
 
     pub(crate) fn add_accounts(&self, num_accounts: usize, num_bytes: usize) {

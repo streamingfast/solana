@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 agave-unstable-api = []
@@ -62,3 +64,6 @@ spl-token-confidential-transfer-proof-extraction = { workspace = true }
 [[bench]]
 name = "extract_memos"
 harness = false
+
+[lints]
+workspace = true

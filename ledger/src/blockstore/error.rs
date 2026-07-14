@@ -83,6 +83,17 @@ pub enum BlockstoreError {
     UpdateParentMatchesBlockHeader(Slot),
     #[error("update parent slot greater than block header for slot {0}")]
     UpdateParentSlotGreaterThanBlockHeader(Slot),
+    #[error(
+        "update parent {update_parent_slot} is greater than shred parent {shred_parent_slot} for \
+         slot {slot}"
+    )]
+    UpdateParentSlotGreaterThanShredParent {
+        slot: Slot,
+        update_parent_slot: Slot,
+        shred_parent_slot: Slot,
+    },
+    #[error("update parent is only valid in the first slot of a leader window for slot {0}")]
+    UpdateParentNotFirstInLeaderWindow(Slot),
     #[error("unexpected block component")]
     UnexpectedBlockComponent,
     #[error("multiple update parents for slot {0}")]
@@ -104,6 +115,8 @@ pub enum BlockstoreError {
         block_header_parent_slot: Slot,
         shred_parent_slot: Slot,
     },
+    #[error("Block in slot {0} was aborted as leader sent an empty entry batch")]
+    BlockAborted(Slot),
 }
 pub type Result<T> = std::result::Result<T, BlockstoreError>;
 
@@ -112,8 +125,8 @@ pub enum BlockstoreManualPurgeError {
     #[error("purge request sender is unavailable")]
     SenderUnavailable,
 
-    #[error("purge request for slot {request_slot} is newer than the latest root {max_root}")]
-    SlotNewerThanRoot { request_slot: Slot, max_root: Slot },
+    #[error("purge request for slot {request_slot} must be less than the latest root {max_root}")]
+    SlotGreaterThanOrEqualToRoot { request_slot: Slot, max_root: Slot },
 
     #[error("purge request try send error")]
     TrySend,

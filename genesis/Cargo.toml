@@ -11,6 +11,8 @@ edition = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 name = "solana_genesis"
@@ -75,3 +77,6 @@ solana-pubkey = { workspace = true, features = ["rand"] }
 solana-runtime = { path = "../runtime", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api"] }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

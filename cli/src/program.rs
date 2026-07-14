@@ -12,7 +12,7 @@ use {
         feature::{CliFeatureStatus, status_from_account},
     },
     agave_feature_set::{FEATURE_NAMES, FeatureSet},
-    bip39::{Language, Mnemonic, MnemonicType, Seed},
+    bip39::{Language, Mnemonic},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
     solana_account::state_traits::StateMut,
@@ -3128,129 +3128,127 @@ async fn send_deploy_messages(
         }
     }
 
-    if !write_messages.is_empty() {
-        if let Some(write_signer) = write_signer {
-            trace!("Writing program data");
+    if !write_messages.is_empty()
+        && let Some(write_signer) = write_signer
+    {
+        trace!("Writing program data");
 
-            // Simulate the first write message to get the number of compute units
-            // consumed and then reuse that value as the compute unit limit for all
-            // write messages.
+        // Simulate the first write message to get the number of compute units
+        // consumed and then reuse that value as the compute unit limit for all
+        // write messages.
+        {
+            let mut message = write_messages[0].clone();
+            if let UpdateComputeUnitLimitResult::UpdatedInstructionIndex(ix_index) =
+                simulate_and_update_compute_unit_limit(
+                    compute_unit_limit,
+                    &rpc_client,
+                    &mut message,
+                )
+                .await?
             {
-                let mut message = write_messages[0].clone();
-                if let UpdateComputeUnitLimitResult::UpdatedInstructionIndex(ix_index) =
-                    simulate_and_update_compute_unit_limit(
-                        compute_unit_limit,
-                        &rpc_client,
-                        &mut message,
-                    )
-                    .await?
-                {
-                    for msg in &mut write_messages {
-                        // Write messages are all assumed to be identical except
-                        // the program data being written. But just in case that
-                        // assumption is broken, assert that we are only ever
-                        // changing the instruction data for a compute budget
-                        // instruction.
-                        assert_eq!(msg.program_id(ix_index), Some(&compute_budget::id()));
-                        msg.instructions[ix_index]
-                            .data
-                            .clone_from(&message.instructions[ix_index].data);
-                    }
+                for msg in &mut write_messages {
+                    // Write messages are all assumed to be identical except
+                    // the program data being written. But just in case that
+                    // assumption is broken, assert that we are only ever
+                    // changing the instruction data for a compute budget
+                    // instruction.
+                    assert_eq!(msg.program_id(ix_index), Some(&compute_budget::id()));
+                    msg.instructions[ix_index]
+                        .data
+                        .clone_from(&message.instructions[ix_index].data);
                 }
             }
+        }
 
-            let connection_cache = {
-                #[cfg(feature = "dev-context-only-utils")]
-                let cache =
-                    ConnectionCache::new_quic_for_tests("connection_cache_cli_program_quic", 1);
-                #[cfg(not(feature = "dev-context-only-utils"))]
-                let cache = ConnectionCache::new_quic("connection_cache_cli_program_quic", 1);
-                cache
-            };
-            let transaction_errors = match connection_cache {
-                ConnectionCache::Udp(cache) => {
-                    solana_tpu_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
-                        rpc_client.clone(),
-                        &config.websocket_url,
-                        TpuClientConfig::default(),
-                        cache,
-                    )
-                    .await?
-                    .send_and_confirm_messages_with_spinner(
-                        &write_messages,
-                        &[fee_payer_signer, write_signer],
-                    )
-                    .await
-                }
-                ConnectionCache::Quic(cache) => {
-                    // `solana_client` type currently required by `send_and_confirm_transactions_in_parallel_v2`
-                    let tpu_client_fut = solana_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
+        let connection_cache = {
+            #[cfg(feature = "dev-context-only-utils")]
+            let cache = ConnectionCache::new_quic_for_tests("connection_cache_cli_program_quic", 1);
+            #[cfg(not(feature = "dev-context-only-utils"))]
+            let cache = ConnectionCache::new_quic("connection_cache_cli_program_quic", 1);
+            cache
+        };
+        let transaction_errors = match connection_cache {
+            ConnectionCache::Udp(cache) => {
+                solana_tpu_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
+                    rpc_client.clone(),
+                    &config.websocket_url,
+                    TpuClientConfig::default(),
+                    cache,
+                )
+                .await?
+                .send_and_confirm_messages_with_spinner(
+                    &write_messages,
+                    &[fee_payer_signer, write_signer],
+                )
+                .await
+            }
+            ConnectionCache::Quic(cache) => {
+                // `solana_client` type currently required by `send_and_confirm_transactions_in_parallel_v2`
+                let tpu_client_fut =
+                    solana_client::nonblocking::tpu_client::TpuClient::new_with_connection_cache(
                         rpc_client.clone(),
                         config.websocket_url.as_str(),
                         TpuClientConfig::default(),
                         cache,
                     );
-                    let tpu_client = if use_rpc {
-                        None
-                    } else {
-                        Some(
-                            tpu_client_fut
-                                .await
-                                .expect("Should return a valid tpu client"),
-                        )
-                    };
-                    send_and_confirm_transactions_in_parallel_v2(
-                        rpc_client.clone(),
-                        tpu_client,
-                        &write_messages,
-                        &[fee_payer_signer, write_signer],
-                        SendAndConfirmConfigV2 {
-                            resign_txs_count: Some(max_sign_attempts),
-                            with_spinner: true,
-                            rpc_send_transaction_config: config.send_transaction_config,
-                        },
+                let tpu_client = if use_rpc {
+                    None
+                } else {
+                    Some(
+                        tpu_client_fut
+                            .await
+                            .expect("Should return a valid tpu client"),
                     )
-                    .await
-                }
+                };
+                send_and_confirm_transactions_in_parallel_v2(
+                    rpc_client.clone(),
+                    tpu_client,
+                    &write_messages,
+                    &[fee_payer_signer, write_signer],
+                    SendAndConfirmConfigV2 {
+                        resign_txs_count: Some(max_sign_attempts),
+                        with_spinner: true,
+                        rpc_send_transaction_config: config.send_transaction_config,
+                    },
+                )
+                .await
             }
-            .map_err(|err| format!("Data writes to account failed: {err}"))?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        }
+        .map_err(|err| format!("Data writes to account failed: {err}"))?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
 
-            if !transaction_errors.is_empty() {
-                for transaction_error in &transaction_errors {
-                    error!("{transaction_error:?}");
-                }
-                return Err(
-                    format!("{} write transactions failed", transaction_errors.len()).into(),
-                );
+        if !transaction_errors.is_empty() {
+            for transaction_error in &transaction_errors {
+                error!("{transaction_error:?}");
             }
+            return Err(format!("{} write transactions failed", transaction_errors.len()).into());
         }
     }
 
-    if let Some(mut message) = final_message {
-        if let Some(final_signers) = final_signers {
-            trace!("Deploying program");
+    if let Some(mut message) = final_message
+        && let Some(final_signers) = final_signers
+    {
+        trace!("Deploying program");
 
-            simulate_and_update_compute_unit_limit(compute_unit_limit, &rpc_client, &mut message)
-                .await?;
-            let mut final_tx = Transaction::new_unsigned(message);
-            let blockhash = rpc_client.get_latest_blockhash().await?;
-            let mut signers = final_signers.to_vec();
-            signers.push(fee_payer_signer);
-            final_tx.try_sign(&signers, blockhash)?;
-            return Ok(Some(
-                rpc_client
-                    .send_and_confirm_transaction_with_spinner_and_config(
-                        &final_tx,
-                        config.commitment,
-                        config.send_transaction_config,
-                    )
-                    .await
-                    .map_err(|e| format!("Deploying program failed: {e}"))?,
-            ));
-        }
+        simulate_and_update_compute_unit_limit(compute_unit_limit, &rpc_client, &mut message)
+            .await?;
+        let mut final_tx = Transaction::new_unsigned(message);
+        let blockhash = rpc_client.get_latest_blockhash().await?;
+        let mut signers = final_signers.to_vec();
+        signers.push(fee_payer_signer);
+        final_tx.try_sign(&signers, blockhash)?;
+        return Ok(Some(
+            rpc_client
+                .send_and_confirm_transaction_with_spinner_and_config(
+                    &final_tx,
+                    config.commitment,
+                    config.send_transaction_config,
+                )
+                .await
+                .map_err(|e| format!("Deploying program failed: {e}"))?,
+        ));
     }
 
     Ok(None)
@@ -3259,15 +3257,15 @@ async fn send_deploy_messages(
 fn create_ephemeral_keypair()
 -> Result<(usize, bip39::Mnemonic, Keypair), Box<dyn std::error::Error>> {
     const WORDS: usize = 12;
-    let mnemonic = Mnemonic::new(MnemonicType::for_word_count(WORDS)?, Language::English);
-    let seed = Seed::new(&mnemonic, "");
-    let new_keypair = keypair_from_seed(seed.as_bytes())?;
+    let mnemonic = Mnemonic::generate_in(Language::English, WORDS)?;
+    let seed = mnemonic.to_seed("");
+    let new_keypair = keypair_from_seed(&seed)?;
 
     Ok((WORDS, mnemonic, new_keypair))
 }
 
 fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic, ephemeral_pubkey: &Pubkey) {
-    let phrase: &str = mnemonic.phrase();
+    let phrase = mnemonic.to_string();
     let divider = String::from_utf8(vec![b'='; phrase.len()]).unwrap();
     eprintln!("{divider}\nRecover the intermediate account's ephemeral keypair file with");
     eprintln!("`solana-keygen recover` and the following {words}-word seed phrase:");
