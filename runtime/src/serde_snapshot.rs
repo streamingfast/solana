@@ -25,7 +25,7 @@ use {
         accounts_db::{
             AccountsDb, AccountsDbConfig, AccountsFileId, AtomicAccountsFileId, IndexGenerationInfo,
         },
-        accounts_file::{AccountsFile, StorageAccess},
+        accounts_file::AccountsFile,
         accounts_hash::AccountsLtHash,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         blockhash_queue::BlockhashQueue,
@@ -50,12 +50,11 @@ use {
         result::Result,
         sync::{
             Arc,
-            atomic::{AtomicBool, AtomicUsize, Ordering},
+            atomic::{AtomicBool, Ordering},
         },
         thread,
         time::Instant,
     },
-    storage::SerializableStorage,
     types::{SerdeAccountsLtHash, UnusedRentCollector},
     wincode::{
         SchemaReadOwned, SchemaWrite,
@@ -66,6 +65,7 @@ use {
 mod obsolete_accounts;
 mod status_cache;
 mod storage;
+mod storages_list;
 mod tests;
 mod types;
 mod utils;
@@ -74,6 +74,7 @@ pub(crate) use {
     obsolete_accounts::{SerdeObsoleteAccounts, SerdeObsoleteAccountsMap},
     status_cache::{deserialize_status_cache, serialize_status_cache},
     storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
+    storages_list::{StorageListItem, StoragesList},
 };
 
 const MAX_STREAM_SIZE: usize = 32 * 1024 * 1024 * 1024;
@@ -94,39 +95,7 @@ pub(crate) struct AccountsDbFields<T>(
     Vec<(Slot, Hash)>,
 );
 
-impl<T: SerializableStorage> AccountsDbFields<T> {
-    /// Get snapshot storage lengths filtering to slots above base slot (if provided).
-    ///
-    /// Returns an error if storage slots exceed snapshot slot indicating inconsistency of data.
-    pub(crate) fn get_storage_lengths_for_snapshot_slots(
-        &self,
-        base_slot: Option<Slot>,
-    ) -> Result<HashMap<Slot, usize>, SnapshotError> {
-        let AccountsDbFields(snapshot_storage, _, snapshot_slot, ..) = self;
-        let filtered_min_slot = base_slot.map(|slot| slot + 1).unwrap_or(Slot::MIN);
-        let mut lengths = HashMap::with_capacity(snapshot_storage.len());
-
-        for (slot, slot_storage) in snapshot_storage {
-            if slot > snapshot_slot {
-                return Err(SnapshotError::MismatchedSnapshotStorageSlot(
-                    *slot,
-                    *snapshot_slot,
-                ));
-            }
-            if *slot < filtered_min_slot {
-                // Serialized bank includes storage mapping for all slots, but it might be used for
-                // rebuilding storages only up from `base_slot`, so this case is not an error.
-                continue;
-            }
-            assert_eq!(slot_storage.len(), 1, "invalid storage count (slot={slot})");
-            let storage_entry = &slot_storage[0];
-            lengths.insert(*slot, storage_entry.current_len());
-        }
-        Ok(lengths)
-    }
-}
-
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UnusedIncrementalSnapshotPersistence {
@@ -137,7 +106,14 @@ pub struct UnusedIncrementalSnapshotPersistence {
     pub incremental_capitalization: u64,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "EcPdH21GSyYYTiSZbAN157YfrT3G8rKvDiNh7q1fw8Bc",
+        test_roundtrip = "eq_and_wire"
+    )
+)]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct BankHashInfo {
     unused_accounts_delta_hash: [u8; 32],
@@ -145,7 +121,7 @@ struct BankHashInfo {
     stats: BankHashStats,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
 #[derive(Default, Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 struct UnusedAccounts {
     unused1: HashSet<Pubkey>,
@@ -232,6 +208,16 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
 
 // Serializable version of Bank, not Deserializable to avoid cloning by using refs.
 // Sync fields with DeserializableVersionedBank!
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi, StableAbiSample),
+    // Write-only type (its deserialize counterpart is `DeserializableVersionedBank`), so the abi
+    // digest only verifies the serialized wire format; there is no roundtrip.
+    frozen_abi(
+        abi_digest = "6sm6hSNiTsNBAbSAiNe2BSQgnum3UdeNBpZnZiX7aM9r",
+        test_roundtrip = "no"
+    )
+)]
 #[derive(Serialize)]
 struct SerializableVersionedBank {
     blockhash_queue: BlockhashQueue,
@@ -444,7 +430,16 @@ struct ExtraFieldsToDeserialize {
 /// ExtraFieldsToDeserialize with the exception that new "extra fields" should
 /// be added to the deserialize struct a minor release before they are added to
 /// this one.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample, StableAbi, StableAbiSample),
+    // Write-only type (its deserialize counterpart is `ExtraFieldsToDeserialize`), so the abi digest
+    // only verifies the serialized wire format; there is no roundtrip.
+    frozen_abi(
+        abi_digest = "726M1TRfibJsSAGcFqan4TSC8qKkJhDZfiK2P3h71eoo",
+        test_roundtrip = "no"
+    )
+)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
 #[derive(Debug, Serialize)]
 pub struct ExtraFieldsToSerialize {
@@ -811,10 +806,7 @@ pub(crate) fn reconstruct_bank_from_fields<E>(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> Result<(Bank, ReconstructedBankInfo), Error>
-where
-    E: SerializableStorage + std::marker::Sync,
-{
+) -> Result<(Bank, ReconstructedBankInfo), Error> {
     let mut bank_fields = bank_fields.collapse_into();
     // Epoch stakes take several seconds to reconstruct, do it in parallel with loading accountsdb
     let deserializable_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
@@ -865,30 +857,31 @@ where
 pub(crate) fn reconstruct_single_storage(
     slot: &Slot,
     append_vec_file_info: FileInfo,
-    current_len: usize,
     id: AccountsFileId,
-    storage_access: StorageAccess,
     obsolete_accounts: Option<(ObsoleteAccounts, AccountsFileId, usize)>,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
-    // When restoring from an archive, obsolete accounts will always be `None`
+    // The storage length is taken directly from the on-disk file size (see
+    // `AccountsFile::new_for_startup`). When restoring from an archive the obsolete accounts have
+    // been physically removed during serialization, and when restoring from a snapshot directory
+    // they are still present in the file. In both cases the file size already reflects the exact
+    // number of bytes the storage spans, so there is no need to carry the length separately in the
+    // snapshot fields.
+    //
+    // When restoring from an archive, obsolete accounts will always be `None`.
     // When restoring from fastboot, obsolete accounts will be 'Some' if the storage contained
     // accounts marked obsolete at the time the snapshot was taken.
-    let (current_len, obsolete_accounts) = if let Some(obsolete_accounts) = obsolete_accounts {
-        let updated_len = current_len + obsolete_accounts.2;
-        if obsolete_accounts.1 != id {
-            return Err(SnapshotError::MismatchedAccountsFileId(
-                id,
-                obsolete_accounts.1,
-            ));
-        }
+    let obsolete_accounts =
+        if let Some((obsolete_accounts, obsolete_id, _obsolete_bytes)) = obsolete_accounts {
+            if obsolete_id != id {
+                return Err(SnapshotError::MismatchedAccountsFileId(id, obsolete_id));
+            }
 
-        (updated_len, obsolete_accounts.0)
-    } else {
-        (current_len, ObsoleteAccounts::default())
-    };
+            obsolete_accounts
+        } else {
+            ObsoleteAccounts::default()
+        };
 
-    let accounts_file =
-        AccountsFile::new_for_startup(append_vec_file_info, current_len, storage_access)?;
+    let accounts_file = AccountsFile::new_for_startup(append_vec_file_info)?;
     Ok(Arc::new(AccountStorageEntry::new_existing(
         *slot,
         id,
@@ -905,7 +898,7 @@ pub(crate) fn remap_append_vec_file(
     old_append_vec_id: SerializedAccountsFileId,
     append_vec_file_info: FileInfo,
     next_append_vec_id: &AtomicAccountsFileId,
-    num_collisions: &AtomicUsize,
+    num_collisions: &mut usize,
 ) -> io::Result<(AccountsFileId, FileInfo)> {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     let append_vec_path_cstr = cstring_from_path(&append_vec_file_info.path)?;
@@ -957,7 +950,7 @@ pub(crate) fn remap_append_vec_file(
 
         // If we made it this far, a file exists at the new path.  Record the collision
         // and try again.
-        num_collisions.fetch_add(1, Ordering::Relaxed);
+        *num_collisions += 1;
     };
 
     // Only rename the file if the new ID is actually different from the original. In the target_os
@@ -982,11 +975,9 @@ pub(crate) fn remap_append_vec_file(
 pub(crate) fn remap_and_reconstruct_single_storage(
     slot: Slot,
     old_append_vec_id: SerializedAccountsFileId,
-    current_len: usize,
     append_vec_file_info: FileInfo,
     next_append_vec_id: &AtomicAccountsFileId,
-    num_collisions: &AtomicUsize,
-    storage_access: StorageAccess,
+    num_collisions: &mut usize,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
     let (remapped_append_vec_id, remapped_append_vec_file_info) = remap_append_vec_file(
         slot,
@@ -998,9 +989,7 @@ pub(crate) fn remap_and_reconstruct_single_storage(
     let storage = reconstruct_single_storage(
         &slot,
         remapped_append_vec_file_info,
-        current_len,
         remapped_append_vec_id,
-        storage_access,
         None,
     )?;
     Ok(storage)
@@ -1027,10 +1016,7 @@ fn reconstruct_accountsdb_from_fields<E>(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), Error>
-where
-    E: SerializableStorage + std::marker::Sync,
-{
+) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), Error> {
     let mut accounts_db = AccountsDb::new_with_config(
         account_paths.to_vec(),
         accounts_db_config,

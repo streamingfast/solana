@@ -1,6 +1,6 @@
 use {
     agave_votor_messages::{
-        consensus_message::CertificateType,
+        certificate::CertificateType,
         fraction::Fraction,
         vote::{Vote, VoteType},
     },
@@ -10,21 +10,27 @@ use {
 // Core consensus types and constants
 pub type Stake = u64;
 
-pub const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
+pub(crate) const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
     match vote_type {
         VoteType::Finalize => &[
             VoteType::NotarizeFallback,
             VoteType::Skip,
             VoteType::SkipFallback,
+            VoteType::Genesis,
         ],
-        VoteType::Notarize => &[VoteType::Skip, VoteType::NotarizeFallback],
-        VoteType::NotarizeFallback => &[VoteType::Finalize, VoteType::Notarize],
+        VoteType::Notarize => &[
+            VoteType::Skip,
+            VoteType::NotarizeFallback,
+            VoteType::Genesis,
+        ],
+        VoteType::NotarizeFallback => &[VoteType::Finalize, VoteType::Notarize, VoteType::Genesis],
         VoteType::Skip => &[
             VoteType::Finalize,
             VoteType::Notarize,
             VoteType::SkipFallback,
+            VoteType::Genesis,
         ],
-        VoteType::SkipFallback => &[VoteType::Skip, VoteType::Finalize],
+        VoteType::SkipFallback => &[VoteType::Skip, VoteType::Finalize, VoteType::Genesis],
         VoteType::Genesis => &[
             VoteType::Finalize,
             VoteType::Notarize,
@@ -41,17 +47,17 @@ pub const fn conflicting_types(vote_type: VoteType) -> &'static [VoteType] {
 pub fn vote_to_cert_types(vote: &Vote) -> Vec<CertificateType> {
     match vote {
         Vote::Notarize(vote) => vec![
-            CertificateType::Notarize(vote.slot, vote.block_id),
-            CertificateType::NotarizeFallback(vote.slot, vote.block_id),
-            CertificateType::FinalizeFast(vote.slot, vote.block_id),
+            CertificateType::Notarize(vote.block),
+            CertificateType::NotarizeFallback(vote.block),
+            CertificateType::FinalizeFast(vote.block),
         ],
         Vote::NotarizeFallback(vote) => {
-            vec![CertificateType::NotarizeFallback(vote.slot, vote.block_id)]
+            vec![CertificateType::NotarizeFallback(vote.block)]
         }
         Vote::Finalize(vote) => vec![CertificateType::Finalize(vote.slot)],
         Vote::Skip(vote) => vec![CertificateType::Skip(vote.slot)],
         Vote::SkipFallback(vote) => vec![CertificateType::Skip(vote.slot)],
-        Vote::Genesis(vote) => vec![CertificateType::Genesis(vote.slot, vote.block_id)],
+        Vote::Genesis(vote) => vec![CertificateType::Genesis(vote.block)],
     }
 }
 
@@ -68,8 +74,13 @@ pub const SAFE_TO_SKIP_THRESHOLD: Fraction = Fraction::from_percentage(40);
 /// Time bound assumed on network transmission delays during periods of synchrony.
 pub const DELTA: Duration = Duration::from_millis(250);
 
-/// Base timeout for when leader's first slice should arrive if they sent it immediately.
-pub(crate) const DELTA_TIMEOUT: Duration = DELTA.checked_mul(3).unwrap();
+/// Base leader handover timeout: Time after parent-ready that a validator would
+/// see a leaders first fec set if that leader sent it at the very start of their
+/// window.
+///
+/// With the current 400ms slot duration, this schedules both
+/// `TimeoutCrashedLeader(s)` and `Timeout(s)` at 800ms after `ParentReady`.
+pub(crate) const DELTA_TIMEOUT: Duration = Duration::from_millis(400);
 
 /// Timeout for standstill detection mechanism.
 pub(crate) const DELTA_STANDSTILL: Duration = Duration::from_millis(10_000);

@@ -327,10 +327,10 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
         };
         {
             let reader = self.cached_storage.read().unwrap();
-            if reader.slot == slot {
-                if let Some(storage) = reader.storage.as_ref() {
-                    return call_callback(storage);
-                }
+            if reader.slot == slot
+                && let Some(storage) = reader.storage.as_ref()
+            {
+                return call_callback(storage);
             }
         }
         // cache doesn't contain a storage for this slot, so lookup storage in db.
@@ -687,7 +687,6 @@ mod tests {
             id,
             file_size,
             AccountsFileProvider::AppendVec,
-            db.storage_access(),
         );
         let storage = Arc::new(data);
         db.storage.insert(storage.clone());

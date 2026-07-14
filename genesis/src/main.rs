@@ -14,8 +14,8 @@ use {
             unix_timestamp_from_rfc3339_datetime,
         },
         input_validators::{
-            is_pubkey, is_pubkey_or_keypair, is_rfc3339_datetime, is_slot, is_url_or_moniker,
-            is_valid_percentage, normalize_to_url_if_moniker,
+            is_non_zero, is_pubkey, is_pubkey_or_keypair, is_rfc3339_datetime, is_slot,
+            is_url_or_moniker, is_valid_percentage, normalize_to_url_if_moniker,
         },
     },
     solana_clock as clock,
@@ -42,7 +42,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
     solana_runtime::{
-        bank::VAT_TO_BURN_PER_EPOCH,
+        bank::DEFAULT_VAT_TO_BURN_PER_EPOCH,
         genesis_utils::{add_genesis_epoch_rewards_account, add_genesis_stake_config_account},
         stake_utils,
     },
@@ -55,6 +55,7 @@ use {
         error,
         fs::File,
         io::{self, Read},
+        num::NonZeroU64,
         path::PathBuf,
         process,
         slice::Iter,
@@ -65,7 +66,7 @@ use {
 
 /// In order to satisfy the VAT we need to fund all vote accounts
 /// This corresponds to 100 epochs worth of VAT
-const VAT_MINIMUM_LAMPORTS: u64 = VAT_TO_BURN_PER_EPOCH * 100;
+const DEFAULT_VAT_MINIMUM_LAMPORTS: u64 = DEFAULT_VAT_TO_BURN_PER_EPOCH * 100;
 
 pub enum AccountFileFormat {
     Pubkey,
@@ -278,7 +279,7 @@ fn add_validator_accounts(
             .unwrap_or([0u8; BLS_PUBLIC_KEY_COMPRESSED_SIZE]);
         // Vote account needs enough lamports for rent exemption plus VAT
         let vote_account_lamports =
-            rent.minimum_balance(VoteStateV4::size_of()) + VAT_MINIMUM_LAMPORTS;
+            rent.minimum_balance(VoteStateV4::size_of()) + DEFAULT_VAT_MINIMUM_LAMPORTS;
         let vote_account = vote_state::create_v4_account_with_authorized(
             identity_pubkey,
             identity_pubkey,
@@ -407,6 +408,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .long("faucet-lamports")
                 .value_name("LAMPORTS")
                 .takes_value(true)
+                .requires("faucet_pubkey")
+                .validator(is_non_zero)
                 .help("Number of lamports to assign to the faucet"),
         )
         .arg(
@@ -727,7 +730,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let bootstrap_stake_authorized_pubkey =
         pubkey_of(&matches, "bootstrap_stake_authorized_pubkey");
-    let faucet_lamports = value_t!(matches, "faucet_lamports", u64).unwrap_or(0);
     let faucet_pubkey = pubkey_of(&matches, "faucet_pubkey");
 
     let ticks_per_slot = value_t_or_exit!(matches, "ticks_per_slot", u64);
@@ -820,12 +822,17 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         genesis_config.creation_time = creation_time;
     }
 
-    if let Some(faucet_pubkey) = faucet_pubkey {
-        genesis_config.add_account(
-            faucet_pubkey,
-            AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
-        );
-    }
+    let faucet_account_lamports = faucet_pubkey
+        .map(|faucet_pubkey| {
+            let faucet_lamports =
+                u64::from(value_t_or_exit!(matches, "faucet_lamports", NonZeroU64));
+            genesis_config.add_account(
+                faucet_pubkey,
+                AccountSharedData::new(faucet_lamports, 0, &system_program::id()),
+            );
+            faucet_lamports
+        })
+        .unwrap_or(0);
 
     add_genesis_stake_config_account(&mut genesis_config);
     add_genesis_epoch_rewards_account(&mut genesis_config);
@@ -875,7 +882,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .map(|account| account.lamports)
         .sum::<u64>();
 
-    add_genesis_stake_accounts(&mut genesis_config, issued_lamports - faucet_lamports);
+    add_genesis_stake_accounts(
+        &mut genesis_config,
+        issued_lamports - faucet_account_lamports,
+    );
 
     let parse_address = |address: &str, input_type: &str| {
         address.parse::<Pubkey>().unwrap_or_else(|err| {

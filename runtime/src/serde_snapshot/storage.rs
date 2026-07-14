@@ -8,6 +8,14 @@ use {
 pub(crate) type SerializedAccountsFileId = usize;
 
 // Serializable version of AccountStorageEntry for snapshot format
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(StableAbi, StableAbiSample),
+    frozen_abi(
+        abi_digest = "CMckX3HiC6K5FSmFo4tH44wU1mvGfabNtYAs65uaGvGU",
+        test_roundtrip = "eq_and_wire"
+    )
+)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SerializableAccountStorageEntry {
     id: SerializedAccountsFileId,
@@ -30,16 +38,6 @@ impl SerializableAccountStorageEntry {
             accounts_current_len: accounts.accounts.len()
                 - accounts.get_obsolete_bytes(Some(snapshot_slot)),
         }
-    }
-}
-
-pub(crate) trait SerializableStorage {
-    fn current_len(&self) -> usize;
-}
-
-impl SerializableStorage for SerializableAccountStorageEntry {
-    fn current_len(&self) -> usize {
-        self.accounts_current_len
     }
 }
 

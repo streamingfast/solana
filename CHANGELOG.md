@@ -7,7 +7,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
+## 4.2.0
+### RPC
+#### Breaking
+* The `jsonParsed` output for confidential transfer `Deposit` (`depositConfidentialTransfer`) and `Withdraw` (`withdrawConfidentialTransfer`) instructions has been corrected. These instructions operate on a single token account, so the mislabeled `source` and `destination` fields have been replaced by a single `account` field (the `mint` field is unchanged).
+* Blockstore reward column legacy format support removed.
+  * The `Rewards` column was updated in v1.5 (Solana Labs client) to switch from
+  storing bincode serialized values to protobuf encoded values. The old bincode
+  format will no longer be supported for fallback reads as of v4.2
+#### Changes
+* Added `RpcClient::get_latest_blockhash_with_commitment_and_context`, which returns the
+  `getLatestBlockhash` response together with its context (notably `context.slot`).
+### Validator
+#### Breaking
+* XDP transmit in SKB (copy) mode is now enabled by default on Linux. The validator requires
+  `CAP_NET_ADMIN` and `CAP_NET_RAW` capabilities (plus `CAP_BPF` and `CAP_PERFMON` for
+  `--xdp-zero-copy`). Pass `--no-xdp` to fall back to UDP sockets. The XDP CPU
+  core is auto-selected to avoid overlapping the PoH core; passing `--xdp-cpu-cores`
+  with a core that conflicts with the PoH core is an error.
+#### Deprecations
+* `--accounts-db-access-storages-method` is now deprecated and a no-op (the `mmap` value was
+  deprecated in v4.0.0; mmap mode has now been removed entirely). The flag is still accepted for
+  backward compatibility, but account storages are always accessed via file I/O.
+* `--accounts-db-cache-limit-mb` is now deprecated. Use `--accounts-db-write-cache-limit` instead.
+* `--experimental-poh-pinned-cpu-core` is now deprecated. Use `--poh-pinned-cpu-core` instead.
+#### Changes
+* Turbine shred ingestion now rejects shreds more than half an epoch in the future (previously up to 2 full epochs ahead was accepted).
+* When XDP is enabled, gossip egress does not support private and loopback addresses. Operators running with `--allow-private-addr` must also pass `--no-xdp`.
+### CLI
+#### Breaking
+#### Changes
+* `vote-account` supports Alpenglow and as such `vote-account --output json` breaks compatibility with older versions.
+* Support Keystone hardware wallets using `usb://keystone`
+
 ## 4.1.0
+### RPC
+#### Breaking
+#### Changes
 ### Validator
 #### Breaking
 * `--block-production-method central-scheduler` is no longer supported. If passed, a warning is emitted and behavior
@@ -21,6 +57,7 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
   [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
 * XDP support is no longer experimental. The `--experimental-retransmit-xdp-interface`, `--experimental-retransmit-xdp-cpu-cores`, and
   `--experimental-retransmit-xdp-zero-copy` flags have been deprecated. Use `--xdp-interface`, `--xdp-cpu-cores`, and `--xdp-zero-copy` instead. Behavior is unchanged: pass `--xdp-cpu-cores` to enable XDP on the specified cores.
+#### Changes
 
 ## 4.0.0
 ### RPC
