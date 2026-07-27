@@ -10,7 +10,12 @@ This file tracks StreamingFast-specific changes to this fork of
 
 - Merged upstream `v4.2.0-rc.0` (previously `v4.2.0-beta.1`).
 
-  Released as image `ghcr.io/streamingfast/solana:v4.2.0-rc.0-novote`.
+  Released as image `ghcr.io/streamingfast/solana:v4.2.0-rc.0-fh3.0`.
+
+- Release tags now use the Firehose protocol suffix `-fh3.0` instead of `-novote`, so
+  Solana matches the tag convention used by the other StreamingFast chain forks. The
+  suffix names the Firehose protocol version the build speaks; the novote behaviour
+  itself is unchanged.
 
   Notable upstream changes in this range: vendored `rust-rocksdb` fork
   (`[patch.crates-io]`), `crossbeam-epoch` bump for RUSTSEC-2026-0204, parallel account
