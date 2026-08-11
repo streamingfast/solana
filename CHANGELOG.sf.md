@@ -4,7 +4,30 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
-## Unreleased
+## v4.2.0-fh3.0
+
+### Changed
+
+- Merged upstream `v4.2.0` (previously `v4.2.0-rc.0`), covering `v4.2.0-rc.1` and the
+  final release. The merge was conflict-free: no upstream commit in this range touches
+  any fork-specific file.
+
+  Released as image `ghcr.io/streamingfast/solana:v4.2.0-fh3.0`.
+
+  Notable upstream changes in this range: migration to `spl-token-2022-interface` 3.x
+  with parsing for the `PermissionedBurn` and token `Batch` instructions, `runtime` no
+  longer rewriting inactive stakes, a larger stack size for the accounts-hasher rayon
+  pool, PoH waking replay after controller-message completion, and the default
+  incremental snapshot interval dropping to 200 slots.
+
+  No change to the Geyser plugin interface: `geyser-plugin-interface`,
+  `geyser-plugin-manager`, `transaction-context`, `rpc-client` and `rpc-client-api` are
+  byte-identical to `v4.2.0-rc.0`. `transaction-status` and `account-decoder` did change
+  — the token-2022 3.x migration adds `PermissionedBurn` extension parsing and new parsed
+  instruction variants, so consumers decoding parsed token instructions see additional
+  variants. Rust toolchain stays at `1.96.1`.
+
+## v4.2.0-rc.0-fh3.0
 
 ### Changed
 
