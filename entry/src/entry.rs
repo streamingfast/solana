@@ -125,7 +125,7 @@ pub enum EntryType<Tx: TransactionWithMeta> {
     Tick(Hash),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 struct TxVerificationData {
     is_simple_vote: bool,
     signatures: SmallVec<[Signature; 2]>,
@@ -188,6 +188,30 @@ impl UnverifiedSignatures {
                 Err(TransactionError::SignatureFailure)
             }
         })
+    }
+
+    pub fn len(&self) -> usize {
+        self.signatures.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.signatures.is_empty()
+    }
+
+    pub fn verify_signatures(&self, index: usize) -> bool {
+        let tx_data = &self.signatures[index];
+        tx_data
+            .signatures
+            .iter()
+            .zip(&tx_data.signer_pubkeys)
+            .all(|(signature, pubkey)| {
+                signature.verify(pubkey.as_ref(), &tx_data.serialized_message)
+            })
+    }
+
+    pub fn vote_transaction_message_hash(&self, index: usize) -> Option<Hash> {
+        let tx_data = &self.signatures[index];
+        (tx_data.is_simple_vote && !tx_data.signatures.is_empty()).then_some(tx_data.message_hash)
     }
 
     pub fn vote_transaction_message_hashes(&self) -> Vec<Hash> {
@@ -694,7 +718,6 @@ mod tests {
                     None,
                     SimpleAddressLoader::Disabled,
                     &ReservedAccountKeys::empty_key_set(),
-                    true,
                 )
             }
         };
@@ -727,7 +750,6 @@ mod tests {
                     None,
                     SimpleAddressLoader::Disabled,
                     &ReservedAccountKeys::empty_key_set(),
-                    true,
                 )
             };
         let txs =

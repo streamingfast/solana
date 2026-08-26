@@ -2,7 +2,7 @@ use {
     super::{
         malicious_repair_handler::{MaliciousRepairConfig, MaliciousRepairHandler},
         repair_response::repair_response_packet_from_bytes,
-        serve_repair::ServeRepair,
+        serve_repair::{FecSetRoot, ServeRepair},
         standard_repair_handler::StandardRepairHandler,
     },
     crate::repair::{
@@ -10,7 +10,6 @@ use {
         serve_repair::{AncestorHashesResponse, BlockIdRepairResponse, MAX_ANCESTOR_RESPONSES},
     },
     agave_votor_messages::migration::MigrationStatus,
-    bincode::serialize,
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
@@ -19,7 +18,7 @@ use {
         ancestor_iterator::{AncestorIterator, AncestorIteratorWithHash},
         blockstore::Blockstore,
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{DATA_SHREDS_PER_FEC_BLOCK, ErasureSetId, Nonce},
+        shred::{DATA_SHREDS_PER_FEC_BLOCK, Nonce},
     },
     solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, RecycledPacketBatch},
     solana_poh::poh_recorder::SharedLeaderState,
@@ -30,16 +29,20 @@ use {
         net::SocketAddr,
         sync::{Arc, RwLock},
     },
+    wincode::{SchemaWrite, serialize},
 };
 
 /// Helper function to create a PacketBatch from a serializable response
-fn create_response_packet_batch<T: serde::Serialize>(
+fn create_response_packet_batch<T>(
     recycler: &PacketBatchRecycler,
     response: &T,
     from_addr: &SocketAddr,
     nonce: Nonce,
     debug_label: &'static str,
-) -> Option<PacketBatch> {
+) -> Option<PacketBatch>
+where
+    T: SchemaWrite<wincode::config::DefaultConfig, Src = T>,
+{
     let serialized_response = serialize(response).ok()?;
     let packet =
         repair_response::repair_response_packet_from_bytes(serialized_response, from_addr, nonce)?;
@@ -86,13 +89,9 @@ pub trait RepairHandler {
         block_id: Hash,
         nonce: Nonce,
     ) -> Option<PacketBatch> {
-        let location = self
-            .blockstore()
-            .get_block_location(slot, block_id)
-            .ok()??;
         let shred = self
             .blockstore()
-            .get_data_shred_from_location(slot, shred_index, location)
+            .get_data_shred_for_block_id(slot, shred_index, block_id)
             .ok()??;
         let packet = repair_response_packet_from_bytes(shred, from_addr, nonce)?;
         Some(
@@ -115,9 +114,9 @@ pub trait RepairHandler {
     ) -> Option<PacketBatch> {
         // Try to find the requested index in one of the slots
         let meta = self.blockstore().meta(slot).ok()??;
-        if meta.received > highest_index {
-            // meta.received must be at least 1 by this point
-            let packet = self.repair_response_packet(slot, meta.received - 1, from_addr, nonce)?;
+        let shred_index = meta.received.checked_sub(1)?;
+        if shred_index >= highest_index || meta.last_index == Some(shred_index) {
+            let packet = self.repair_response_packet(slot, shred_index, from_addr, nonce)?;
             return Some(
                 RecycledPacketBatch::new_with_recycler_data(
                     recycler,
@@ -167,14 +166,9 @@ pub trait RepairHandler {
         block_id: Hash,
         nonce: Nonce,
     ) -> Option<PacketBatch> {
-        let (double_merkle_meta, location) = self
+        let (double_merkle_meta, slot_meta) = self
             .blockstore()
-            .get_double_merkle_meta_maybe_populate_proofs_for_block_id(slot, block_id)
-            .ok()??;
-
-        let slot_meta = self
-            .blockstore()
-            .meta_from_location(slot, location)
+            .get_parent_repair_metadata(slot, block_id)
             .ok()??;
 
         let parent_slot = slot_meta.parent_slot?;
@@ -204,21 +198,17 @@ pub trait RepairHandler {
         fec_set_index: u32,
         nonce: Nonce,
     ) -> Option<PacketBatch> {
-        let (double_merkle_meta, location) = self
+        let (double_merkle_meta, merkle_root_meta) = self
             .blockstore()
-            .get_double_merkle_meta_maybe_populate_proofs_for_block_id(slot, block_id)
+            .get_fec_set_root_repair_metadata(slot, block_id, fec_set_index)
             .ok()??;
 
-        let fec_set_root = self
-            .blockstore()
-            .merkle_root_meta_from_location(ErasureSetId::new(slot, fec_set_index), location)
-            .ok()??
-            .merkle_root()?;
+        let fec_set_root = merkle_root_meta.merkle_root()?;
         let proof_index = fec_set_index.checked_div(DATA_SHREDS_PER_FEC_BLOCK as u32)?;
         let fec_set_proof = double_merkle_meta.get_fec_set_proof(proof_index)?.to_vec();
 
         let response = BlockIdRepairResponse::FecSetRoot {
-            fec_set_root,
+            fec_set_root: FecSetRoot::from(fec_set_root),
             fec_set_proof,
         };
         create_response_packet_batch(recycler, &response, from_addr, nonce, "run_fec_set_root")
@@ -333,7 +323,6 @@ mod tests {
                     .into_iter()
                     .chain(parent_coding_shreds)
                     .collect::<Vec<_>>(),
-                None,
                 true,
             )
             .unwrap();
@@ -356,7 +345,6 @@ mod tests {
                     .into_iter()
                     .chain(coding_shreds)
                     .collect::<Vec<_>>(),
-                None,
                 true, // is_trusted
             )
             .unwrap();
@@ -423,7 +411,7 @@ mod tests {
 
             let packet = packet_batch.iter().next().unwrap();
             let (response, response_nonce): (BlockIdRepairResponse, Nonce) =
-                bincode::deserialize(packet.data(..packet.meta().size).unwrap()).unwrap();
+                wincode::deserialize(packet.data(..packet.meta().size).unwrap()).unwrap();
 
             assert_eq!(response_nonce, nonce);
             match response {
@@ -432,7 +420,8 @@ mod tests {
                     fec_set_proof,
                 } => {
                     assert_eq!(
-                        fec_set_root, *expected_root,
+                        fec_set_root,
+                        FecSetRoot::from(*expected_root),
                         "FEC set root should match for index {fec_set_index}"
                     );
                     assert!(
@@ -490,7 +479,7 @@ mod tests {
 
         let packet = packet_batch.iter().next().unwrap();
         let (response, response_nonce): (BlockIdRepairResponse, Nonce) =
-            bincode::deserialize(packet.data(..packet.meta().size).unwrap()).unwrap();
+            wincode::deserialize(packet.data(..packet.meta().size).unwrap()).unwrap();
 
         assert_eq!(response_nonce, nonce);
         match response {

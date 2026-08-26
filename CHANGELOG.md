@@ -7,6 +7,74 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
+Release channels have their own copy of this changelog:
+* [edge - v4.3](#edge-channel)
+* [alpha - v4.2](https://github.com/anza-xyz/agave/blob/v4.2/CHANGELOG.md)
+* [beta - v4.1](https://github.com/anza-xyz/agave/blob/v4.1/CHANGELOG.md)
+* [stable - v4.0](https://github.com/anza-xyz/agave/blob/v4.0/CHANGELOG.md)
+
+<a name="edge-channel"></a>
+## 4.3.0-Unreleased
+### RPC
+#### Breaking
+* Failing to successfully establish a Bigtable connection will now result in a
+  fatal error when running with either `--enable-rpc-bigtable-ledger-storage` or
+  `--enable-bigtable-ledger-upload`. Previously, the error would be logged and
+  the process would continue without a Bigtable connection.
+#### Changes
+### Validator
+#### Breaking
+* Loading a snapshot that contains an invalid vote account is now a hard error. Previously such
+  accounts were silently dropped for compatibility with snapshots created before v2.1.0.
+* Banking trace is now disabled by default. To enable, provide `--enable-banking-trace <max bytes>`.
+* Previously deprecated `--tpu-connection-pool-size` has been removed. The connection pool size is fixed at the previous default of 1.
+#### Deprecations
+* `--disable-banking-trace` is now deprecated and a no-op (banking trace is disabled by
+  default). The flag is still accepted for backward compatibility.
+* `--limit-ledger-size` is now deprecated in favor of `--limit-blockstore-size`. The argument is
+still accepted for backwards compatibility but slated for full removal in the future.
+  * `--limit-blockstore-size` uses a more precise counting mechanism than `--limit-ledger-size`.
+  * If using a non-default value with `--limit-ledger-size`, a good starting point is to double
+  that value for `--limit-blockstore-size`.
+  * `--limit-blockstore-size` may occupy more disk footprint at steady state with current cluster
+  activity; however, disk usage should be more stable during abnormal cluster activity.
+#### Changes
+* Validators running without `--full-rpc-api` and with snapshot generation disabled no longer
+  store transaction signature keys in the status cache. Message hashes remain cached for duplicate
+  transaction detection.
+* External scheduler execution responses now report `PARTIAL_BATCH_CANCELLED` for
+  `CommitCancelled` errors in non-all-or-nothing batches. All-or-nothing batches continue to use
+  `ALL_OR_NOTHING_BATCH_FAILURE`.
+* Using the deprecated value `minimal` for `--accounts-index-limit` now defaults to 25GB.
+* Unstaked nodes can now receive consensus messages via votor from any staked node.
+  Specify `--votor-peer-overrides <VALIDATOR IDENTITY>...` to additionally send votor
+  messages to identities outside the staked set.
+### Geyser
+#### Deprecations
+* The legacy `GeyserPlugin` methods `update_account`, `notify_transaction`, `notify_entry`, and
+  `notify_block_metadata` are slated for removal in the next major release.
+#### Changes
+* Added `GeyserPlugin` methods to replace deprecated methods: `update_account_from_snapshot` and
+  `update_account_for_bank` replace `update_account`, `notify_transaction_for_bank` replaces
+  `notify_transaction`, `notify_entry_for_bank` replaces `notify_entry`, and
+  `notify_block_metadata_for_bank` replaces `notify_block_metadata`.
+* Added `update_bank_status` for bank-scoped slot status updates with `bank_id`;
+  `update_slot_status` remains for non-bank slot statuses.
+* Added `GeyserPlugin::notify_block_footer` and
+  `GeyserPlugin::block_footer_notifications_enabled`; plugins can opt in to receive the complete
+  versioned Alpenglow block footer, slot, and bank ID in entry order independently of entry
+  notifications.
+* Added `GeyserPlugin::notify_entry_update_parent` and
+  `GeyserPlugin::notify_deshred_update_parent` so plugins can discard earlier notifications after
+  an UpdateParent marker.
+### SDK
+#### Breaking
+* solana-program-test: syscall getters (e.g. `Rent::get()`, `Clock::get()`) and `solana_sysvar::get_sysvar()` now return
+  `ProgramError::UnsupportedSysvar` in native-mode processors (programs registered with `processor!`). Programs
+  executed as BPF (including the bundled SPL programs), are unaffected, even when invoked via CPI from a native
+  processor. Native-mode processors can use the `solana_program_test::sol_get_*` sysvar helpers directly. See
+  `program-test/tests/sysvar.rs` for examples of what is and is not supported.
+
 ## 4.2.0
 ### RPC
 #### Breaking
@@ -18,8 +86,6 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 #### Changes
 * Added `RpcClient::get_latest_blockhash_with_commitment_and_context`, which returns the
   `getLatestBlockhash` response together with its context (notably `context.slot`).
-* Support the SPL Token-2022 permissioned burn extension in `jsonParsed` output
-  for accounts and instructions.
 ### Validator
 #### Breaking
 * XDP transmit in SKB (copy) mode is now enabled by default on Linux. The validator requires

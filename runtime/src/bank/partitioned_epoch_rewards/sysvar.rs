@@ -1,11 +1,11 @@
 use {
     super::Bank,
-    crate::inflation_rewards::points::PointValue,
-    log::info,
-    solana_account::{
-        ReadableAccount, WritableAccount, create_account_shared_data_with_fields as create_account,
-        from_account,
+    crate::{
+        inflation_rewards::points::PointValue,
+        sysvar_account::{create_account, from_account},
     },
+    log::info,
+    solana_account::{ReadableAccount, WritableAccount},
     solana_clock::INITIAL_RENT_EPOCH,
     solana_sysvar::{self as sysvar, epoch_rewards::EpochRewards},
 };
@@ -74,13 +74,13 @@ impl Bank {
     /// Update EpochRewards sysvar with distributed rewards
     pub(in crate::bank::partitioned_epoch_rewards) fn update_epoch_rewards_sysvar(
         &self,
-        distributed: u64,
+        inflation_reward_lamports_minted_and_burned: u64,
         debit_block_reward_lamports: u64,
     ) {
         let mut epoch_rewards = self.get_epoch_rewards_sysvar();
         assert!(epoch_rewards.active);
 
-        epoch_rewards.distribute(distributed);
+        epoch_rewards.distribute(inflation_reward_lamports_minted_and_burned);
 
         self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
             create_account(

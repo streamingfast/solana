@@ -4,6 +4,7 @@ use {
         duplicate_shred_listener::DuplicateShredHandlerTrait,
         epoch_specs::EpochSpecs,
     },
+    agave_votor_messages::migration::MigrationStatus,
     crossbeam_channel::Sender,
     log::error,
     solana_clock::Slot,
@@ -39,12 +40,19 @@ pub struct DuplicateShredHandler {
     // Used to notify duplicate consensus state machine
     duplicate_slots_sender: Sender<Slot>,
     shred_version: u16,
+    /// Alpenglow migration status
+    migration_status: Arc<MigrationStatus>,
 }
 
 impl DuplicateShredHandlerTrait for DuplicateShredHandler {
     // Here we are sending data one by one rather than in a batch because in the future
     // we may send different type of CrdsData to different senders.
     fn handle(&mut self, shred_data: DuplicateShred) {
+        if self.migration_status.is_full_alpenglow_epoch() {
+            // turn into noop and clear any existing buffer
+            self.buffer.clear();
+            return;
+        }
         self.cache_root_info();
         self.maybe_prune_buffer();
         let slot = shred_data.slot;
@@ -72,6 +80,7 @@ impl DuplicateShredHandler {
         epoch_specs: Box<dyn EpochSpecs>,
         duplicate_slots_sender: Sender<Slot>,
         shred_version: u16,
+        migration_status: Arc<MigrationStatus>,
     ) -> Self {
         Self {
             buffer: HashMap::<(Slot, Pubkey), BufferEntry>::default(),
@@ -83,6 +92,7 @@ impl DuplicateShredHandler {
             epoch_specs,
             duplicate_slots_sender,
             shred_version,
+            migration_status,
         }
     }
 
@@ -132,10 +142,12 @@ impl DuplicateShredHandler {
                     shred2.into_payload(),
                 )?;
 
-                // Notify duplicate consensus state machine. Drop if channel is over 50% full
-                // to avoid blocking replay.
-                if self.duplicate_slots_sender.len() * 2
-                    < self.duplicate_slots_sender.capacity().unwrap_or(usize::MAX)
+                // Notify the Tower duplicate-consensus state machine. ReplayStage stops
+                // consuming this channel once Alpenglow is enabled, while duplicate proofs are
+                // still stored during the mixed epoch for slashing.
+                if !self.migration_status.is_alpenglow_enabled()
+                    && self.duplicate_slots_sender.len() * 2
+                        < self.duplicate_slots_sender.capacity().unwrap_or(usize::MAX)
                 {
                     self.duplicate_slots_sender
                         .try_send(slot)
@@ -233,7 +245,6 @@ mod tests {
         },
         solana_signer::Signer,
         solana_time_utils::timestamp,
-        std::time::Duration,
     };
 
     fn create_duplicate_proof(
@@ -303,7 +314,6 @@ mod tests {
             .get_slots_in_epoch(0);
         let epoch_specs = TestEpochSpecs {
             staked_nodes: Arc::new(HashMap::new()),
-            epoch_duration: Duration::from_millis(slots_in_epoch * 400),
             slots_in_epoch,
         };
 
@@ -314,12 +324,14 @@ mod tests {
         let (sender, receiver) = bounded(1024);
         let start_slot: Slot = 10;
 
+        let migration_status = bank_forks_arc.read().unwrap().migration_status();
         let mut duplicate_shred_handler = DuplicateShredHandler::new(
             blockstore.clone(),
             leader_schedule_cache,
             epoch_specs.clone_box(),
             sender,
             shred_version,
+            migration_status.clone(),
         );
         let chunks = create_duplicate_proof(
             my_keypair.clone(),
@@ -378,6 +390,25 @@ mod tests {
                 }
             }
         }
+
+        // Duplicate proofs are retained for slashing during the mixed Alpenglow epoch, but the
+        // Tower duplicate-consensus channel no longer has a consumer.
+        migration_status.enable_alpenglow_for_tests();
+        let alpenglow_slot = start_slot + 3;
+        let chunks = create_duplicate_proof(
+            my_keypair,
+            None,
+            alpenglow_slot,
+            None,
+            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
+            shred_version,
+        )
+        .unwrap();
+        for chunk in chunks {
+            duplicate_shred_handler.handle(chunk);
+        }
+        assert!(blockstore.has_duplicate_shreds_in_slot(alpenglow_slot));
+        assert!(receiver.is_empty());
     }
 
     #[test]
@@ -407,7 +438,6 @@ mod tests {
             .get_slots_in_epoch(0);
         let epoch_specs = TestEpochSpecs {
             staked_nodes: Arc::new(HashMap::new()),
-            epoch_duration: Duration::from_millis(slots_in_epoch * 400),
             slots_in_epoch,
         };
 
@@ -416,12 +446,14 @@ mod tests {
             &bank_forks_arc.read().unwrap().working_bank(),
         ));
         let (sender, receiver) = bounded(1024);
+        let migration_status = bank_forks_arc.read().unwrap().migration_status();
         let mut duplicate_shred_handler = DuplicateShredHandler::new(
             blockstore.clone(),
             leader_schedule_cache,
             epoch_specs.clone_box(),
             sender,
             shred_version,
+            migration_status,
         );
         let start_slot: Slot = 10;
 

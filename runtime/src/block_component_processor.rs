@@ -11,17 +11,21 @@ use {
         validated_reward_certificate::{Error as ValidatedRewardCertError, ValidatedRewardCert},
     },
     agave_votor_messages::{
-        certificate::{Certificate, CertificateType},
-        consensus_message::{Block, ConsensusMessage},
+        certificate::{CertSignature, Certificate, CertificateType, GenesisCert},
+        consensus_message::Block,
         migration::MigrationStatus,
         unverified_vote_message::UnverifiedCertificate,
     },
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Sender, TrySendError},
     log::*,
+    smallvec::{SmallVec, smallvec},
     solana_clock::Slot,
-    solana_entry::block_component::{
-        BlockFooterV1, BlockMarkerV1, GenesisCertBlockMarker, VersionedBlockFooter,
-        VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
+    solana_entry::{
+        block_component::{
+            BlockFooterV1, BlockMarkerV1, GenesisCertBlockMarker, VersionedBlockFooter,
+            VersionedBlockHeader, VersionedBlockMarker, VersionedUpdateParent,
+        },
+        entry::Entry,
     },
     solana_hash::Hash,
     solana_pubkey::Pubkey,
@@ -49,14 +53,22 @@ pub enum BlockComponentProcessorError {
     GenesisCertificateOnNonChild,
     #[error("GenesisCertificate was invalid and failed to verify")]
     GenesisCertificateFailedVerification,
+    #[error("Alpenglow migration became ready; aborting the TowerBFT bank")]
+    AlpenglowMigrationTransition,
     #[error("GenesisCertificate marker must immediately follow the block header")]
     GenesisCertificateOutOfOrder,
     #[error("FinalizationCertificate was invalid or failed to verify {0}")]
     InvalidFinalizationCertificate(#[from] BlockFinalizationCertError),
     #[error("Missing block footer")]
     MissingBlockFooter,
+    #[error("Missing genesis certificate marker")]
+    MissingGenesisCertificateMarker,
     #[error("Missing parent marker (neither a header nor an update parent was present)")]
     MissingParentMarker,
+    #[error("Entry batch detected after block footer")]
+    EntryBatchAfterBlockFooter,
+    #[error("Alpentick must be the final block component and appear after block footer")]
+    InvalidAlpentickPosition,
     #[error("Multiple block footers detected")]
     MultipleBlockFooters,
     #[error("Multiple block headers detected")]
@@ -89,38 +101,221 @@ pub enum BlockComponentProcessorError {
 }
 
 impl BlockComponentProcessorError {
+    /// Returns whether this error can come from an optimistic-parent prefix
+    /// that a later usable `UpdateParent` makes obsolete.
+    ///
+    /// This only determines soft-dead eligibility. Replay also verifies that
+    /// the failure occurred before the `UpdateParent`.
     pub fn is_update_parent_recoverable_replay_error(&self) -> bool {
         match self {
             BlockComponentProcessorError::MissingParentMarker
+            | BlockComponentProcessorError::EntryBatchAfterBlockFooter
+            | BlockComponentProcessorError::InvalidAlpentickPosition
             | BlockComponentProcessorError::MultipleBlockFooters
             | BlockComponentProcessorError::MultipleBlockHeaders
             | BlockComponentProcessorError::HeaderParentSlotMismatch { .. }
             | BlockComponentProcessorError::NanosecondClockOutOfBounds
             | BlockComponentProcessorError::UnexpectedInitialUpdateParent
             | BlockComponentProcessorError::GenesisCertificateOutOfOrder
+            | BlockComponentProcessorError::GenesisCertificateAlreadyPopulated
+            | BlockComponentProcessorError::GenesisCertificateInAlpenglowCluster
+            | BlockComponentProcessorError::GenesisCertificateOnNonChild
+            | BlockComponentProcessorError::GenesisCertificateFailedVerification
+            | BlockComponentProcessorError::SpuriousUpdateParent
             | BlockComponentProcessorError::AbandonedBank(_)
             | BlockComponentProcessorError::InvalidRewardCerts(_)
             | BlockComponentProcessorError::UpdateBankFooter(_)
             | BlockComponentProcessorError::InvalidFinalizationCertificate(_) => true,
             BlockComponentProcessorError::BlockComponentPreMigration
-            | BlockComponentProcessorError::GenesisCertificateAlreadyPopulated
-            | BlockComponentProcessorError::GenesisCertificateInAlpenglowCluster
-            | BlockComponentProcessorError::GenesisCertificateOnNonChild
-            | BlockComponentProcessorError::GenesisCertificateFailedVerification
             | BlockComponentProcessorError::MissingBlockFooter
+            | BlockComponentProcessorError::MissingGenesisCertificateMarker
             | BlockComponentProcessorError::MultipleUpdateParents
-            | BlockComponentProcessorError::SpuriousUpdateParent
+            | BlockComponentProcessorError::AlpenglowMigrationTransition
             | BlockComponentProcessorError::UpdateParentNotFirstInLeaderWindow(_) => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// The parent marker that established the current entry section.
+enum EntryParentMarker {
+    BlockHeader,
+    UpdateParent,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+/// The stage within the block we are currently in
+///
+/// All blocks MUST follow this exact shape
+///
+/// Header
+/// Optional Genesis marker - this is the only valid position for a genesis marker
+/// 0 or more Entries
+/// Optional UpdateParent
+/// 0 or more Entries
+/// Footer
+/// Alpentick
+///
+/// Block component processing can start either from the header
+/// or from the UpdateParent.
+enum BlockComponentStage {
+    #[default]
+    /// Beginning of the block, can only accept a parent marker
+    PreParentMarker,
+    /// Immediately after the header, can accept genesis marker, entries or footer
+    AcceptingGenesisOrEntries,
+    /// During the entries section, can accept entries or the footer
+    /// If the parent marker was a block header, can also accept an UpdateParent marker
+    AcceptingEntriesOrFooter { parent_marker: EntryParentMarker },
+    /// After the footer, can only accept the alpentick
+    AcceptingAlpentick,
+    /// After the alpentick, nothing more is accepted
+    Done,
+}
+
+impl BlockComponentStage {
+    /// If current stage is `PreParentMarker`, transition to `AcceptingGenesisOrEntries`
+    fn on_header(&mut self) -> Result<(), BlockComponentProcessorError> {
+        match self {
+            Self::PreParentMarker => {
+                *self = Self::AcceptingGenesisOrEntries;
+                Ok(())
+            }
+            Self::AcceptingGenesisOrEntries
+            | Self::AcceptingEntriesOrFooter {
+                parent_marker: EntryParentMarker::BlockHeader,
+            }
+            | Self::AcceptingAlpentick
+            | Self::Done => Err(BlockComponentProcessorError::MultipleBlockHeaders),
+            Self::AcceptingEntriesOrFooter {
+                parent_marker: EntryParentMarker::UpdateParent,
+            } => Err(BlockComponentProcessorError::SpuriousUpdateParent),
+        }
+    }
+
+    /// If current stage is `AcceptingGenesisOrEntries`, transition to `AcceptingEntriesOrFooter`
+    fn on_genesis_certificate(&mut self) -> Result<(), BlockComponentProcessorError> {
+        match self {
+            Self::PreParentMarker => Err(BlockComponentProcessorError::MissingParentMarker),
+            Self::AcceptingGenesisOrEntries => {
+                *self = Self::AcceptingEntriesOrFooter {
+                    parent_marker: EntryParentMarker::BlockHeader,
+                };
+                Ok(())
+            }
+            Self::AcceptingEntriesOrFooter { .. } | Self::AcceptingAlpentick | Self::Done => {
+                Err(BlockComponentProcessorError::GenesisCertificateOutOfOrder)
+            }
+        }
+    }
+
+    /// If current stage is `AcceptingGenesisOrEntries` or `AcceptingEntriesOrFooter`, transition to
+    /// `AcceptingEntriesOrFooter`
+    fn on_entry_batch(&mut self) -> Result<(), BlockComponentProcessorError> {
+        match self {
+            Self::PreParentMarker => Err(BlockComponentProcessorError::MissingParentMarker),
+            Self::AcceptingGenesisOrEntries => {
+                *self = Self::AcceptingEntriesOrFooter {
+                    parent_marker: EntryParentMarker::BlockHeader,
+                };
+                Ok(())
+            }
+            Self::AcceptingEntriesOrFooter { .. } => Ok(()),
+            Self::AcceptingAlpentick | Self::Done => {
+                Err(BlockComponentProcessorError::EntryBatchAfterBlockFooter)
+            }
+        }
+    }
+
+    /// If current stage is `AcceptingGenesisOrEntries` or `AcceptingEntriesOrFooter`, return `AbandonedBank`
+    /// If current stage is `PreParentMarker` and `allow_initial_update_parent` is specified,
+    /// transition to `AcceptingEntriesOrFooter` with `EntryParentMarker::UpdateParent`
+    fn on_update_parent(
+        &mut self,
+        update_parent: &VersionedUpdateParent,
+        allow_initial_update_parent: bool,
+    ) -> Result<(), BlockComponentProcessorError> {
+        match self {
+            Self::PreParentMarker => {
+                if !allow_initial_update_parent {
+                    return Err(BlockComponentProcessorError::UnexpectedInitialUpdateParent);
+                }
+                *self = Self::AcceptingEntriesOrFooter {
+                    parent_marker: EntryParentMarker::UpdateParent,
+                };
+                Ok(())
+            }
+            Self::AcceptingGenesisOrEntries
+            | Self::AcceptingEntriesOrFooter {
+                parent_marker: EntryParentMarker::BlockHeader,
+            } => {
+                // Only an error in the sense that replay execution of this block
+                // prefix is now over. Replay execution can continue after resetting
+                // bank.
+                Err(BlockComponentProcessorError::AbandonedBank(
+                    update_parent.clone(),
+                ))
+            }
+            Self::AcceptingEntriesOrFooter {
+                parent_marker: EntryParentMarker::UpdateParent,
+            } => Err(BlockComponentProcessorError::MultipleUpdateParents),
+            Self::AcceptingAlpentick | BlockComponentStage::Done => {
+                Err(BlockComponentProcessorError::SpuriousUpdateParent)
+            }
+        }
+    }
+
+    /// If the current stage is `AcceptingGenesisOrEntries`, `AcceptingEntriesOrFooter`
+    /// transition to `AcceptingAlpentick`
+    fn on_footer(&mut self) -> Result<(), BlockComponentProcessorError> {
+        match self {
+            Self::PreParentMarker => Err(BlockComponentProcessorError::MissingParentMarker),
+            Self::AcceptingGenesisOrEntries | Self::AcceptingEntriesOrFooter { .. } => {
+                *self = Self::AcceptingAlpentick;
+                Ok(())
+            }
+            Self::AcceptingAlpentick | Self::Done => {
+                Err(BlockComponentProcessorError::MultipleBlockFooters)
+            }
+        }
+    }
+
+    /// If stage is `AcceptingAlpentick`, transition to `Done`
+    fn on_alpentick(&mut self) -> Result<(), BlockComponentProcessorError> {
+        match self {
+            Self::PreParentMarker => Err(BlockComponentProcessorError::MissingParentMarker),
+            Self::AcceptingGenesisOrEntries => {
+                Err(BlockComponentProcessorError::InvalidAlpentickPosition)
+            }
+            Self::AcceptingEntriesOrFooter { .. } => {
+                Err(BlockComponentProcessorError::InvalidAlpentickPosition)
+            }
+            Self::AcceptingAlpentick => {
+                *self = Self::Done;
+                Ok(())
+            }
+            Self::Done => Err(BlockComponentProcessorError::InvalidAlpentickPosition),
+        }
+    }
+
+    /// Return `Ok(())` only if the stage is `Done`
+    fn on_final(&self) -> Result<(), BlockComponentProcessorError> {
+        match self {
+            Self::Done => Ok(()),
+            Self::AcceptingAlpentick => Err(BlockComponentProcessorError::InvalidAlpentickPosition),
+            Self::PreParentMarker
+            | Self::AcceptingGenesisOrEntries
+            | Self::AcceptingEntriesOrFooter { .. } => {
+                Err(BlockComponentProcessorError::MissingBlockFooter)
+            }
         }
     }
 }
 
 #[derive(Default)]
 pub struct BlockComponentProcessor {
-    has_header: bool,
-    has_footer: bool,
-    has_entry_batch: bool,
-    update_parent: Option<VersionedUpdateParent>,
+    stage: BlockComponentStage,
+    has_genesis_certificate_marker: bool,
 }
 
 impl BlockComponentProcessor {
@@ -128,45 +323,70 @@ impl BlockComponentProcessor {
         &self,
         migration_status: &MigrationStatus,
         slot: Slot,
+        parent_slot: Slot,
     ) -> Result<(), BlockComponentProcessorError> {
-        // Only require block markers (header/footer) for slots where they should be present
+        // Only allow block markers for slots where they should be present.
+        // TowerBFT blocks must not include block headers.
         if !migration_status.should_allow_block_markers(slot) {
-            return Ok(());
+            if self.stage == BlockComponentStage::PreParentMarker {
+                return Ok(());
+            } else {
+                return Err(BlockComponentProcessorError::BlockComponentPreMigration);
+            };
         }
 
-        // Post-migration: both header and footer are required
-        if !self.has_footer {
-            return Err(BlockComponentProcessorError::MissingBlockFooter);
+        if Self::requires_genesis_certificate_marker(migration_status, parent_slot)
+            && !self.has_genesis_certificate_marker
+        {
+            return Err(BlockComponentProcessorError::MissingGenesisCertificateMarker);
         }
 
-        if !self.has_header && self.update_parent.is_none() {
-            return Err(BlockComponentProcessorError::MissingParentMarker);
-        }
+        self.stage.on_final()
+    }
 
-        Ok(())
+    /// Check if `parent_slot` is the alpenglow genesis block for use in enforcing
+    /// that the block has a genesis block marker
+    ///
+    /// Note: We have an exemption for Dev clusters that have alpenglow active at slot 0,
+    /// as these clusters do not need a genesis block marker
+    fn requires_genesis_certificate_marker(
+        migration_status: &MigrationStatus,
+        parent_slot: Slot,
+    ) -> bool {
+        migration_status
+            .genesis_block()
+            .is_some_and(|genesis_block| {
+                genesis_block.slot != 0 && parent_slot == genesis_block.slot
+            })
     }
 
     /// Process an entry batch.
     ///
-    /// Validates that a parent marker (header or update parent) has been
-    /// processed before any entry batches.
+    /// Validates that a parent marker (header or update parent) has been processed
+    /// before any entry batches. The terminal Alpenglow tick is the only entry
+    /// batch allowed after the block footer.
     pub fn on_entry_batch(
         &mut self,
         migration_status: &MigrationStatus,
         slot: Slot,
+        entries: &[Entry],
+        is_final_component: bool,
     ) -> Result<(), BlockComponentProcessorError> {
         if !migration_status.should_allow_block_markers(slot) {
-            self.has_entry_batch = true;
             return Ok(());
         }
 
-        // We must have either a header or an update parent prior to processing entry batches.
-        if !self.has_header && self.update_parent.is_none() {
-            return Err(BlockComponentProcessorError::MissingParentMarker);
-        }
+        // The alpentick must be the final block component.
+        // It is fine for other ticks to be present in the block, they will be rejected
+        // for `TooManyTicks` in `verify_ticks()`
+        let is_alpentick = is_final_component
+            && matches!(entries, [entry] if entry.is_tick() && entry.num_hashes == 1);
 
-        self.has_entry_batch = true;
-        Ok(())
+        if is_alpentick {
+            self.stage.on_alpentick()
+        } else {
+            self.stage.on_entry_batch()
+        }
     }
 
     /// Process a block marker:
@@ -182,7 +402,7 @@ impl BlockComponentProcessor {
         shred_version: u16,
         marker: VersionedBlockMarker,
         allow_initial_update_parent: bool,
-        finalization_cert_sender: Option<&Sender<ConsensusMessage>>,
+        finalization_cert_sender: Option<&Sender<SmallVec<[Certificate; 2]>>>,
         migration_status: &MigrationStatus,
     ) -> Result<(), BlockComponentProcessorError> {
         let slot = bank.slot();
@@ -213,6 +433,7 @@ impl BlockComponentProcessor {
 
             // Everything else is only valid once migration is complete
             BlockMarkerV1::BlockFooter(footer) if markers_fully_enabled => self.on_footer(
+                &migration_status.my_pubkey(),
                 bank,
                 parent_bank,
                 shred_version,
@@ -235,49 +456,41 @@ impl BlockComponentProcessor {
 
     /// Processes the genesis block marker with full verification
     pub fn on_genesis_cert_block_marker(
-        &self,
+        &mut self,
         bank: Arc<Bank>,
         shred_version: u16,
         genesis_block_marker: GenesisCertBlockMarker,
         migration_status: &MigrationStatus,
     ) -> Result<(), BlockComponentProcessorError> {
-        self.validate_genesis_cert_block_marker_position()?;
-        self.process_genesis_cert_block_marker(
+        self.stage.on_genesis_certificate()?;
+        self.process_unvalidated_genesis_cert_block_marker(
             bank,
             genesis_block_marker,
             migration_status,
             Some(shred_version),
-        )
+        )?;
+        Ok(())
     }
 
-    /// Processes a locally produced genesis certificate marker without
-    /// re-verifying the certificate signature.
+    /// Processes a locally produced genesis certificate marker without verification
     pub fn on_genesis_cert_block_marker_leader(
-        &self,
+        &mut self,
         bank: Arc<Bank>,
         genesis_block_marker: GenesisCertBlockMarker,
         migration_status: &MigrationStatus,
     ) -> Result<(), BlockComponentProcessorError> {
-        self.process_genesis_cert_block_marker(bank, genesis_block_marker, migration_status, None)
-    }
-
-    fn validate_genesis_cert_block_marker_position(
-        &self,
-    ) -> Result<(), BlockComponentProcessorError> {
-        if !self.has_header {
-            return Err(BlockComponentProcessorError::MissingParentMarker);
-        }
-
-        if self.has_entry_batch || self.has_footer || self.update_parent.is_some() {
-            return Err(BlockComponentProcessorError::GenesisCertificateOutOfOrder);
-        }
-
+        self.process_unvalidated_genesis_cert_block_marker(
+            bank,
+            genesis_block_marker,
+            migration_status,
+            None,
+        )?;
         Ok(())
     }
 
     /// Performs verification if `shred_version` is specified
-    fn process_genesis_cert_block_marker(
-        &self,
+    fn process_unvalidated_genesis_cert_block_marker(
+        &mut self,
         bank: Arc<Bank>,
         genesis_block_marker: GenesisCertBlockMarker,
         migration_status: &MigrationStatus,
@@ -301,31 +514,26 @@ impl BlockComponentProcessor {
             return Err(BlockComponentProcessorError::GenesisCertificateAlreadyPopulated);
         }
 
-        let genesis_cert_type = CertificateType::Genesis(Block {
-            slot: genesis_block_marker.slot,
-            block_id: genesis_block_marker.block_id,
-        });
-        let genesis_cert = match shred_version {
-            Some(shred_version) => {
-                let unverified_genesis_cert = UnverifiedCertificate {
-                    cert_type: genesis_cert_type,
-                    signature: genesis_block_marker.bls_signature,
-                    bitmap: genesis_block_marker.bitmap,
-                    shred_version,
-                };
-                Self::verify_genesis_certificate(&bank, unverified_genesis_cert)?
-            }
-            None => Certificate {
-                cert_type: genesis_cert_type,
+        let genesis_cert = GenesisCert {
+            block: Block {
+                slot: genesis_block_marker.slot,
+                block_id: genesis_block_marker.block_id,
+            },
+            signature: CertSignature {
                 signature: genesis_block_marker.bls_signature,
                 bitmap: genesis_block_marker.bitmap,
             },
         };
+        if let Some(shred_version) = shred_version {
+            Self::verify_genesis_certificate(&bank, &genesis_cert, shred_version)?;
+        }
+
         bank.set_alpenglow_genesis_certificate(&genesis_cert);
-        bank.set_hashes_per_tick(None);
+        self.has_genesis_certificate_marker = true;
 
         if migration_status.is_alpenglow_enabled() {
             // We participated in the migration, nothing to do
+            bank.set_hashes_per_tick(None);
             return Ok(());
         }
 
@@ -340,26 +548,28 @@ impl BlockComponentProcessor {
             migration_status.my_pubkey(),
             bank.slot()
         );
-        migration_status.set_genesis_block(
-            genesis_cert
-                .cert_type
-                .to_block()
-                .expect("Genesis cert must correspond to a block"),
-        );
+        migration_status.set_genesis_block(genesis_cert.block);
         migration_status.set_genesis_certificate(Arc::new(genesis_cert));
         assert!(migration_status.is_ready_to_enable());
 
-        Ok(())
+        // This bank was created with TowerBFT tick configuration. Stop processing it immediately;
+        // replay will discard it, enable Alpenglow, and rebuild it with Alpenglow tick rules.
+        Err(BlockComponentProcessorError::AlpenglowMigrationTransition)
     }
 
     fn verify_genesis_certificate(
         bank: &Bank,
-        cert: UnverifiedCertificate,
-    ) -> Result<Certificate, BlockComponentProcessorError> {
-        debug_assert!(cert.cert_type.is_genesis());
-
-        let cert_slot = cert.cert_type.slot();
-        let cert = bank.verify_certificate(cert).map_err(|_| {
+        cert: &GenesisCert,
+        shred_version: u16,
+    ) -> Result<(), BlockComponentProcessorError> {
+        let cert_slot = cert.block.slot;
+        let unverified_cert = UnverifiedCertificate {
+            cert_type: CertificateType::Genesis(cert.block),
+            signature: cert.signature.signature,
+            bitmap: cert.signature.bitmap.clone(),
+            shred_version,
+        };
+        bank.verify_certificate(unverified_cert).map_err(|_| {
             warn!(
                 "Failed to verify genesis certificate for slot {cert_slot} in bank slot {}",
                 bank.slot()
@@ -367,24 +577,19 @@ impl BlockComponentProcessor {
             BlockComponentProcessorError::GenesisCertificateFailedVerification
         })?;
 
-        Ok(cert)
+        Ok(())
     }
 
     fn on_footer(
         &mut self,
+        my_pubkey: &Pubkey,
         bank: Arc<Bank>,
         parent_bank: Arc<Bank>,
         shred_version: u16,
         footer: VersionedBlockFooter,
-        finalization_cert_sender: Option<&Sender<ConsensusMessage>>,
+        finalization_cert_sender: Option<&Sender<SmallVec<[Certificate; 2]>>>,
     ) -> Result<(), BlockComponentProcessorError> {
-        if !self.has_header && self.update_parent.is_none() {
-            return Err(BlockComponentProcessorError::MissingParentMarker);
-        }
-
-        if self.has_footer {
-            return Err(BlockComponentProcessorError::MultipleBlockFooters);
-        }
+        self.stage.on_footer()?;
 
         let VersionedBlockFooter::V1(footer) = footer;
 
@@ -440,21 +645,22 @@ impl BlockComponentProcessor {
         if let Some((finalize_cert, notarize_cert)) = pool_input
             && let Some(sender) = finalization_cert_sender
         {
-            if let Some(notarize_cert) = notarize_cert {
-                let cert = ConsensusMessage::Certificate(notarize_cert);
-                // TODO blocking send.
-                let _ = sender
-                    .send(cert)
-                    .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
+            let channel_name = "finalization_cert_sender";
+            let certs = match notarize_cert {
+                None => smallvec![finalize_cert],
+                Some(c) => smallvec![finalize_cert, c],
+            };
+            match sender.try_send(certs) {
+                Ok(()) => (),
+                Err(TrySendError::Full(_)) => {
+                    warn!("{my_pubkey}: channel \"{channel_name}\" is full, dropping msg")
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    warn!("{my_pubkey}: channel \"{channel_name}\" disconnected")
+                }
             }
-            let cert = ConsensusMessage::Certificate(finalize_cert);
-            // TODO blocking send.
-            let _ = sender
-                .send(cert)
-                .inspect_err(|_| info!("ConsensusMessage sender disconnected"));
         }
 
-        self.has_footer = true;
         Ok(())
     }
 
@@ -463,13 +669,7 @@ impl BlockComponentProcessor {
         header: &VersionedBlockHeader,
         bank_parent_slot: Slot,
     ) -> Result<(), BlockComponentProcessorError> {
-        if self.has_header {
-            return Err(BlockComponentProcessorError::MultipleBlockHeaders);
-        }
-
-        if self.update_parent.is_some() {
-            return Err(BlockComponentProcessorError::SpuriousUpdateParent);
-        }
+        self.stage.on_header()?;
 
         let VersionedBlockHeader::V1(header) = header;
         if header.parent_slot != bank_parent_slot {
@@ -478,8 +678,6 @@ impl BlockComponentProcessor {
                 bank_parent_slot,
             });
         }
-
-        self.has_header = true;
         Ok(())
     }
 
@@ -489,30 +687,12 @@ impl BlockComponentProcessor {
         update_parent: &VersionedUpdateParent,
         allow_initial_update_parent: bool,
     ) -> Result<(), BlockComponentProcessorError> {
-        if self.update_parent.is_some() {
-            return Err(BlockComponentProcessorError::MultipleUpdateParents);
-        }
-
         if leader_slot_index(slot) != 0 {
             return Err(BlockComponentProcessorError::UpdateParentNotFirstInLeaderWindow(slot));
         }
 
-        if !self.has_header && !allow_initial_update_parent {
-            return Err(BlockComponentProcessorError::UnexpectedInitialUpdateParent);
-        }
-
-        self.update_parent = Some(update_parent.clone());
-
-        if self.has_header {
-            // Only an error in the sense that replay execution of this block
-            // prefix is now over. Replay execution can continue after resetting
-            // bank.
-            Err(BlockComponentProcessorError::AbandonedBank(
-                update_parent.clone(),
-            ))
-        } else {
-            Ok(())
-        }
+        self.stage
+            .on_update_parent(update_parent, allow_initial_update_parent)
     }
 
     fn enforce_nanosecond_clock_bounds(
@@ -616,13 +796,19 @@ mod tests {
             genesis_utils::{activate_all_features_alpenglow, create_genesis_config},
         },
         rand::Rng,
-        solana_bls_signatures::BLS_SIGNATURE_AFFINE_SIZE,
+        solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
         solana_clock::DEFAULT_MS_PER_SLOT,
-        solana_entry::block_component::{
-            BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedUpdateParent,
+        solana_entry::{
+            block_component::{
+                BlockFooterV1, BlockHeaderV1, UpdateParentV1, VersionedUpdateParent,
+            },
+            entry::Entry,
         },
         solana_hash::Hash,
-        std::sync::{Arc, RwLock},
+        std::{
+            assert_matches,
+            sync::{Arc, RwLock},
+        },
     };
 
     const DEFAULT_NS_PER_SLOT: u64 = DEFAULT_MS_PER_SLOT * 1_000_000;
@@ -655,9 +841,57 @@ mod tests {
         GenesisCertBlockMarker {
             slot: 0,
             block_id: Hash::default(),
-            bls_signature: solana_bls_signatures::Signature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![],
         }
+    }
+
+    fn post_migration_status_with_genesis_slot(genesis_slot: Slot) -> MigrationStatus {
+        let migration_status = MigrationStatus::default();
+        let migration_slot = migration_status.record_feature_activation(0);
+        assert!(genesis_slot < migration_slot);
+
+        let genesis_block = Block {
+            slot: genesis_slot,
+            block_id: Hash::default(),
+        };
+        migration_status.set_genesis_block(genesis_block);
+        let cert = Arc::new(GenesisCert {
+            block: genesis_block,
+            signature: CertSignature {
+                signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+                bitmap: vec![],
+            },
+        });
+        migration_status.set_genesis_certificate(cert);
+        migration_status.enable_alpenglow_during_startup();
+
+        migration_status
+    }
+
+    fn processor_after_header() -> BlockComponentProcessor {
+        BlockComponentProcessor {
+            stage: BlockComponentStage::AcceptingGenesisOrEntries,
+            ..BlockComponentProcessor::default()
+        }
+    }
+
+    fn processor_after_footer() -> BlockComponentProcessor {
+        BlockComponentProcessor {
+            stage: BlockComponentStage::AcceptingAlpentick,
+            ..BlockComponentProcessor::default()
+        }
+    }
+
+    fn processor_done() -> BlockComponentProcessor {
+        BlockComponentProcessor {
+            stage: BlockComponentStage::Done,
+            ..BlockComponentProcessor::default()
+        }
+    }
+
+    fn alpentick(num_hashes: u64) -> [Entry; 1] {
+        [Entry::new(&Hash::default(), num_hashes, vec![])]
     }
 
     #[test]
@@ -666,7 +900,7 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
 
         // Try to process entry batch without header - should fail
-        let result = processor.on_entry_batch(&migration_status, 1);
+        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
         assert!(matches!(
             result,
             Err(BlockComponentProcessorError::MissingParentMarker)
@@ -723,7 +957,7 @@ mod tests {
             )
             .unwrap();
         processor
-            .on_entry_batch(&migration_status, bank.slot())
+            .on_entry_batch(&migration_status, bank.slot(), &[], false)
             .unwrap();
 
         let marker =
@@ -787,17 +1021,125 @@ mod tests {
     #[test]
     fn test_missing_footer_error_on_slot_full() {
         let migration_status = MigrationStatus::post_migration_status();
-        let processor = BlockComponentProcessor {
-            has_header: true,
-            ..BlockComponentProcessor::default()
-        };
+        let processor = processor_after_header();
 
         // Try to mark slot as full without footer - should fail
-        let result = processor.on_final(&migration_status, 1);
+        let result = processor.on_final(&migration_status, 1, 0);
         assert!(matches!(
             result,
             Err(BlockComponentProcessorError::MissingBlockFooter)
         ));
+    }
+
+    #[test]
+    fn test_header_during_tower_bft_slot() {
+        let migration_status = MigrationStatus::default();
+        migration_status.record_feature_activation(0);
+        let mut processor = BlockComponentProcessor::default();
+        let (parent, bank_forks) = create_test_bank();
+        let bank = create_child_bank(&bank_forks, &parent, 1);
+        let marker = VersionedBlockMarker::from_block_header(BlockHeaderV1 {
+            parent_slot: parent.slot(),
+            parent_block_id: Hash::default(),
+        });
+
+        assert!(!migration_status.should_allow_block_markers(bank.slot()));
+        processor
+            .on_marker(
+                bank.clone(),
+                parent,
+                rand::rng().random(),
+                marker,
+                false,
+                None,
+                &migration_status,
+            )
+            .unwrap();
+
+        assert_matches!(
+            processor.on_final(&migration_status, bank.slot(), bank.parent_slot()),
+            Err(BlockComponentProcessorError::BlockComponentPreMigration)
+        );
+    }
+
+    #[test]
+    fn test_first_alpenglow_block_requires_genesis_certificate_marker() {
+        let migration_status = post_migration_status_with_genesis_slot(1);
+        let processor = processor_after_footer();
+
+        let result = processor.on_final(&migration_status, 2, 1);
+        assert!(matches!(
+            result,
+            Err(BlockComponentProcessorError::MissingGenesisCertificateMarker)
+        ));
+    }
+
+    #[test]
+    fn test_first_alpenglow_block_with_genesis_certificate_marker_succeeds() {
+        let migration_status = post_migration_status_with_genesis_slot(1);
+        let (genesis_bank, bank_forks) = create_test_bank();
+        let parent = create_child_bank(&bank_forks, &genesis_bank, 1);
+        let parent_block_id = Hash::new_unique();
+        parent.set_block_id(Some(parent_block_id));
+        let bank = create_child_bank(&bank_forks, &parent, 2);
+        let genesis_marker = GenesisCertBlockMarker {
+            slot: parent.slot(),
+            block_id: parent_block_id,
+            bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bitmap: vec![],
+        };
+        let mut processor = processor_after_header();
+        bank.set_hashes_per_tick(Some(42));
+        assert!(bank.hashes_per_tick().is_some());
+
+        processor
+            .on_genesis_cert_block_marker_leader(bank.clone(), genesis_marker, &migration_status)
+            .unwrap();
+        assert!(bank.hashes_per_tick().is_none());
+        processor.stage = BlockComponentStage::Done;
+        assert!(processor.on_final(&migration_status, 2, 1).is_ok());
+    }
+
+    #[test]
+    fn test_genesis_certificate_marker_aborts_tower_bank_during_migration() {
+        let migration_status = MigrationStatus::default();
+        migration_status.record_feature_activation(0);
+        let (genesis_bank, bank_forks) = create_test_bank();
+        let parent = create_child_bank(&bank_forks, &genesis_bank, 1);
+        let parent_block_id = Hash::new_unique();
+        parent.set_block_id(Some(parent_block_id));
+        let bank = create_child_bank(&bank_forks, &parent, 2);
+        let genesis_marker = GenesisCertBlockMarker {
+            slot: parent.slot(),
+            block_id: parent_block_id,
+            bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
+            bitmap: vec![],
+        };
+        let mut processor = processor_after_header();
+        bank.set_hashes_per_tick(Some(42));
+        let tower_hashes_per_tick = bank.hashes_per_tick();
+        assert!(tower_hashes_per_tick.is_some());
+
+        assert_matches!(
+            processor.on_genesis_cert_block_marker_leader(
+                bank.clone(),
+                genesis_marker,
+                &migration_status,
+            ),
+            Err(BlockComponentProcessorError::AlpenglowMigrationTransition)
+        );
+
+        assert!(migration_status.is_ready_to_enable());
+        assert_eq!(bank.hashes_per_tick(), tower_hashes_per_tick);
+        assert!(bank.get_alpenglow_genesis_certificate().is_some());
+    }
+
+    #[test]
+    fn test_first_alpenglow_block_genesis_slot_zero_skips_genesis_certificate_marker_check() {
+        let migration_status = MigrationStatus::post_migration_status();
+        let processor = processor_done();
+
+        assert!(processor.on_final(&migration_status, 1, 0).is_ok());
     }
 
     #[test]
@@ -821,10 +1163,8 @@ mod tests {
 
     #[test]
     fn test_multiple_footers_error() {
-        let mut processor = BlockComponentProcessor {
-            has_header: true,
-            ..Default::default()
-        };
+        let my_pubkey = Pubkey::new_unique();
+        let mut processor = processor_after_header();
 
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
@@ -846,6 +1186,7 @@ mod tests {
         // First footer should succeed
         processor
             .on_footer(
+                &my_pubkey,
                 bank.clone(),
                 parent.clone(),
                 shred_version,
@@ -856,7 +1197,7 @@ mod tests {
 
         // Second footer should fail
         let err = processor
-            .on_footer(bank, parent, shred_version, footer, None)
+            .on_footer(&my_pubkey, bank, parent, shred_version, footer, None)
             .unwrap_err();
         assert!(matches!(
             err,
@@ -866,10 +1207,8 @@ mod tests {
 
     #[test]
     fn test_on_footer_sets_timestamp() {
-        let mut processor = BlockComponentProcessor {
-            has_header: true,
-            ..Default::default()
-        };
+        let my_pubkey = Pubkey::new_unique();
+        let mut processor = processor_after_header();
 
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
@@ -890,10 +1229,17 @@ mod tests {
         });
 
         processor
-            .on_footer(bank.clone(), parent, shred_version, footer, None)
+            .on_footer(
+                &my_pubkey,
+                bank.clone(),
+                parent,
+                shred_version,
+                footer,
+                None,
+            )
             .unwrap();
 
-        assert!(processor.has_footer);
+        assert_eq!(processor.stage, BlockComponentStage::AcceptingAlpentick);
 
         // Verify clock sysvar was updated with correct timestamp (nanos converted to seconds)
         assert_eq!(bank.clock().unix_timestamp, expected_time_secs);
@@ -908,7 +1254,10 @@ mod tests {
         });
 
         processor.on_header(&header, 0).unwrap();
-        assert!(processor.has_header);
+        assert_eq!(
+            processor.stage,
+            BlockComponentStage::AcceptingGenesisOrEntries
+        );
     }
 
     #[test]
@@ -952,7 +1301,10 @@ mod tests {
                 &migration_status,
             )
             .unwrap();
-        assert!(processor.has_header);
+        assert_eq!(
+            processor.stage,
+            BlockComponentStage::AcceptingGenesisOrEntries
+        );
     }
 
     #[test]
@@ -988,10 +1340,7 @@ mod tests {
     #[test]
     fn test_on_marker_processes_footer() {
         let migration_status = MigrationStatus::post_migration_status();
-        let mut processor = BlockComponentProcessor {
-            has_header: true,
-            ..Default::default()
-        };
+        let mut processor = processor_after_header();
 
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
@@ -1022,7 +1371,7 @@ mod tests {
                 &migration_status,
             )
             .unwrap();
-        assert!(processor.has_footer);
+        assert_eq!(processor.stage, BlockComponentStage::AcceptingAlpentick);
 
         // Verify clock sysvar was updated
         assert_eq!(bank.clock().unix_timestamp, expected_time_secs);
@@ -1049,7 +1398,9 @@ mod tests {
         processor.on_header(&header, bank.parent_slot()).unwrap();
 
         // Process some entry batches (not full yet)
-        assert!(processor.on_entry_batch(&migration_status, 1).is_ok());
+        processor
+            .on_entry_batch(&migration_status, 1, &[], false)
+            .unwrap();
 
         // Process footer with valid timestamp
         let footer = VersionedBlockFooter::V1(BlockFooterV1 {
@@ -1061,15 +1412,59 @@ mod tests {
             notar_reward_cert: None,
         });
         processor
-            .on_footer(bank.clone(), parent.clone(), shred_version, footer, None)
+            .on_footer(
+                &migration_status.my_pubkey(),
+                bank.clone(),
+                parent.clone(),
+                shred_version,
+                footer,
+                None,
+            )
             .unwrap();
 
         // Verify clock sysvar was updated
         assert_eq!(bank.clock().unix_timestamp, expected_time_secs);
 
-        // Entry batch after footer should still succeed
-        let result = processor.on_entry_batch(&migration_status, 1);
-        assert!(result.is_ok());
+        // Entry batch after footer should fail because the footer is terminal.
+        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
+        assert_matches!(
+            result,
+            Err(BlockComponentProcessorError::EntryBatchAfterBlockFooter)
+        );
+    }
+
+    #[test]
+    fn test_alpentick_position_validation() {
+        let migration_status = MigrationStatus::post_migration_status();
+        let mut processor = processor_after_footer();
+        let good_alpentick = alpentick(1);
+
+        processor
+            .on_entry_batch(&migration_status, 1, &good_alpentick, true)
+            .unwrap();
+        assert_matches!(
+            processor.on_entry_batch(&migration_status, 1, &good_alpentick, true),
+            Err(BlockComponentProcessorError::InvalidAlpentickPosition)
+        );
+
+        let mut processor = BlockComponentProcessor::default();
+        assert_matches!(
+            processor.on_entry_batch(&migration_status, 1, &good_alpentick, true),
+            Err(BlockComponentProcessorError::MissingParentMarker)
+        );
+
+        let mut processor = processor_after_footer();
+        let bad_alpentick = alpentick(2);
+        assert_matches!(
+            processor.on_entry_batch(&migration_status, 1, &bad_alpentick, true),
+            Err(BlockComponentProcessorError::EntryBatchAfterBlockFooter)
+        );
+
+        let migration_status = MigrationStatus::default();
+        let mut processor = BlockComponentProcessor::default();
+        processor
+            .on_entry_batch(&migration_status, 1, &good_alpentick, true)
+            .unwrap();
     }
 
     #[test]
@@ -1164,12 +1559,15 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
 
         // Processing entry batches pre-migration (without markers) should succeed
-        let result = processor.on_entry_batch(&migration_status, 1);
+        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
         assert!(result.is_ok());
 
         // Even with slot full
-        let result = processor.on_entry_batch(&migration_status, 1);
+        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
         assert!(result.is_ok());
+
+        // A Tower block with no markers is valid
+        assert!(processor.on_final(&migration_status, 1, 0).is_ok());
     }
 
     #[test]
@@ -1198,7 +1596,9 @@ mod tests {
             .unwrap();
 
         // Process entry batches
-        assert!(processor.on_entry_batch(&migration_status, 1).is_ok());
+        processor
+            .on_entry_batch(&migration_status, 1, &[], false)
+            .unwrap();
 
         // Calculate valid timestamp based on parent's time
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
@@ -1229,13 +1629,17 @@ mod tests {
         // Verify clock sysvar was updated
         assert_eq!(bank.clock().unix_timestamp, expected_time_secs);
 
-        // Entry batch after footer should still succeed
-        let result = processor.on_entry_batch(&migration_status, 1);
-        assert!(result.is_ok());
+        // Entry batch after footer should fail because the footer is terminal.
+        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
+        assert_matches!(
+            result,
+            Err(BlockComponentProcessorError::EntryBatchAfterBlockFooter)
+        );
     }
 
     #[test]
     fn test_footer_without_header_errors() {
+        let my_pubkey = Pubkey::new_unique();
         let mut processor = BlockComponentProcessor::default();
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
@@ -1252,7 +1656,7 @@ mod tests {
 
         // Try to process footer without header - should fail
         let err = processor
-            .on_footer(bank, parent, shred_version, footer, None)
+            .on_footer(&my_pubkey, bank, parent, shred_version, footer, None)
             .unwrap_err();
         assert!(matches!(
             err,
@@ -1263,13 +1667,10 @@ mod tests {
     #[test]
     fn test_marker_with_footer_at_slot_full() {
         let migration_status = MigrationStatus::post_migration_status();
-        let mut processor = BlockComponentProcessor::default();
+        let mut processor = processor_after_header();
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 1);
         let shred_version = rand::rng().random();
-
-        // Process header first
-        processor.has_header = true;
 
         // Calculate valid timestamp based on parent's time
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
@@ -1298,7 +1699,7 @@ mod tests {
                 &migration_status,
             )
             .unwrap();
-        assert!(processor.has_footer);
+        assert_eq!(processor.stage, BlockComponentStage::AcceptingAlpentick);
 
         // Verify clock sysvar was updated
         assert_eq!(bank.clock().unix_timestamp, expected_time_secs);
@@ -1307,22 +1708,17 @@ mod tests {
     #[test]
     fn test_entry_batch_with_header_not_full_succeeds() {
         let migration_status = MigrationStatus::post_migration_status();
-        let mut processor = BlockComponentProcessor {
-            has_header: true,
-            ..Default::default()
-        };
+        let mut processor = processor_after_header();
 
         // Process entry batch with header but not full - should succeed even without footer
-        let result = processor.on_entry_batch(&migration_status, 1);
+        let result = processor.on_entry_batch(&migration_status, 1, &[], false);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_footer_sets_epoch_start_timestamp_on_epoch_change() {
-        let mut processor = BlockComponentProcessor {
-            has_header: true,
-            ..Default::default()
-        };
+        let my_pubkey = Pubkey::new_unique();
+        let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
 
         // Create genesis bank
@@ -1371,7 +1767,14 @@ mod tests {
         });
 
         processor
-            .on_footer(bank.clone(), parent, shred_version, footer, None)
+            .on_footer(
+                &my_pubkey,
+                bank.clone(),
+                parent,
+                shred_version,
+                footer,
+                None,
+            )
             .unwrap();
 
         // Verify clock sysvar was updated
@@ -1387,10 +1790,8 @@ mod tests {
         timestamp_fn: impl FnOnce(i64, i64, i64) -> i64,
         should_pass: bool,
     ) {
-        let mut processor = BlockComponentProcessor {
-            has_header: true,
-            ..Default::default()
-        };
+        let my_pubkey = Pubkey::new_unique();
+        let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
 
         let (parent, bank_forks) = create_test_bank_alpenglow();
@@ -1418,7 +1819,7 @@ mod tests {
             notar_reward_cert: None,
         });
 
-        let result = processor.on_footer(bank, parent, shred_version, footer, None);
+        let result = processor.on_footer(&my_pubkey, bank, parent, shred_version, footer, None);
         if should_pass {
             result.unwrap();
         } else {
@@ -1470,10 +1871,8 @@ mod tests {
 
     #[test]
     fn test_clock_bounds_without_parent_nanosecond_clock_rejects_out_of_bounds() {
-        let mut processor = BlockComponentProcessor {
-            has_header: true,
-            ..Default::default()
-        };
+        let my_pubkey = Pubkey::new_unique();
+        let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
 
         let (parent, bank_forks) = create_test_bank_alpenglow();
@@ -1499,7 +1898,7 @@ mod tests {
 
         assert!(matches!(
             processor
-                .on_footer(bank, parent, shred_version, footer, None)
+                .on_footer(&my_pubkey, bank, parent, shred_version, footer, None)
                 .unwrap_err(),
             BlockComponentProcessorError::NanosecondClockOutOfBounds
         ));
@@ -1507,10 +1906,8 @@ mod tests {
 
     #[test]
     fn test_clock_bounds_rejects_timestamp_above_i64() {
-        let mut processor = BlockComponentProcessor {
-            has_header: true,
-            ..Default::default()
-        };
+        let my_pubkey = Pubkey::new_unique();
+        let mut processor = processor_after_header();
         let shred_version = rand::rng().random();
 
         let (parent, bank_forks) = create_test_bank_alpenglow();
@@ -1529,7 +1926,7 @@ mod tests {
 
         assert!(matches!(
             processor
-                .on_footer(bank, parent, shred_version, footer, None)
+                .on_footer(&my_pubkey, bank, parent, shred_version, footer, None)
                 .unwrap_err(),
             BlockComponentProcessorError::NanosecondClockOutOfBounds
         ));
@@ -1603,7 +2000,7 @@ mod tests {
             processor.on_update_parent(4, &update_parent, false),
             Err(BlockComponentProcessorError::UnexpectedInitialUpdateParent)
         ));
-        assert!(processor.update_parent.is_none());
+        assert_eq!(processor.stage, BlockComponentStage::PreParentMarker);
     }
 
     #[test]
@@ -1618,7 +2015,7 @@ mod tests {
             processor.on_update_parent(5, &update_parent, true),
             Err(BlockComponentProcessorError::UpdateParentNotFirstInLeaderWindow(5))
         ));
-        assert!(processor.update_parent.is_none());
+        assert_eq!(processor.stage, BlockComponentStage::PreParentMarker);
     }
 
     #[test]
@@ -1630,7 +2027,12 @@ mod tests {
         });
 
         processor.on_update_parent(4, &update_parent, true).unwrap();
-        assert!(processor.update_parent.is_some());
+        assert_eq!(
+            processor.stage,
+            BlockComponentStage::AcceptingEntriesOrFooter {
+                parent_marker: EntryParentMarker::UpdateParent,
+            }
+        );
     }
 
     #[test]
@@ -1658,6 +2060,20 @@ mod tests {
     }
 
     #[test]
+    fn test_update_parent_after_footer_error() {
+        let mut processor = processor_after_footer();
+        let update_parent = VersionedUpdateParent::V1(UpdateParentV1 {
+            new_parent_slot: 0,
+            new_parent_block_id: Hash::default(),
+        });
+
+        assert_matches!(
+            processor.on_update_parent(4, &update_parent, false),
+            Err(BlockComponentProcessorError::SpuriousUpdateParent)
+        );
+    }
+
+    #[test]
     fn test_multiple_update_parents_error() {
         let mut processor = BlockComponentProcessor::default();
         let update_parent = VersionedUpdateParent::V1(UpdateParentV1 {
@@ -1669,10 +2085,10 @@ mod tests {
         processor.on_update_parent(4, &update_parent, true).unwrap();
 
         // Second should fail
-        assert!(matches!(
+        assert_matches!(
             processor.on_update_parent(4, &update_parent, true),
             Err(BlockComponentProcessorError::MultipleUpdateParents)
-        ));
+        );
     }
 
     #[test]
@@ -1706,11 +2122,12 @@ mod tests {
         let mut processor = BlockComponentProcessor::default();
         let (parent, bank_forks) = create_test_bank();
         let bank = create_child_bank(&bank_forks, &parent, 4);
+        let slot = bank.slot();
         let shred_version = rand::rng().random();
 
         processor
             .on_update_parent(
-                bank.slot(),
+                slot,
                 &VersionedUpdateParent::V1(UpdateParentV1 {
                     new_parent_slot: 0,
                     new_parent_block_id: Hash::default(),
@@ -1719,7 +2136,9 @@ mod tests {
             )
             .unwrap();
 
-        assert!(processor.on_entry_batch(&migration_status, 1).is_ok());
+        processor
+            .on_entry_batch(&migration_status, slot, &[], false)
+            .unwrap();
 
         let parent_time_nanos = parent.clock().unix_timestamp.saturating_mul(1_000_000_000);
         let footer = VersionedBlockFooter::V1(BlockFooterV1 {
@@ -1731,9 +2150,21 @@ mod tests {
             notar_reward_cert: None,
         });
         processor
-            .on_footer(bank, parent, shred_version, footer, None)
+            .on_footer(
+                &migration_status.my_pubkey(),
+                bank,
+                parent,
+                shred_version,
+                footer,
+                None,
+            )
             .unwrap();
 
-        assert!(processor.on_final(&migration_status, 1).is_ok());
+        let good_alpentick = alpentick(1);
+        processor
+            .on_entry_batch(&migration_status, slot, &good_alpentick, true)
+            .unwrap();
+
+        processor.on_final(&migration_status, slot, 0).unwrap();
     }
 }
