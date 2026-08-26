@@ -146,7 +146,7 @@ impl MockBankCallback {
         };
 
         let mut account_data = AccountSharedData::default();
-        account_data.set_data(bincode::serialize(&clock).unwrap());
+        account_data.set_data_from_slice(&bincode::serialize(&clock).unwrap());
         self.account_shared_data
             .write()
             .unwrap()
@@ -156,7 +156,7 @@ impl MockBankCallback {
         let rent = Rent::default();
 
         let mut account_data = AccountSharedData::default();
-        account_data.set_data(bincode::serialize(&rent).unwrap());
+        account_data.set_data_from_slice(&bincode::serialize(&rent).unwrap());
         self.account_shared_data
             .write()
             .unwrap()
@@ -169,7 +169,7 @@ impl MockBankCallback {
         let recent_blockhashes = vec![BlockhashesEntry::default()];
 
         let mut account_data = AccountSharedData::default();
-        account_data.set_data(bincode::serialize(&recent_blockhashes).unwrap());
+        account_data.set_data_from_slice(&bincode::serialize(&recent_blockhashes).unwrap());
         #[allow(deprecated)]
         self.account_shared_data
             .write()
@@ -180,7 +180,7 @@ impl MockBankCallback {
         let epoch_schedule = EpochSchedule::without_warmup();
 
         let mut account_data = AccountSharedData::default();
-        account_data.set_data(bincode::serialize(&epoch_schedule).unwrap());
+        account_data.set_data_from_slice(&bincode::serialize(&epoch_schedule).unwrap());
         self.account_shared_data
             .write()
             .unwrap()
@@ -236,7 +236,7 @@ pub fn deploy_program_with_upgrade_authority(
     account_data.set_lamports(rent.minimum_balance(buffer.len()));
     account_data.set_owner(solana_sdk_ids::bpf_loader_upgradeable::id());
     account_data.set_executable(true);
-    account_data.set_data(buffer);
+    account_data.set_data_from_slice(&buffer);
     mock_bank
         .account_shared_data
         .write()
@@ -261,7 +261,7 @@ pub fn deploy_program_with_upgrade_authority(
     header.append(&mut buffer);
     account_data.set_lamports(rent.minimum_balance(header.len()));
     account_data.set_owner(solana_sdk_ids::bpf_loader_upgradeable::id());
-    account_data.set_data(header);
+    account_data.set_data_from_slice(&header);
     mock_bank
         .account_shared_data
         .write()
@@ -284,7 +284,6 @@ pub fn register_builtins(
         loader_v3_name,
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
-            loader_v3_name.len(),
             solana_bpf_loader_program::Entrypoint::register,
         ),
     );
@@ -297,7 +296,6 @@ pub fn register_builtins(
         loader_v1_name,
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
-            loader_v1_name.len(),
             solana_bpf_loader_program::Entrypoint::register,
         ),
     );
@@ -309,7 +307,6 @@ pub fn register_builtins(
         loader_v2_name,
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
-            loader_v2_name.len(),
             solana_bpf_loader_program::Entrypoint::register,
         ),
     );
@@ -323,7 +320,6 @@ pub fn register_builtins(
         system_program_name,
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
-            system_program_name.len(),
             solana_system_program::system_processor::Entrypoint::register,
         ),
     );
@@ -336,7 +332,6 @@ pub fn register_builtins(
         compute_budget_program_name,
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
-            compute_budget_program_name.len(),
             solana_compute_budget_program::Entrypoint::register,
         ),
     );
@@ -359,7 +354,6 @@ pub fn create_custom_loader() -> ProgramRuntimeEnvironment {
         enabled_sbpf_versions: SBPFVersion::V0..=SBPFVersion::V3,
         optimize_rodata: false,
         aligned_memory_mapping: false,
-        allow_memory_region_zero: true,
     };
 
     // These functions are system calls the compile contract calls during execution, so they

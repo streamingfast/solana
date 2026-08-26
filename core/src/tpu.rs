@@ -24,17 +24,14 @@ use {
         validator::{BlockProductionMethod, GeneratorConfig},
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
-    agave_votor::event::VotorEventSender,
+    agave_votor::{event::VotorEventSender, slot_clock::SharedAlpenglowSlotClock},
     agave_votor_messages::VerifiedVoterSlotsSender,
     agave_xdp::transmitter::XdpSender,
     crossbeam_channel::{Receiver, bounded, unbounded},
     solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_keypair::Keypair,
-    solana_ledger::{
-        blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
-        entry_notifier_service::EntryNotifierSender,
-    },
+    solana_ledger::{blockstore::Blockstore, entry_notifier_service::EntryNotifierSender},
     solana_poh::{
         poh_recorder::{PohRecorder, WorkingBankEntryOrMarker},
         transaction_recorder::TransactionRecorder,
@@ -47,6 +44,7 @@ use {
     solana_runtime::{
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
+        transaction_execution::TransactionStatusSender,
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_streamer::{
@@ -136,6 +134,7 @@ impl Tpu {
         shred_version: u16,
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
+        alpenglow_slot_clock: SharedAlpenglowSlotClock,
         verified_voter_slots_sender: VerifiedVoterSlotsSender,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         replay_vote_receiver: ReplayVoteReceiver,
@@ -323,6 +322,7 @@ impl Tpu {
             replay_vote_sender,
             log_messages_bytes_limit,
             bank_forks.clone(),
+            alpenglow_slot_clock,
             prioritization_fee_cache,
             filter_keys,
             scheduler_priority_floor,

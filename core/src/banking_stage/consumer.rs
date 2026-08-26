@@ -5,7 +5,7 @@ use {
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
-    solana_fee::FeeFeatures,
+    smallvec::SmallVec,
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
@@ -127,7 +127,8 @@ impl Consumer {
         txs: &[impl TransactionWithMeta],
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
-        let pre_results = vec![Ok(()); txs.len()];
+        let pre_results =
+            SmallVec::<[_; TARGET_NUM_TRANSACTIONS_PER_BATCH]>::from_elem(Ok(()), txs.len());
         let check_results = bank.check_transactions(
             txs,
             &pre_results,
@@ -153,7 +154,7 @@ impl Consumer {
             bank,
             txs,
             check_results,
-            ExecutionFlags {
+            &ExecutionFlags {
                 drop_on_failure: false,
                 all_or_nothing: false,
             },
@@ -172,7 +173,7 @@ impl Consumer {
         bank: &Bank,
         txs: &[impl TransactionWithMeta],
         max_ages: &[MaxAge],
-        flags: ExecutionFlags,
+        flags: &ExecutionFlags,
     ) -> ProcessTransactionBatchOutput {
         // Need to filter out transactions since they were sanitized earlier.
         // This means that the transaction may cross and epoch boundary (not allowed),
@@ -192,7 +193,7 @@ impl Consumer {
         bank: &Bank,
         txs: &[impl TransactionWithMeta],
         pre_results: impl Iterator<Item = Result<(), TransactionError>>,
-        flags: ExecutionFlags,
+        flags: &ExecutionFlags,
     ) -> ProcessTransactionBatchOutput {
         let (
             (transaction_qos_cost_results, cost_model_throttled_transactions_count),
@@ -257,7 +258,7 @@ impl Consumer {
         &self,
         bank: &Bank,
         batch: &TransactionBatch<impl TransactionWithMeta>,
-        flags: ExecutionFlags,
+        flags: &ExecutionFlags,
     ) -> ExecuteAndCommitTransactionsOutput {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
         let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
@@ -323,7 +324,6 @@ impl Consumer {
                 &mut error_counters,
                 TransactionProcessingConfig {
                     account_overrides: None,
-                    check_program_deployment_slot: bank.check_program_deployment_slot(),
                     log_messages_bytes_limit: self.log_messages_bytes_limit,
                     limit_to_load_programs: true,
                     recording_config: ExecutionRecordingConfig::new_single_setting(
@@ -332,6 +332,7 @@ impl Consumer {
                     drop_on_failure: flags.drop_on_failure,
                     all_or_nothing: flags.all_or_nothing,
                     strict_nonce_size_check: true,
+                    drop_noop_transactions: true,
                 }
             ));
         execute_and_commit_timings.load_execute_us = load_execute_us;
@@ -482,7 +483,7 @@ impl Consumer {
             transaction,
             bank.fee_structure().lamports_per_signature,
             transaction_configuration.priority_fee_lamports,
-            FeeFeatures::from(bank.feature_set.as_ref()),
+            bank.fee_features(),
         );
         let (mut fee_payer_account, _slot) = bank
             .rc
@@ -510,7 +511,7 @@ mod tests {
         crate::banking_stage::tests::{create_slow_genesis_config, sanitize_transactions},
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::bounded,
-        solana_account::{AccountSharedData, state_traits::StateMut},
+        solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
         solana_address_lookup_table_interface::{
             self as address_lookup_table,
             state::{AddressLookupTable, LookupTableMeta},
@@ -521,12 +522,9 @@ mod tests {
         solana_instruction::error::InstructionError,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
-        solana_ledger::{
-            blockstore_processor::{TransactionStatusMessage, TransactionStatusSender},
-            genesis_utils::{
-                GenesisConfigInfo, bootstrap_validator_stake_lamports,
-                create_genesis_config_with_leader,
-            },
+        solana_ledger::genesis_utils::{
+            GenesisConfigInfo, bootstrap_validator_stake_lamports,
+            create_genesis_config_with_leader,
         },
         solana_message::{
             MessageHeader, VersionedMessage,
@@ -536,7 +534,10 @@ mod tests {
         solana_nonce_account::verify_nonce_account,
         solana_poh::record_channels::{RecordReceiver, record_channels},
         solana_pubkey::Pubkey,
-        solana_runtime::bank_forks::BankForks,
+        solana_runtime::{
+            bank_forks::BankForks,
+            transaction_execution::{TransactionStatusMessage, TransactionStatusSender},
+        },
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_interface::program as system_program,
@@ -645,7 +646,7 @@ mod tests {
         let data = address_lookup_table.serialize_for_tests().unwrap();
         let mut account =
             AccountSharedData::new(1, data.len(), &address_lookup_table::program::id());
-        account.set_data(data);
+        account.set_data_from_slice(&data);
         bank.store_account(&account_address, &account);
 
         account
@@ -693,9 +694,7 @@ mod tests {
 
         let record = record_receiver.drain().next().unwrap();
         assert_eq!(record.bank_id, bank.bank_id());
-        assert_eq!(record.transaction_batches.len(), 1);
-        let transaction_batch = record.transaction_batches[0].clone();
-        assert_eq!(transaction_batch.len(), 1);
+        assert_eq!(record.transactions.len(), 1);
 
         let transactions = sanitize_transactions(vec![system_transaction::transfer(
             &mint_keypair,
@@ -970,15 +969,63 @@ mod tests {
                 };
 
             let mut cost = CostModel::calculate_cost(&transactions[0], &bank.feature_set);
-            let usage_cost = cost.usage_cost_details_mut();
-            usage_cost.programs_execution_cost = actual_programs_execution_cost;
-            usage_cost.loaded_accounts_data_size_cost = actual_loaded_accounts_data_size_cost;
+            cost.programs_execution_cost = actual_programs_execution_cost;
+            cost.loaded_accounts_data_size_cost = actual_loaded_accounts_data_size_cost;
 
             block_cost + cost.sum()
         };
 
         assert_eq!(get_block_cost(), expected_block_cost);
         assert_eq!(get_tx_count(), 2);
+    }
+
+    #[test]
+    fn test_bank_process_and_record_transactions_cost_tracker_noop() {
+        let TestFrame {
+            mint_keypair: _mint_keypair,
+            bank,
+            bank_forks: _bank_forks,
+            record_receiver: _record_receiver,
+            consumer,
+        } = setup_test(None);
+
+        let get_block_cost = || bank.read_cost_tracker().unwrap().block_cost();
+        let get_tx_count = || bank.read_cost_tracker().unwrap().transaction_count();
+        assert_eq!(get_block_cost(), 0);
+        assert_eq!(get_tx_count(), 0);
+
+        // TEST: a blockhash transaction with an invalid fee-payer is committed as a no-op
+        // on replay (with `relax_fee_payer_constraint`), but during block production
+        // `drop_noop_transactions` turns it into an error. It must not be committed and
+        // must leave the cost tracker untouched.
+        let transactions = sanitize_transactions(vec![system_transaction::transfer(
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        )]);
+
+        let process_transactions_batch_output =
+            consumer.process_and_record_transactions(&bank, &transactions);
+
+        let ExecuteAndCommitTransactionsOutput {
+            transaction_counts,
+            commit_transactions_result,
+            ..
+        } = process_transactions_batch_output.execute_and_commit_transactions_output;
+
+        // the no-op transaction is not committed
+        assert_eq!(transaction_counts.processed_with_successful_result_count, 0);
+        assert_eq!(
+            commit_transactions_result.ok(),
+            Some(vec![CommitTransactionDetails::NotCommitted(
+                TransactionError::AccountNotFound
+            )])
+        );
+
+        // and the cost tracker is unchanged after processing it
+        assert_eq!(get_block_cost(), 0);
+        assert_eq!(get_tx_count(), 0);
     }
 
     #[test_case(false; "locked")]
@@ -1378,7 +1425,6 @@ mod tests {
             Some(false),
             bank.as_ref(),
             &ReservedAccountKeys::empty_key_set(),
-            bank.feature_set.snapshot().limit_instruction_accounts,
         )
         .unwrap();
         let batch_transactions_inner = [&sanitized_tx]

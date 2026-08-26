@@ -8,6 +8,7 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -34,13 +35,17 @@ frozen-abi = [
     "solana-vote-program/frozen-abi",
 ]
 agave-unstable-api = []
-dev-context-only-utils = ["solana-bloom/dev-context-only-utils"]
+dev-context-only-utils = [
+    "agave-votor-messages/dev-context-only-utils",
+    "solana-bloom/dev-context-only-utils",
+]
 conformance = ["dep:prost", "dep:protosol", "dev-context-only-utils"]
 dummy-for-ci-check = ["conformance"]
 
 [dependencies]
 agave-logger = { workspace = true }
 agave-random = { workspace = true }
+agave-votor-messages = { workspace = true }
 arc-swap = { workspace = true }
 assert_matches = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
@@ -53,7 +58,7 @@ itertools = { workspace = true }
 lazy-lru = { workspace = true }
 log = { workspace = true }
 num-traits = { workspace = true }
-prost = { version = "0.11", optional = true }
+prost = { workspace = true, optional = true }
 protosol = { workspace = true, optional = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
@@ -62,7 +67,6 @@ serde = { workspace = true }
 serde-big-array = { workspace = true }
 serde_bytes = { workspace = true }
 solana-bloom = { workspace = true }
-solana-client = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = { workspace = true }

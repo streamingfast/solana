@@ -25,7 +25,9 @@ use {
     dashmap::DashMap,
     log::*,
     serde::Serialize,
-    solana_account::{AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMut},
+    solana_account::{
+        AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
+    },
     solana_clap_utils::{
         input_parsers::{cluster_type_of, pubkey_of, pubkeys_of},
         input_validators::{
@@ -51,9 +53,7 @@ use {
     solana_ledger::{
         blockstore::{Blockstore, PurgeType, banking_trace_path, create_new_ledger},
         blockstore_options::{AccessType, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, LedgerColumnOptions},
-        blockstore_processor::{
-            ProcessSlotCallback, TransactionStatusMessage, TransactionStatusSender,
-        },
+        blockstore_processor::ProcessSlotCallback,
         shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
     },
     solana_measure::{measure::Measure, measure_time},
@@ -72,6 +72,7 @@ use {
         snapshot_bank_utils,
         snapshot_minimizer::SnapshotMinimizer,
         stake_utils,
+        transaction_execution::{TransactionStatusMessage, TransactionStatusSender},
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_shred_version::compute_shred_version,
@@ -469,7 +470,6 @@ fn compute_slot_cost(
                     None,
                     SimpleAddressLoader::Disabled,
                     &reserved_account_keys.active,
-                    feature_set.snapshot().limit_instruction_accounts,
                 )
                 .map_err(|err| {
                     warn!("Failed to compute cost of transaction: {err:?}");
@@ -2440,15 +2440,21 @@ fn main() {
                                 arg_matches,
                                 AccessType::PrimaryForMaintenance,
                             ));
+                            let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
+                            let mut write_batch = backup_blockstore.get_write_batch().unwrap();
                             let _ = backup_blockstore
-                                .insert_cow_shreds(shreds.into_iter().map(Cow::Owned), None, true)
+                                .insert_cow_shreds(
+                                    shreds.into_iter().map(Cow::Owned),
+                                    true,
+                                    &mut pinnable_slice,
+                                    &mut write_batch,
+                                )
                                 .expect("Blockstore operation must succeed");
 
                             // Purge modifies state so use rw_blockstore
                             info!("Purging slot {slot} from Blockstore");
-                            rw_blockstore.purge_from_next_slots(slot, slot);
                             rw_blockstore
-                                .purge_slots(slot, slot, PurgeType::Exact)
+                                .purge_slots_cleanup_chaining(slot, slot, PurgeType::Exact)
                                 .expect("Blockstore operation must succeed");
                         }
 
@@ -2482,8 +2488,10 @@ fn main() {
                             .filter(Shred::is_data)
                             .map(Cow::Owned)
                             .collect();
+                        let mut pinnable_slice = rw_blockstore.new_pinnable_slice();
+                        let mut write_batch = rw_blockstore.get_write_batch().unwrap();
                         rw_blockstore
-                            .insert_cow_shreds(shreds, None, true)
+                            .insert_cow_shreds(shreds, true, &mut pinnable_slice, &mut write_batch)
                             .expect("Blockstore operation must succeed");
                     }
 

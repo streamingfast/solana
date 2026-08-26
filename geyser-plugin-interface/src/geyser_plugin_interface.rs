@@ -3,7 +3,8 @@
 //! In addition, the dynamic library must export a "C" function _create_plugin which
 //! creates the implementation of the plugin.
 use {
-    solana_clock::{Slot, UnixTimestamp},
+    solana_clock::{BankId, Slot, UnixTimestamp},
+    solana_entry::block_component::VersionedBlockFooter,
     solana_hash::Hash,
     solana_message::v0::LoadedAddresses,
     solana_signature::Signature,
@@ -296,6 +297,68 @@ pub enum ReplicaEntryInfoVersions<'a> {
     V0_0_2(&'a ReplicaEntryInfoV2<'a>),
 }
 
+/// Information about a bank cleared by an Alpenglow UpdateParent marker.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaEntryUpdateParentInfo<'a> {
+    /// The slot of the cleared bank.
+    pub slot: Slot,
+
+    /// The bank cleared after processing the UpdateParent marker.
+    pub cleared_bank_id: BankId,
+
+    /// The parent slot selected by the UpdateParent marker.
+    pub parent_slot: Slot,
+
+    /// The parent block ID selected by the UpdateParent marker.
+    pub parent_block_id: &'a Hash,
+}
+
+/// A wrapper to future-proof ReplicaEntryUpdateParentInfo handling.
+#[repr(u32)]
+pub enum ReplicaEntryUpdateParentInfoVersions<'a> {
+    V0_0_1(&'a ReplicaEntryUpdateParentInfo<'a>),
+}
+
+/// Information about an Alpenglow UpdateParent marker in the deshred stream.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaDeshredUpdateParentInfo<'a> {
+    /// The slot containing the UpdateParent marker.
+    pub slot: Slot,
+
+    /// The FEC set index of the UpdateParent marker.
+    pub update_parent_fec_set_index: u32,
+
+    /// The parent slot selected by the UpdateParent marker.
+    pub parent_slot: Slot,
+
+    /// The parent block ID selected by the UpdateParent marker.
+    pub parent_block_id: &'a Hash,
+}
+
+/// A wrapper to future-proof ReplicaDeshredUpdateParentInfo handling.
+#[repr(u32)]
+pub enum ReplicaDeshredUpdateParentInfoVersions<'a> {
+    V0_0_1(&'a ReplicaDeshredUpdateParentInfo<'a>),
+}
+
+/// Information about an Alpenglow block footer.
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct ReplicaBlockFooterInfo<'a> {
+    /// The slot containing the block footer.
+    pub slot: Slot,
+    /// The versioned block footer.
+    pub block_footer: &'a VersionedBlockFooter,
+}
+
+/// A wrapper to future-proof ReplicaBlockFooterInfo handling.
+#[repr(u32)]
+pub enum ReplicaBlockFooterInfoVersions<'a> {
+    V0_0_1(&'a ReplicaBlockFooterInfo<'a>),
+}
+
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct ReplicaBlockInfo<'a> {
@@ -584,6 +647,10 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// When `is_startup` is true, it indicates the account is loaded from
     /// snapshots when the validator starts up. When `is_startup` is false,
     /// the account is updated during transaction processing.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use update_account_from_snapshot or update_account_for_bank"
+    )]
     #[allow(unused_variables)]
     fn update_account(
         &self,
@@ -594,12 +661,42 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
+    /// Called when an account is loaded from snapshots when the validator starts up.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn update_account_from_snapshot(
+        &self,
+        account: ReplicaAccountInfoVersions,
+        slot: Slot,
+    ) -> Result<()> {
+        self.update_account(account, slot, true)
+    }
+
+    /// Called when an account is updated at a slot during transaction processing.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with the
+    /// account update.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn update_account_for_bank(
+        &self,
+        account: ReplicaAccountInfoVersions,
+        slot: Slot,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.update_account(account, slot, false)
+    }
+
     /// Called when all accounts are notified of during startup.
     fn notify_end_of_startup(&self) -> Result<()> {
         Ok(())
     }
 
-    /// Called when a slot status is updated
+    /// Called when a slot status is updated.
+    ///
+    /// The validator calls this directly for statuses that are not associated
+    /// with a concrete bank instance: `FirstShredReceived`, `Completed`, and
+    /// `Dead`.
     #[allow(unused_variables)]
     fn update_slot_status(
         &self,
@@ -610,7 +707,27 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
+    /// Called when a bank-scoped slot status is updated.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with this
+    /// status update. This method is called for statuses tied to a particular
+    /// `Bank`: `Confirmed`, `Processed`, `Rooted`, and `CreatedBank`.
+    #[allow(unused_variables)]
+    fn update_bank_status(
+        &self,
+        slot: Slot,
+        parent: Option<u64>,
+        status: &SlotStatus,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.update_slot_status(slot, parent, status)
+    }
+
     /// Called when a transaction is processed in a slot.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use notify_transaction_for_bank"
+    )]
     #[allow(unused_variables)]
     fn notify_transaction(
         &self,
@@ -620,16 +737,80 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
+    /// Called when a transaction is processed in a slot.
+    ///
+    /// `bank_id` identifies the concrete bank instance that processed the
+    /// transaction.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn notify_transaction_for_bank(
+        &self,
+        transaction: ReplicaTransactionInfoVersions,
+        slot: Slot,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.notify_transaction(transaction, slot)
+    }
+
     /// Called when an entry is executed.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use notify_entry_for_bank"
+    )]
     #[allow(unused_variables)]
     fn notify_entry(&self, entry: ReplicaEntryInfoVersions) -> Result<()> {
         Ok(())
     }
 
+    /// Called when an entry is executed.
+    ///
+    /// `bank_id` identifies the concrete bank instance that executed the entry.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn notify_entry_for_bank(
+        &self,
+        entry: ReplicaEntryInfoVersions,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.notify_entry(entry)
+    }
+
+    /// Called when an Alpenglow block footer is processed.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with the
+    /// footer. This callback is ordered with entry notifications and is only
+    /// called when `block_footer_notifications_enabled()` returns true.
+    #[allow(unused_variables)]
+    fn notify_block_footer(
+        &self,
+        block_footer: ReplicaBlockFooterInfoVersions,
+        bank_id: BankId,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     /// Called when block's metadata is updated.
+    #[deprecated(
+        since = "4.3.0",
+        note = "Callers should instead use notify_block_metadata_for_bank"
+    )]
     #[allow(unused_variables)]
     fn notify_block_metadata(&self, blockinfo: ReplicaBlockInfoVersions) -> Result<()> {
         Ok(())
+    }
+
+    /// Called when block's metadata is updated.
+    ///
+    /// `bank_id` identifies the concrete bank instance associated with the block
+    /// metadata.
+    #[allow(deprecated)]
+    #[allow(unused_variables)]
+    fn notify_block_metadata_for_bank(
+        &self,
+        blockinfo: ReplicaBlockInfoVersions,
+        bank_id: BankId,
+    ) -> Result<()> {
+        self.notify_block_metadata(blockinfo)
     }
 
     /// Called when a validator's gossip contact info is learned or updated.
@@ -706,6 +887,13 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         false
     }
 
+    /// Check if the plugin is interested in Alpenglow block footer data.
+    /// Default is false -- if the plugin is interested in
+    /// Alpenglow block footer data, return true.
+    fn block_footer_notifications_enabled(&self) -> bool {
+        false
+    }
+
     /// Check if the plugin is interested in validator contact info updates
     /// sourced from gossip. Default is false — if the plugin wants contact
     /// info notifications, return true. When no loaded plugin returns true,
@@ -742,5 +930,27 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// that only need the raw transaction should leave this disabled.
     fn deshred_transaction_alt_resolution_enabled(&self) -> bool {
         false
+    }
+
+    /// Called when an Alpenglow UpdateParent marker clears a bank.
+    /// Entry notifications may race with this callback; plugins should use the
+    /// cleared bank ID to reconcile them. The replacement bank ID is reported
+    /// separately through `SlotStatus::CreatedBank`.
+    #[allow(unused_variables)]
+    fn notify_entry_update_parent(
+        &self,
+        update_parent: ReplicaEntryUpdateParentInfoVersions,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Called before deshred transaction notifications from the completed data
+    /// set beginning at the UpdateParent FEC-set boundary.
+    #[allow(unused_variables)]
+    fn notify_deshred_update_parent(
+        &self,
+        update_parent: ReplicaDeshredUpdateParentInfoVersions,
+    ) -> Result<()> {
+        Ok(())
     }
 }

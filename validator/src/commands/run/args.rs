@@ -604,6 +604,17 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
+        Arg::with_name("wait_to_vote_slot")
+            .long("wait-to-vote-slot")
+            .value_name("SLOT")
+            .takes_value(true)
+            .validator(is_slot)
+            .help(
+                "Do not vote until reaching this slot. This can be used to avoid submitting \
+                 slashable votes after restoring a stale/missing Tower / VoteHistory",
+            ),
+    )
+    .arg(
         Arg::with_name("no_wait_for_vote_to_start_leader")
             .hidden(hidden_unless_forced())
             .long("no-wait-for-vote-to-start-leader")
@@ -785,6 +796,30 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "The number of QUIC endpoints used for TPU and TPU-Forward. It can be increased \
                  to increase network ingest throughput, at the expense of higher CPU and general \
                  validator load.",
+            ),
+    )
+    .arg(
+        Arg::with_name("num_votor_endpoints")
+            .long("num-votor-endpoints")
+            .takes_value(true)
+            .default_value(&default_args.num_votor_endpoints)
+            .validator(is_parsable::<usize>)
+            .hidden(hidden_unless_forced())
+            .help("The number of QUIC endpoints used for the votor transport."),
+    )
+    .arg(
+        Arg::with_name("votor_peer_overrides")
+            .long("votor-peer-overrides")
+            .validator(is_pubkey)
+            .value_name("VALIDATOR IDENTITY")
+            .multiple(true)
+            .takes_value(true)
+            .hidden(hidden_unless_forced())
+            .help(
+                "A list of additional validator identities for this node to send votor consensus \
+                 messages to while staked. By default we only send consensus messages to staked \
+                 nodes, however an operator can use this flag to additionally send messages to an \
+                 unstaked RPC node for faster state. These identities are resolved from gossip.",
             ),
     )
     .arg(
@@ -1052,7 +1087,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                  index may use up to 50 GB of memory. The \"unlimited\" option keeps the entire \
                  accounts index in memory. All index entries that are not in memory are kept in \
                  the disk-backed index. The disk-backed index has lower performance; prefer \
-                 higher explicit limits here.",
+                 higher explicit limits here. \"minimal\" is deprecated and behaves as \"25GB\".",
             ),
     )
     .arg(
@@ -1124,24 +1159,12 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("BYTES")
             .validator(is_parsable::<DirByteLimit>)
             .takes_value(true)
-            // Firstly, zero limit value causes tracer to be disabled
-            // altogether, intuitively. On the other hand, this non-zero
-            // default doesn't enable banking tracer unless this flag is
-            // explicitly given, similar to --limit-ledger-size.
-            // see configure_banking_trace_dir_byte_limit() for this.
             .default_value(&default_args.banking_trace_dir_byte_limit)
             .help(
-                "Enables the banking trace explicitly, which is enabled by default and writes \
-                 trace files for simulate-leader-blocks, retaining up to the default or specified \
-                 total bytes in the ledger. This flag can be used to override its byte limit.",
+                "Enables the banking trace that writes trace files for simulate-leader-blocks, \
+                 retaining up to the specified total bytes in the ledger. Banking trace is \
+                 disabled by default.",
             ),
-    )
-    .arg(
-        Arg::with_name("disable_banking_trace")
-            .long("disable-banking-trace")
-            .conflicts_with("banking_trace_dir_byte_limit")
-            .takes_value(false)
-            .help("Disables the banking trace"),
     )
     .arg(
         Arg::with_name("no_delay_leader_block_for_pending_fork")

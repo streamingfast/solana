@@ -4,6 +4,56 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## v4.3.0-beta.2-fh3.0
+
+### Changed
+
+- Merged upstream `v4.3.0-beta.2` (previously `v4.2.1`), moving the fork from the `v4.2`
+  release line to `v4.3`. `v4.3.0-beta.2` is the most recent upstream tag with published
+  binaries that is actually running on devnet (`v4.3.0-beta.1` has no artifacts and its
+  crates were yanked after a `cargo audit` failure on RUSTSEC-2026-0258).
+
+  Released as image `ghcr.io/streamingfast/solana:v4.3.0-beta.2-fh3.0`.
+
+  Because `v4.2` and `v4.3` diverged upstream and `v4.2.1` fixes reached `v4.3` as
+  cherry-picks rather than merges, the merge base is far behind both tags. The merge was
+  therefore resolved by taking the upstream `v4.3.0-beta.2` tree wholesale and
+  re-applying the fork delta on top, so the tree differs from upstream only by the four
+  fork-owned files (`Dockerfile`, `.github/workflows/docker-publish.yml`,
+  `CHANGELOG.sf.md`, and the novote guard in
+  `geyser-plugin-manager/src/accounts_update_notifier.rs`).
+
+- The novote guard follows upstream's split of `notify_plugins_of_account_update` into
+  `notify_plugins_of_account_update_for_bank` and
+  `notify_plugins_of_account_update_from_snapshot`. Behaviour is unchanged: vote-owned
+  accounts are never forwarded to plugins, while deletions still are.
+
+### Geyser plugin interface
+
+`v4.3` is an Alpenglow release and changes the plugin interface substantially, though
+backwards-compatibly — every new callback has a default implementation delegating to the
+old one:
+
+- `update_account`, `notify_transaction`, `notify_entry` and `notify_block_metadata` are
+  deprecated since `4.3.0` in favour of `update_account_from_snapshot`,
+  `update_account_for_bank`, `notify_transaction_for_bank`, `notify_entry_for_bank` and
+  `notify_block_metadata_for_bank`, which carry a `BankId` identifying the concrete bank
+  instance.
+- `update_slot_status` is now only called for statuses with no bank (`FirstShredReceived`,
+  `Completed`, `Dead`); bank-scoped statuses (`Confirmed`, `Processed`, `Rooted`,
+  `CreatedBank`) go to the new `update_bank_status`.
+- New Alpenglow callbacks: `notify_block_footer` (gated on
+  `block_footer_notifications_enabled`), `notify_entry_update_parent` and
+  `notify_deshred_update_parent`, with the matching
+  `ReplicaBlockFooterInfo`, `ReplicaEntryUpdateParentInfo` and
+  `ReplicaDeshredUpdateParentInfo` types.
+
+Other consumer-facing crates that changed: `transaction-status` (large rewrite of
+confidential-transfer, confidential-mint-burn and permissioned-burn token extension
+parsing), `account-decoder` (`parse_sysvar`), and `transaction-context`.
+
+Rust toolchain moves from `1.96.1` to `1.97.1`.
+
 ## v4.2.0-fh3.0
 
 ### Changed
