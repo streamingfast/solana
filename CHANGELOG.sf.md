@@ -4,6 +4,40 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## v4.3.0-rc.0-fh3.0
+
+### Changed
+
+- Merged upstream `v4.3.0-rc.0` (previously `v4.3.0-beta.2`), which brings in the 16
+  upstream commits released as `v4.3.0-beta.3` and `v4.3.0-rc.0`. The merge was clean: no
+  conflicts, and the fork delta is unchanged. The tree still differs from upstream only by
+  `Dockerfile`, `.github/workflows/docker-publish.yml`, `CHANGELOG.sf.md` and the novote
+  guard in `geyser-plugin-manager/src/accounts_update_notifier.rs`.
+
+  Released as image `ghcr.io/streamingfast/solana:v4.3.0-rc.0-fh3.0`.
+
+- The Geyser plugin interface is byte-for-byte identical between `v4.3.0-beta.2` and
+  `v4.3.0-rc.0`, as are `transaction-status`, `transaction-context` and the `rpc-client`
+  crates. Consumers only need to re-pin versions.
+
+- Rust toolchain stays at `1.97.1`.
+
+### Upstream changes worth knowing about
+
+- `storage-proto` reconstructs V1 messages instead of downgrading them to V0 (#14874).
+  `From<generated::Message> for VersionedMessage` branched on `versioned`, which is true
+  for V0 and V1 alike, so every stored V1 transaction came back as a V0 with its
+  compute-budget request dropped and its version misreported. This is the Bigtable /
+  storage-proto decode path, not the Geyser path: the Firehose Geyser plugin builds its
+  protobuf straight from `VersionedMessage` and already reads the V1 config.
+- RPC rejects `base58` encoding for transactions of version 1 and above (#15039).
+- `get_program_deployment_slot()` gained the missing owner check on `programdata`
+  accounts (#14784).
+- Two program-cache changes were reverted: the slot-based extract criteria (#14484) and
+  the `ProgramCacheMatchCriteria` cleanup (#14509).
+- Snapshot archives always include tombstones (#14867).
+- `TpuClientNext` dropped datagram support and uses streams only (#14810).
+
 ## v4.3.0-beta.2-fh3.0
 
 ### Changed

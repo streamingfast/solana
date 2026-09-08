@@ -42,7 +42,8 @@ use {
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             EpochBoundaryPreparation, ForkGraph, Percent, ProgramCache, ProgramCacheForTxBatch,
-            ProgramRuntimeEnvironment, ProgramRuntimeEnvironments, ProgramToLoad,
+            ProgramCacheMatchCriteria, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
+            ProgramToLoad,
         },
         program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner},
         program_metrics::ProgramStatistics,
@@ -117,6 +118,9 @@ pub struct TransactionProcessingConfig<'a> {
     /// Encapsulates overridden accounts, typically used for transaction
     /// simulation.
     pub account_overrides: Option<&'a AccountOverrides>,
+    /// Whether or not to check a program's deployment slot when replenishing
+    /// a program cache instance.
+    pub check_program_deployment_slot: bool,
     /// The maximum number of bytes that log messages can consume.
     pub log_messages_bytes_limit: Option<usize>,
     /// Whether to limit the number of programs loaded for the transaction
@@ -326,7 +330,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .map(|program_id| ProgramToLoad {
                 program_id,
                 loader: ProgramCacheEntryOwner::NativeLoader,
-                deployed_on_or_after_slot: 0,
+                match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                 last_modification_slot: 0,
             })
             .collect();
@@ -531,6 +535,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             &account_loader,
                             &program_cache_for_tx_batch,
                             tx.account_keys().iter(),
+                            config.check_program_deployment_slot,
                         ));
                     execute_timings.saturating_add_in_place(
                         ExecuteTimingType::FilterExecutableUs,
@@ -970,6 +975,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     pub fn prepare_one_program_for_upcoming_feature_set<CB: TransactionProcessingCallback>(
         &self,
         account_loader: &CB,
+        check_program_deployment_slot: bool,
         upcoming_environment: &ProgramRuntimeEnvironment,
         key: &Pubkey,
         stats_of_enqueued_program: &ProgramStatistics,
@@ -979,6 +985,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             account_loader,
             &program_cache_for_tx_batch,
             std::iter::once(key),
+            check_program_deployment_slot,
         );
         if missing_programs.is_empty() {
             // Program account was closed
@@ -1883,7 +1890,7 @@ mod tests {
             vec![ProgramToLoad {
                 program_id: &key,
                 loader: ProgramCacheEntryOwner::LoaderV3,
-                deployed_on_or_after_slot: 0,
+                match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                 last_modification_slot: 0,
             }],
             &program_runtime_environment_for_execution,
@@ -1922,7 +1929,7 @@ mod tests {
                 vec![ProgramToLoad {
                     program_id: &key,
                     loader: ProgramCacheEntryOwner::LoaderV2,
-                    deployed_on_or_after_slot: 0,
+                    match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                     last_modification_slot: 0,
                 }],
                 &program_runtime_environment_for_execution,
@@ -2169,7 +2176,7 @@ mod tests {
                 &mut vec![ProgramToLoad {
                     program_id: &key,
                     loader: ProgramCacheEntryOwner::NativeLoader,
-                    deployed_on_or_after_slot: 0,
+                    match_criteria: ProgramCacheMatchCriteria::NoCriteria,
                     last_modification_slot: 0,
                 }],
                 &mut loaded_programs_for_tx_batch,
