@@ -4,6 +4,37 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## v4.3.0-fh3.0
+
+### Changed
+
+- Merged upstream `v4.3.0` (previously `v4.3.0-rc.1`), which brings in 5 upstream commits.
+  The merge was clean: no conflicts, and the fork delta is unchanged. The tree still differs
+  from upstream only by `Dockerfile`, `.github/workflows/docker-publish.yml`,
+  `CHANGELOG.sf.md` and the novote guard in
+  `geyser-plugin-manager/src/accounts_update_notifier.rs`.
+
+  Released as image `ghcr.io/streamingfast/solana:v4.3.0-fh3.0`.
+
+- The Geyser plugin interface is byte-for-byte identical between `v4.3.0-rc.1` and
+  `v4.3.0`, as are `transaction-status`, `transaction-context` and the `rpc-client` crates.
+  Consumers only need to re-pin versions.
+
+- Rust toolchain stays at `1.97.1`.
+
+- Validated with the `solana-battlefield` test suite against a `solana-test-validator`
+  built from this branch, running the Firehose Geyser plugin at Agave `4.3.0`.
+
+### Upstream changes worth knowing about
+
+- The CLI gained `vote-update-commission-bps` and `vote-update-commission-collector`, which
+  set a vote account's commission in basis points and its commission collector, per
+  commission kind (`inflation-rewards` or `block-revenue`) (#15074, #15075).
+- `votor-transport` reports a peer's datagram misconfiguration as `peer_config_error` in its
+  send error stats (#15070).
+- `cargo audit` ignores RUSTSEC-2026-0285 (rustls accepting TLS 1.3 handshake messages at the
+  wrong encryption level) (#15302).
+
 ## v4.3.0-rc.0-fh3.0
 
 ### Changed
