@@ -99,7 +99,10 @@ use {
     },
     solana_measure::measure::Measure,
     solana_metrics::{datapoint_info, metrics::metrics_config_sanity_check},
-    solana_net_utils::{PinnedXdpSender, SocketAddrSpace},
+    solana_net_utils::{
+        PinnedXdpSender, SocketAddrSpace,
+        quic_socket::{into_quic_socket, into_quic_sockets},
+    },
     solana_poh::{
         poh_controller::PohController,
         poh_recorder::PohRecorder,
@@ -143,6 +146,7 @@ use {
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
     solana_streamer::{
+        evicting_sender::EvictingSender,
         nonblocking::{simple_qos::SimpleQosConfig, swqos::SwQosConfig},
         quic::{QuicStreamerConfig, SimpleQosQuicStreamerConfig, SwQosQuicStreamerConfig},
         streamer::StakedNodes,
@@ -380,7 +384,6 @@ pub struct ValidatorConfig {
     pub process_ledger_before_services: bool,
     pub accounts_db_config: AccountsDbConfig,
     pub warp_slot: Option<Slot>,
-    pub accounts_db_skip_shrink: bool,
     pub accounts_db_force_initial_clean: bool,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
     pub validator_exit: Arc<RwLock<Exit>>,
@@ -462,7 +465,6 @@ impl ValidatorConfig {
             poh_hashes_per_batch: poh_service::DEFAULT_HASHES_PER_BATCH,
             process_ledger_before_services: false,
             warp_slot: None,
-            accounts_db_skip_shrink: false,
             accounts_db_force_initial_clean: false,
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
             validator_exit: Arc::new(RwLock::new(Exit::default())),
@@ -560,6 +562,7 @@ pub struct XdpModules {
     pub turbine: Option<Box<[usize]>>,
     pub repair: Option<Box<[usize]>>,
     pub gossip: Option<Box<[usize]>>,
+    pub votor: Option<Box<[usize]>>,
 }
 
 impl XdpModules {
@@ -569,6 +572,7 @@ impl XdpModules {
             ("turbine", &self.turbine),
             ("repair", &self.repair),
             ("gossip", &self.gossip),
+            ("votor", &self.votor),
         ] {
             let Some(positions) = positions else {
                 continue;
@@ -664,7 +668,12 @@ impl ValidatorTpuConfig {
                 max_connections_per_ipaddr_per_min: 32,
                 ..Default::default()
             },
-            qos_config: SimpleQosConfig::default(),
+            qos_config: SimpleQosConfig {
+                // Way more than the size of our clusters. If some super low staked validators can not
+                // find room, it does not present a liveness issue.
+                max_staked_connections: 4096,
+                ..Default::default()
+            },
         };
 
         // Two threads is reasonable for tests; benches are free to set more
@@ -1449,9 +1458,10 @@ impl Validator {
         let (
             xdp_transmitter,
             turbine_xdp_sender,
-            quic_xdp_sender,
+            tpu_xdp_sender,
             repair_xdp_sender,
             gossip_xdp_sender,
+            votor_xdp_sender,
         ) = if let Some(XdpTransmitSetup {
             transmitter_builder,
             src_ip,
@@ -1512,9 +1522,17 @@ impl Validator {
                         SocketAddrV4::new(src_ip, gossip_src_port),
                     )
                 }),
+                modules.votor.map(|positions| {
+                    (
+                        sender
+                            .subset(&positions)
+                            .expect("XDP sender positions were validated"),
+                        src_ip,
+                    )
+                }),
             )
         } else {
-            (None, None, None, None, None)
+            (None, None, None, None, None, None)
         };
 
         let gossip_service = GossipService::new(
@@ -1624,7 +1642,7 @@ impl Validator {
         let vote_tracker = Arc::<VoteTracker>::default();
 
         let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
-        let (verified_vote_sender, verified_vote_receiver) = unbounded();
+        let (verified_vote_sender, verified_vote_receiver) = EvictingSender::new_bounded(4096);
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
         let (duplicate_confirmed_slot_sender, duplicate_confirmed_slots_receiver) = unbounded();
 
@@ -1657,6 +1675,11 @@ impl Validator {
         });
         // This channel backing up indicates a serious problem in votor
         let (votor_event_sender, votor_event_receiver) = bounded(1000);
+
+        let votor_server_sockets =
+            into_quic_sockets(node.sockets.votor_server, votor_xdp_sender.as_ref()).collect();
+        let votor_client_socket =
+            into_quic_socket(node.sockets.quic_votor_client, votor_xdp_sender.as_ref());
 
         let tvu = Tvu::new(
             vote_account,
@@ -1731,8 +1754,8 @@ impl Validator {
                 cancel: cancel.child_token(),
                 validator_exit: config.validator_exit.clone(),
                 key_notifiers: key_notifiers.clone(),
-                votor_server_sockets: node.sockets.votor_server,
-                votor_client_socket: node.sockets.quic_votor_client,
+                votor_server_sockets,
+                votor_client_socket,
                 votor_peer_overrides: config.votor_peer_overrides.clone(),
                 highest_finalized,
             },
@@ -1775,7 +1798,7 @@ impl Validator {
             &config.broadcast_stage_type,
             leader_schedule_cache.clone(),
             turbine_xdp_sender,
-            quic_xdp_sender,
+            tpu_xdp_sender,
             exit.clone(),
             node.info.shred_version(),
             vote_tracker,
@@ -2406,7 +2429,6 @@ fn load_blockstore(
         new_hard_forks: config.new_hard_forks.clone(),
         debug_keys: config.debug_keys.clone(),
         accounts_db_config: config.accounts_db_config.clone(),
-        accounts_db_skip_shrink: config.accounts_db_skip_shrink,
         accounts_db_force_initial_clean: config.accounts_db_force_initial_clean,
         runtime_config: config.runtime_config.clone(),
         use_snapshot_archives_at_startup: config.use_snapshot_archives_at_startup,
@@ -2891,7 +2913,7 @@ fn cleanup_blockstore_incorrect_shred_versions(
             let mut num_slots_copied = 0;
             let slot_meta_iterator = blockstore.slot_meta_iterator(start_slot)?;
             let mut pinnable_slice = backup_blockstore.new_pinnable_slice();
-            let mut write_batch = backup_blockstore.get_write_batch().unwrap();
+            let mut write_batch = backup_blockstore.get_write_batch();
             for (slot, _meta) in slot_meta_iterator {
                 let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
@@ -3215,6 +3237,7 @@ mod tests {
             turbine: None,
             repair: Some([1, 1].into()),
             gossip: None,
+            votor: None,
         };
         let error = modules.validate_sender_positions(2).unwrap_err();
         assert!(
@@ -3285,10 +3308,7 @@ mod tests {
         ));
 
         let cert = GenesisCert {
-            block: Block {
-                slot: 40,
-                block_id: Hash::new_unique(),
-            },
+            block: Block::new_unique(40),
             signature: CertSignature {
                 signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                 bitmap: vec![],
@@ -3743,10 +3763,7 @@ mod tests {
     }
 
     fn target_tick_duration() -> Duration {
-        let target_tick_duration_us =
-            solana_clock::DEFAULT_MS_PER_SLOT * 1000 / solana_clock::DEFAULT_TICKS_PER_SLOT;
-        assert_eq!(target_tick_duration_us, 6250);
-        Duration::from_micros(target_tick_duration_us)
+        Duration::from_nanos(solana_clock::DEFAULT_NS_PER_TICK)
     }
 
     #[test]

@@ -89,10 +89,10 @@ impl VoteState {
             info!("did not find vote account for vote_pubkey={vote_pubkey}");
             return None;
         };
-        let versions = match bincode::deserialize(account.account().data()) {
+        let versions = match wincode::deserialize(account.account().data()) {
             Ok(s) => s,
             Err(e) => {
-                info!("bincode::deserialize for vote_pubkey={vote_pubkey} failed with {e}");
+                info!("wincode::deserialize for vote_pubkey={vote_pubkey} failed with {e}");
                 return None;
             }
         };
@@ -606,7 +606,7 @@ mod tests {
                 create_genesis_config_with_alpenglow_vote_accounts,
                 create_genesis_config_with_leader_ex, create_validator,
             },
-            inflation_rewards::commission_split_preserve_lamports,
+            inflation_rewards::{MAX_BPS, commission_split_preserve_lamports},
             stake_utils,
             validated_block_finalization::ValidatedBlockFinalizationCert,
         },
@@ -624,7 +624,6 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_fee_calculator::FeeRateGovernor,
         solana_genesis_config::GenesisConfig,
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
         solana_native_token::LAMPORTS_PER_SOL,
@@ -656,7 +655,7 @@ mod tests {
     }
 
     fn vote_state_from_account(account: &AccountSharedData) -> VoteStateHandler {
-        let versions = bincode::deserialize(account.data()).unwrap();
+        let versions = wincode::deserialize(account.data()).unwrap();
         VoteStateHandler::try_new_from_vote_state_versions(versions).unwrap()
     }
 
@@ -670,10 +669,7 @@ mod tests {
         bank: &Bank,
         signing_ranks: &[usize],
     ) -> ValidatedBlockFinalizationCert {
-        let block = Block {
-            slot: bank.slot(),
-            block_id: Hash::new_unique(),
-        };
+        let block = Block::new_unique(bank.slot());
         let max_rank = signing_ranks.iter().copied().max().unwrap_or(0);
         let mut bitvec = BitVec::<u8, Lsb0>::repeat(false, max_rank.saturating_add(1));
         for &rank in signing_ranks {
@@ -1057,7 +1053,7 @@ mod tests {
         for validator in validators {
             let vote_pubkey = validator.vote_keypair.pubkey();
             let account = genesis_config.accounts.get_mut(&vote_pubkey).unwrap();
-            let vote_state_versions = bincode::deserialize(&account.data).unwrap();
+            let vote_state_versions = wincode::deserialize(&account.data).unwrap();
             let VoteStateVersions::V4(mut vote_state) = vote_state_versions else {
                 panic!();
             };
@@ -1068,6 +1064,29 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    pub fn split_commission_checked(commission_bps: u16, reward: u64) -> (u64, u64) {
+        let (voter_reward, staker_reward, is_split) =
+            commission_split_preserve_lamports(commission_bps, reward);
+        assert_eq!(
+            voter_reward + staker_reward,
+            reward,
+            "commission split must not lose lamports at {commission_bps} bps"
+        );
+        assert_eq!(
+            is_split,
+            commission_bps != 0 && commission_bps != MAX_BPS,
+            "is_split must be false only at the commission endpoints"
+        );
+        match commission_bps {
+            0 => assert_eq!(voter_reward, 0, "0 bps must pay the voter nothing"),
+            MAX_BPS => {
+                assert_eq!(staker_reward, 0, "100% commission must pay stakers nothing")
+            }
+            _ => {}
+        }
+        (voter_reward, staker_reward)
     }
 
     struct State {
@@ -1269,9 +1288,8 @@ mod tests {
                 }
                 let stake = initial_lamports - rent_exempt_reserve;
                 let stake_weighted_reward = validator_reward * stake / validator_stake;
-                let (voter_reward, staker_reward, is_split) =
-                    commission_split_preserve_lamports(self.commission_bps, stake_weighted_reward);
-                assert!(is_split);
+                let (voter_reward, staker_reward) =
+                    split_commission_checked(self.commission_bps, stake_weighted_reward);
                 assert_eq!(
                     staker_reward,
                     final_lamports - initial_lamports,
@@ -1452,7 +1470,7 @@ mod tests {
         bank
     }
 
-    #[test_matrix([true, false], [1_000, 5_000], [0, 10])]
+    #[test_matrix([true, false], [0, 1, 1_000, 5_000, 9_999, 10_000], [0, 10])]
     fn test_vote_reward_payout(pay_leader: bool, commission_bps: u16, num_add_stakers: u64) {
         let num_validators = 2;
         let num_reward_slots = 10;
@@ -1463,11 +1481,10 @@ mod tests {
         state.validate_rewards(&initial_bank, &final_bank, num_reward_slots);
     }
 
-    #[test]
-    fn test_per_pays_rewards_for_reward_slots_across_epoch_boundary() {
+    #[test_matrix([0, 1_000, 10_000])]
+    fn test_per_pays_rewards_for_reward_slots_across_epoch_boundary(commission_bps: u16) {
         let num_validators = 2;
         let num_add_stakers = 1;
-        let commission_bps = 1_000;
         let (state, initial_bank) =
             State::new(num_validators, num_add_stakers, true, commission_bps);
 

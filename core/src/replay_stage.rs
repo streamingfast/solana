@@ -2300,6 +2300,7 @@ impl ReplayStage {
                 .collect()
         };
         for bank in banks_to_remove {
+            bank.quiesce_transaction_execution();
             let _ = bank.wait_for_completed_scheduler();
         }
 
@@ -2589,6 +2590,7 @@ impl ReplayStage {
 
         // Wait for any in progress execution
         for bank in banks_to_clear.iter() {
+            bank.quiesce_transaction_execution();
             let _ = bank.wait_for_completed_scheduler();
         }
         let bank_slots_to_clear = banks_to_clear
@@ -5122,7 +5124,10 @@ impl ReplayStage {
             } in tracked_vote_transactions.iter()
             {
                 if new_root_bank
-                    .get_committed_transaction_status_and_slot(message_hash, transaction_blockhash)
+                    .get_transaction_status_and_slot_from_status_cache(
+                        message_hash,
+                        transaction_blockhash,
+                    )
                     .is_some()
                 {
                     *has_new_vote_been_rooted = true;
