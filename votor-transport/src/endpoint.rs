@@ -14,13 +14,12 @@ use {
     crossbeam_channel::{Receiver, Sender, bounded},
     log::{error, warn},
     qualifier_attr::qualifiers,
-    quinn::{Endpoint, EndpointConfig, TokioRuntime},
     solana_keypair::{Keypair, Signer},
-    solana_net_utils::token_bucket::TokenBucket,
+    solana_net_utils::{SocketAddrSpace, quic_socket::QuicSocket, token_bucket::TokenBucket},
     solana_pubkey::Pubkey,
     solana_tls_utils::NotifyKeyUpdate,
     std::{
-        net::{SocketAddr, UdpSocket},
+        net::SocketAddr,
         sync::{Arc, Mutex, TryLockError},
         time::Duration,
     },
@@ -71,14 +70,17 @@ impl QuicDatagramEndpoint {
     /// `peer_list` carries the desired peer set: inbound admits those peers and
     /// closes connections to peers no longer in the set, outbound connects to
     /// peers in it as long as the peer_list enables pushing.
+    /// `socket_addr_space` controls which remote addresses may start an inbound
+    /// handshake.
     /// `cancel` controls when the endpoint should terminate.
     pub fn spawn(
         runtime: &Handle,
         keypair: &Keypair,
-        inbound_sockets: Vec<UdpSocket>,
-        outbound_socket: UdpSocket,
+        inbound_sockets: Vec<QuicSocket>,
+        outbound_socket: QuicSocket,
         inbound_datagrams: Sender<Datagram>,
         peer_list: PeerListReceiver,
+        socket_addr_space: SocketAddrSpace,
         max_datagrams_per_second_per_peer: usize,
         cancel: CancellationToken,
     ) -> Result<(mpsc::Sender<Bytes>, Self), Error> {
@@ -114,22 +116,15 @@ impl QuicDatagramEndpoint {
             let inbound_endpoints = inbound_sockets
                 .into_iter()
                 .map(|socket| {
-                    Endpoint::new(
-                        EndpointConfig::default(),
-                        Some(server_config.clone()),
-                        socket,
-                        Arc::new(TokioRuntime),
-                    )
-                    .map_err(Error::Endpoint)
+                    socket
+                        .into_endpoint(Some(server_config.clone()))
+                        .map_err(Error::Endpoint)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let outbound_endpoint = Endpoint::new(
-                EndpointConfig::default(),
-                None,
-                outbound_socket,
-                Arc::new(TokioRuntime),
-            )
-            .map_err(Error::Endpoint)?;
+            let outbound_endpoint = outbound_socket
+                .into_endpoint(None)
+                .map_err(Error::Endpoint)?;
+
             (inbound_endpoints, outbound_endpoint)
         };
         outbound_endpoint.set_default_client_config(new_client_config(
@@ -176,6 +171,7 @@ impl QuicDatagramEndpoint {
                     inbound_events_sender.clone(),
                     server_stats.clone(),
                     cancel.clone(),
+                    socket_addr_space,
                     rate_limiter.clone(),
                     max_inflight_handshakes,
                 );
@@ -395,9 +391,13 @@ mod tests {
         bytes::Bytes,
         crossbeam_channel::{Receiver, bounded},
         solana_keypair::{Keypair, Signer},
-        solana_net_utils::sockets::{
-            SocketConfiguration, bind_more_with_config, bind_to, bind_to_localhost_unique,
-            unique_port_range_for_tests,
+        solana_net_utils::{
+            SocketAddrSpace,
+            quic_socket::QuicSocket,
+            sockets::{
+                SocketConfiguration, bind_more_with_config, bind_to, bind_to_localhost_unique,
+                unique_port_range_for_tests,
+            },
         },
         solana_pubkey::Pubkey,
         solana_tls_utils::NotifyKeyUpdate,
@@ -407,7 +407,7 @@ mod tests {
             net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
             sync::{
                 Arc,
-                atomic::{AtomicU64, Ordering},
+                atomic::{AtomicBool, AtomicU64, Ordering},
             },
             time::{Duration, Instant},
         },
@@ -493,7 +493,8 @@ mod tests {
             let addr = inbound_sockets[0]
                 .local_addr()
                 .expect("server local addr from first inbound socket");
-            let client_socket = bind_to_localhost_unique().expect("bind client UDP");
+            let client_socket =
+                QuicSocket::Kernel(bind_to_localhost_unique().expect("bind client UDP"));
             // Ingress channel size mirrors prod (`solana_core::tvu`):
             // `MAX_ALPENGLOW_PACKET_NUM`.
             let (ingress_sender, ingress_receiver) = bounded(INGRESS_CAP);
@@ -504,10 +505,14 @@ mod tests {
             let (egress, endpoint) = QuicDatagramEndpoint::spawn(
                 rt.handle(),
                 &keypair,
-                inbound_sockets,
+                inbound_sockets
+                    .into_iter()
+                    .map(QuicSocket::Kernel)
+                    .collect(),
                 client_socket,
                 ingress_sender,
                 peer_list_receiver,
+                SocketAddrSpace::Unspecified,
                 max_pps,
                 cancel,
             )
@@ -1045,6 +1050,86 @@ mod tests {
             (d.peer_pubkey == pubkey2 && d.message == payload2).then_some(())
         })
         .expect("server never received message attributed to K2 after rotation");
+    }
+
+    /// An identity change stops delivery only for as long as the re-handshake
+    /// takes. Only an upper bound is asserted: on loopback the outage is
+    /// sub-millisecond and often drops nothing, so requiring a loss would be flaky.
+    #[test]
+    fn test_client_identity_change_delivery_gap_is_bounded() {
+        // Under HIGH_PPS, so the peer rate limiter cannot manufacture a gap.
+        const SEND_INTERVAL: Duration = Duration::from_millis(5);
+        const MAX_RESUME_DELAY: Duration = Duration::from_secs(2);
+        // Longer than the bound, so the assert fails rather than the loop timing out.
+        const WAIT_LIMIT: Duration = Duration::from_secs(5);
+
+        let rt = make_runtime_for_tests();
+        let keypair1 = Keypair::new();
+        let pubkey1 = keypair1.pubkey();
+        let keypair2 = Keypair::new();
+        let pubkey2 = keypair2.pubkey();
+        let server = Node::spawn_node(
+            &rt,
+            Keypair::new(),
+            HashMap::from([(pubkey1, None), (pubkey2, None)]),
+            HIGH_PPS,
+        );
+        let client = Node::spawn_node(
+            &rt,
+            keypair1,
+            peer_list_of(server.pubkey(), server.addr),
+            HIGH_PPS,
+        );
+
+        let probe = Bytes::from_static(b"probe");
+        send_until_received(&client, &probe, &server.ingress_receiver, |d| {
+            (d.message == probe).then_some(())
+        })
+        .expect("server never received the pre-change probe");
+        drain_backlog(&server.ingress_receiver);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let sender_stop = stop.clone();
+        let egress = client.egress.clone();
+        let sender = std::thread::spawn(move || {
+            let mut seq = 0u32;
+            while !sender_stop.load(Ordering::Relaxed) {
+                let _ = egress.try_send(Bytes::from(seq.to_be_bytes().to_vec()));
+                seq = seq.wrapping_add(1);
+                std::thread::sleep(SEND_INTERVAL);
+            }
+        });
+
+        client
+            .endpoint
+            .key_updater()
+            .update_key(&keypair2)
+            .expect("identity change accepted");
+        let changed_at = Instant::now();
+
+        // Attribution to the new identity is what proves the re-handshake completed.
+        let mut resumed = None;
+        while changed_at.elapsed() < WAIT_LIMIT {
+            match server.ingress_receiver.recv_timeout(SEND_INTERVAL * 4) {
+                Ok(d) if d.peer_pubkey == pubkey2 && d.message.len() == 4 => {
+                    resumed = Some(Instant::now());
+                    break;
+                }
+                Ok(_) => continue,
+                Err(_) => continue,
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        sender.join().expect("sender thread panicked");
+
+        let resumed = resumed.unwrap_or_else(|| {
+            panic!("delivery never resumed under the new identity within {WAIT_LIMIT:?}")
+        });
+        let gap = resumed.saturating_duration_since(changed_at);
+        assert!(
+            gap < MAX_RESUME_DELAY,
+            "delivery resumed {gap:?} after the change, over the {MAX_RESUME_DELAY:?} bound"
+        );
     }
 
     /// Changing the server identity closes every inbound connection that was

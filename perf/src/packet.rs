@@ -72,8 +72,31 @@ where
     Ok(packet)
 }
 
+/// Serialize `data` into a freshly allocated [`BytesPacket`].
+///
+/// Like [`packet_from_data`], serialization is bounded to [`PACKET_DATA_SIZE`], so oversized
+/// payloads fail instead of producing a packet that cannot be sent.
+pub fn bytes_packet_from_data<T>(dest: Option<&SocketAddr>, data: T) -> WriteResult<BytesPacket>
+where
+    T: SchemaWrite<PacketConfig, Src = T>,
+{
+    let mut buffer = [0u8; PACKET_DATA_SIZE];
+    let mut wr = Cursor::new(buffer.as_mut_slice());
+    wincode::config::serialize_into(&mut wr, &data, packet_config_inner())?;
+    let size = wr.position() as usize;
+    let mut meta = Meta::default();
+    meta.size = size;
+    if let Some(dest) = dest {
+        meta.set_socket_addr(dest);
+    }
+    Ok(BytesPacket::new(
+        Bytes::copy_from_slice(&buffer[..size]),
+        meta,
+    ))
+}
+
 /// Representation of a packet used in TPU.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BytesPacket {
     #[cfg_attr(
@@ -170,10 +193,7 @@ impl BytesPacket {
     }
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor, StableAbi, StableAbiSample)
-)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PacketBatch {
     Pinned(RecycledPacketBatch),
@@ -645,7 +665,7 @@ impl IndexedParallelIterator for PacketBatchParIterMut<'_> {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RecycledPacketBatch {
     packets: RecycledVec<Packet>,
@@ -678,10 +698,11 @@ impl RecycledPacketBatch {
     pub fn new_with_recycler_data(
         recycler: &PacketBatchRecycler,
         name: &'static str,
-        mut packets: Vec<Packet>,
+        packets: impl IntoIterator<Item = Packet, IntoIter: ExactSizeIterator>,
     ) -> Self {
+        let packets = packets.into_iter();
         let mut batch = Self::new_with_recycler(recycler, packets.len(), name);
-        batch.packets.append(&mut packets);
+        batch.packets.extend(packets);
         batch
     }
 
@@ -821,7 +842,7 @@ fn to_packet_batches_for_tests<T: Serialize>(items: &[T]) -> Vec<PacketBatch> {
     to_packet_batches(items, NUM_PACKETS)
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BytesPacketBatch {
     packets: Vec<BytesPacket>,

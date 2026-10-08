@@ -47,16 +47,6 @@ default_cargo_audit_extra_args=(
   # Solution:  Upgrade to >=4.1.3
   --ignore RUSTSEC-2024-0344
 
-  # Crate:     rustls
-  # Version:   <0.23.45
-  # Title:     rustls accepts TLS 1.3 handshake messages at the wrong encryption level
-  # Date:      2026-09-14
-  # ID:        RUSTSEC-2026-0285
-  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0285
-  # Solution:  Upgrade to >=0.23.45
-  # Agave Ok:  handshake stays authenticated; no integrity or availability impact
-  --ignore RUSTSEC-2026-0285
-
   # Crate:     tonic
   # Version:   0.9.2
   # Title:     Remotely exploitable Denial of Service in Tonic
@@ -65,16 +55,6 @@ default_cargo_audit_extra_args=(
   # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0376
   # Solution:  Upgrade to >=0.12.3
   --ignore RUSTSEC-2024-0376
-
-  # Crate:     h2
-  # Version:   0.4.13
-  # Title:     h2 unbounded empty DATA frames
-  # Date:      2026-08-17
-  # ID:        RUSTSEC-2026-0258
-  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0258
-  # Solution:  Upgrade to >=0.4.16
-  # Agave Ok:  Bigtable is the only use and is being considered a trusted peer
-  --ignore RUSTSEC-2026-0258
 )
 
 xtask_cargo_audit_extra_args=(
@@ -87,16 +67,6 @@ xtask_cargo_audit_extra_args=(
   # Severity:  5.9 (medium)
   # Solution:  No fixed upgrade is available!
   --ignore RUSTSEC-2023-0071
-
-  # Crate:     rustls
-  # Version:   <0.23.45
-  # Title:     rustls accepts TLS 1.3 handshake messages at the wrong encryption level
-  # Date:      2026-09-14
-  # ID:        RUSTSEC-2026-0285
-  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0285
-  # Solution:  Upgrade to >=0.23.45
-  # Agave Ok:  handshake stays authenticated; no integrity or availability impact
-  --ignore RUSTSEC-2026-0285
 )
 
 lock_files="$(git ls-files ':**Cargo.lock')"

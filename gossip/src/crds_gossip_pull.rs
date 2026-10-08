@@ -11,6 +11,8 @@
 //! with random hash functions.  So each subsequent request will have a different distribution
 //! of false positives.
 
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{
         cluster_info_metrics::GossipStats,
@@ -27,7 +29,6 @@ use {
         distr::{Distribution, weighted::WeightedIndex},
     },
     rayon::{ThreadPool, prelude::*},
-    serde::{Deserialize, Serialize},
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -61,8 +62,8 @@ const FAILED_INSERTS_RETENTION_MS: u64 = 20_000;
 pub const FALSE_RATE: f64 = 0.1f64;
 pub const KEYS: f64 = 8f64;
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, StableAbi, StableAbiSample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
+#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaWrite, SchemaRead)]
 pub struct CrdsFilter {
     pub filter: Bloom<Hash>,
     mask: u64,
@@ -107,8 +108,8 @@ impl solana_sanitize::Sanitize for CrdsFilter {
 }
 
 impl CrdsFilter {
-    // Conformance-only accessors; unused under DCOU.
-    #[cfg(any(test, feature = "conformance"))]
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn mask(&self) -> u64 {
         self.mask
     }
@@ -180,6 +181,7 @@ impl CrdsFilter {
         (!0u64).checked_shr(mask_bits).unwrap_or(0)
     }
     #[inline]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn canonical_mask(mask: u64, mask_bits: u32) -> u64 {
         // Normalize a mask so that all bits below mask_bits are 1s
         mask | Self::lsb_mask(mask_bits)
@@ -1352,7 +1354,7 @@ pub(crate) mod tests {
         )
     }
 
-    // Asserts that all bincode serialized pull requests fit in a Packet.
+    // Asserts that all serialized pull requests fit in a Packet.
     fn verify_get_max_bloom_filter_bytes<R: Rng>(
         rng: &mut R,
         caller: &CrdsValue,
@@ -1364,12 +1366,9 @@ pub(crate) mod tests {
         let request_bytes = caller.serialized_size() as u64;
         for filter in Vec::<CrdsFilter>::from(filters) {
             let filter_size = wincode::serialized_size(&filter).unwrap();
-            assert_eq!(filter_size, bincode::serialized_size(&filter).unwrap());
             let request_bytes = 4 + request_bytes + filter_size;
             let request = Protocol::PullRequest(filter, caller.clone());
-            let request_wincode = wincode::serialize(&request).unwrap();
-            assert_eq!(request_wincode, bincode::serialize(&request).unwrap());
-            let request = request_wincode;
+            let request = wincode::serialize(&request).unwrap();
             assert!(packet_data_size_range.contains(&request.len()));
             assert_eq!(request.len() as u64, request_bytes);
         }
@@ -1530,23 +1529,5 @@ pub(crate) mod tests {
         filter.mask = canonical_mask & !lsb;
         assert!(filter.test_mask(&hash));
         assert!(!filter.test_mask(&bad_hash));
-    }
-
-    #[test]
-    fn test_wincode_compatibility_crds_filter() {
-        let mut rng = rand::rng();
-        for _ in 0..1000 {
-            let num_items = rng.random_range(0..1000);
-            let max_bytes = rng.random_range(32..512);
-            let filter = CrdsFilter::new_rand(num_items, max_bytes);
-
-            let bincode_bytes = bincode::serialize(&filter).unwrap();
-            let wincode_decoded: CrdsFilter = wincode::deserialize(&bincode_bytes).unwrap();
-            assert_eq!(filter, wincode_decoded);
-
-            let wincode_bytes = wincode::serialize(&filter).unwrap();
-            let bincode_decoded: CrdsFilter = bincode::deserialize(&wincode_bytes).unwrap();
-            assert_eq!(filter, bincode_decoded);
-        }
     }
 }

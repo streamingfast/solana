@@ -28,7 +28,6 @@ pub mod cluster_query;
 pub mod compute_budget;
 pub mod feature;
 pub mod inflation;
-mod local_verifier;
 pub mod memo;
 pub mod nonce;
 pub mod program;
