@@ -4,6 +4,56 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## v4.4.0-beta.0-fh3.0
+
+### Changed
+
+- Merged upstream `v4.4.0-beta.0` (previously `v4.3.0`), moving the fork from the `v4.3`
+  release line to `v4.4` and bringing in 476 upstream commits.
+
+  Released as image `ghcr.io/streamingfast/solana:v4.4.0-beta.0-fh3.0`.
+
+  The `v4.3` backports reached `v4.4` as cherry-picks, so a plain merge conflicts on them.
+  The merge was resolved by taking the upstream `v4.4.0-beta.0` tree wholesale and
+  re-applying the fork delta on top, so the tree differs from upstream only by
+  `Dockerfile`, `.github/workflows/docker-publish.yml`, `CHANGELOG.sf.md` and the novote
+  guard in `geyser-plugin-manager/src/accounts_update_notifier.rs`. The novote guard
+  applied unchanged.
+
+- Rust toolchain moves from `1.97.1` to `1.98.1`.
+
+### Geyser plugin interface
+
+`v4.4` breaks the plugin interface. The Firehose Geyser plugin must be updated before it
+can load into this build:
+
+- `geyser-plugin-interface` is no longer in this repository. Agave now depends on the
+  published `agave-geyser-plugin-interface = "=5.0.0"` crate (#15388), so plugins pin that
+  version instead of the Agave release version.
+- Transaction status metadata and rewards are now the interface's own mirror types in
+  `transaction_status_meta` (`TransactionStatusMeta<'a>`, `InnerInstructions<'a>`,
+  `TransactionTokenBalance<'a>`, `Reward<'a>`, `RewardsAndNumPartitions<'a>`, ...) instead
+  of the `solana_transaction_status` types (#15032). `ReplicaTransactionInfoVersions` only
+  has `V0_0_4(ReplicaTransactionInfoV4)`, and `ReplicaBlockInfoVersions` only has
+  `V0_0_5(ReplicaBlockInfoV5)`; the older variants are gone.
+- The block footer is now the interface's own mirror type in `block_footer`
+  (`VersionedBlockFooter<'a>`) instead of `solana_entry::block_component` (#14982).
+  `ReplicaBlockFooterInfoVersions` only has `V0_0_2`.
+- Callback names and the `*_for_bank` / `update_bank_status` split from `v4.3` are
+  unchanged.
+
+Other consumer-facing crates that changed: `transaction-status` (`parse_stake` rewritten
+for the new `solana-stake-interface` major), `transaction-context`, and `rpc-client`
+(V1 message serialization fix, #15309).
+
+### Upstream changes worth knowing about
+
+- `getLeaderSchedule` accepts a `keyByVoteAccount` option (#13796), and returns an error
+  when the requested validator has no leader schedule (#12197).
+- `getTransaction` and `getSignatureStatuses` support `minContextSlot` (#15091).
+- `BanksServer` no longer runs a TCP server (#12056).
+- The txv1 and SIMD-0391 feature gate checks were removed (#15270, #14994).
+
 ## v4.3.0-fh3.0
 
 ### Changed
