@@ -4,6 +4,53 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## v4.4.0-beta.1-fh3.0
+
+### Changed
+
+- Merged upstream `v4.4.0-beta.1` (previously `v4.4.0-beta.0`), which brings in 15
+  upstream commits. The merge was clean: no conflicts. The tree differs from upstream only by
+  `Dockerfile`, `.github/workflows/docker-publish.yml`, `CHANGELOG.sf.md`, the novote guard
+  in `geyser-plugin-manager/src/accounts_update_notifier.rs`, and the two workflows below.
+
+  Released as image `ghcr.io/streamingfast/solana:v4.4.0-beta.1-fh3.0`.
+
+- Added the StreamingFast pull request checks that `release/4.x` requires before merging:
+  `.github/workflows/dependabot.yml` (`dependency-review`) and
+  `.github/workflows/secret-scanning.yml` (`check-secrets`).
+
+- The Geyser plugin interface is unchanged: Agave still pins
+  `agave-geyser-plugin-interface = "=5.0.0"`, and `transaction-status`,
+  `transaction-context` and the `rpc-client` crates are byte-for-byte identical to
+  `v4.4.0-beta.0`. Consumers only need to re-pin versions.
+
+- Rust toolchain stays at `1.98.1`.
+
+### Feature activations
+
+- `block_revenue_sharing` (SIMD-0123) is rekeyed from
+  `7MYx95UBiJufqnumyN7HfskJ9vKdcGMmhreVguqrE97K` to
+  `Crbnc267wkJvFhYakqwWWX57sx5bkrftJLekzy6yWKLT` (#15795), because its behavior changed.
+  The new ID is not activated on mainnet or testnet (checked 2026-10-14). The effect on the
+  Firehose block is the same as before: block fees can be split into two `Fee` rewards, one
+  of them to an address other than the leader.
+
+### Upstream changes worth knowing about
+
+- The vote program's `DepositDelegatorRewards` instruction always returns an error
+  (#15795).
+- `clone_and_filter_for_vat` only counts `pending_delegator_rewards` when SIMD-0123 is
+  active (#15529).
+- Banking stage buffers transactions using Alpenglow slot timing (#15589, #15886).
+- Bigtable upload stops at the blockstore's max root (#15804).
+- `quinn` and `quinn-proto` are replaced by vendored `anza-quinn 0.11.12` and
+  `anza-quinn-proto 0.11.18` (#15954).
+- The program cache extracts entries using the rooted access slot (#15811), and the
+  epoch-boundary program cache preparation restarts less often (#15766).
+- Loader-v1/v2 programs have their ELF header checked earlier (#15544).
+- `agave-validator wait-for-restart-window` ignores identity-not-found errors while
+  waiting (#15617).
+
 ## v4.4.0-beta.0-fh3.0
 
 ### Changed
