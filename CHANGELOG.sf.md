@@ -9,12 +9,15 @@ This file tracks StreamingFast-specific changes to this fork of
 ### Changed
 
 - Merged upstream `v4.4.0-beta.1` (previously `v4.4.0-beta.0`), which brings in 15
-  upstream commits. The merge was clean: no conflicts, and the fork delta is unchanged. The
-  tree still differs from upstream only by `Dockerfile`,
-  `.github/workflows/docker-publish.yml`, `CHANGELOG.sf.md` and the novote guard in
-  `geyser-plugin-manager/src/accounts_update_notifier.rs`.
+  upstream commits. The merge was clean: no conflicts. The tree differs from upstream only by
+  `Dockerfile`, `.github/workflows/docker-publish.yml`, `CHANGELOG.sf.md`, the novote guard
+  in `geyser-plugin-manager/src/accounts_update_notifier.rs`, and the two workflows below.
 
   Released as image `ghcr.io/streamingfast/solana:v4.4.0-beta.1-fh3.0`.
+
+- Added the StreamingFast pull request checks that `release/4.x` requires before merging:
+  `.github/workflows/dependabot.yml` (`dependency-review`) and
+  `.github/workflows/secret-scanning.yml` (`check-secrets`).
 
 - The Geyser plugin interface is unchanged: Agave still pins
   `agave-geyser-plugin-interface = "=5.0.0"`, and `transaction-status`,
