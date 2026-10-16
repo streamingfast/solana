@@ -4,6 +4,33 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## v4.3.2-fh3.0
+
+### Changed
+
+- Merged upstream `v4.3.2` (previously `v4.3.0`), which brings in 23 upstream commits
+  across `v4.3.1` and `v4.3.2`. The fork delta is unchanged. The tree still differs from
+  upstream only by `Dockerfile`, `.github/workflows/docker-publish.yml`, `CHANGELOG.sf.md`
+  and the novote guard in `geyser-plugin-manager/src/accounts_update_notifier.rs`.
+
+  Released as image `ghcr.io/streamingfast/solana:v4.3.2-fh3.0`.
+
+- The Geyser plugin interface is byte-for-byte identical between `v4.3.0` and `v4.3.2`, as
+  are `transaction-status`, `transaction-context` and the `rpc-client` crates. Consumers
+  only need to re-pin versions.
+
+- Rust toolchain stays at `1.97.1`.
+
+### Upstream changes worth knowing about
+
+- Banking stage uses Alpenglow slot timing when buffering transactions (#15589, #15886).
+- The BigTable upload service stops at the blockstore's max root instead of the commitment
+  cache root, which under Alpenglow can run a few milliseconds ahead of `set_roots`
+  (#15804).
+- The stakes cache checks the `StakeStateV2` tag in `check_and_store()` (#16050, #15398).
+- `VoteStateVersions` serialization uses wincode and is faster (#15972, #15986).
+- `quinn` and `quinn-proto` are vendored to address RUSTSEC-2026-0339 (#15953, #16060).
+
 ## v4.3.0-fh3.0
 
 ### Changed
