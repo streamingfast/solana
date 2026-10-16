@@ -89,7 +89,7 @@ impl VoteState {
             info!("did not find vote account for vote_pubkey={vote_pubkey}");
             return None;
         };
-        let versions = match bincode::deserialize(account.account().data()) {
+        let versions = match wincode::deserialize(account.account().data()) {
             Ok(s) => s,
             Err(e) => {
                 info!("bincode::deserialize for vote_pubkey={vote_pubkey} failed with {e}");
@@ -115,10 +115,11 @@ impl VoteState {
     fn serialize(self) -> Option<(Pubkey, AccountSharedData)> {
         let mut updated_account = AccountSharedData::new_rent_epoch(
             self.lamports,
-            self.space,
+            0,
             &self.owner,
             RENT_EXEMPT_RENT_EPOCH,
         );
+        updated_account.resize(self.space, 0);
         match self
             .handler
             .serialize_into(updated_account.data_as_mut_slice())
@@ -656,7 +657,7 @@ mod tests {
     }
 
     fn vote_state_from_account(account: &AccountSharedData) -> VoteStateHandler {
-        let versions = bincode::deserialize(account.data()).unwrap();
+        let versions = wincode::deserialize(account.data()).unwrap();
         VoteStateHandler::try_new_from_vote_state_versions(versions).unwrap()
     }
 

@@ -18,6 +18,53 @@ while [[ -n $1 ]]; do
 done
 
 default_cargo_audit_extra_args=(
+  # Crate:     quinn-proto
+  # Version:   0.11.15
+  # Title:     Unbounded growth of pending connection ID retirements in quinn-proto
+  # ID:        RUSTSEC-2026-0339
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0339
+  # Solution:  Upgrade to >=0.11.17
+  # Agave Ok:  active QUIC uses anza-quinn-proto 0.11.15-rustsec20260339 with the fix.
+  # Upstream quinn-proto remains only in Reqwest's disabled HTTP/3 dependencies.
+  --ignore RUSTSEC-2026-0339
+
+  # Crate:     quinn-proto
+  # Version:   0.11.15
+  # Title:     Remote peer can panic quinn-proto with zero-length STREAM frames during unordered reads
+  # ID:        RUSTSEC-2026-0338
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0338
+  # Solution:  Upgrade to >=0.11.18
+  # Agave Ok:  Agave does not use unordered QUIC reads.
+  --ignore RUSTSEC-2026-0338
+
+  # Crate:     quinn-proto
+  # Version:   0.11.15
+  # Title:     Peer minimum ACK delay can panic quinn-proto when ACK_FREQUENCY transmission is enabled
+  # ID:        RUSTSEC-2026-0340
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0340
+  # Solution:  Upgrade to >=0.11.18
+  # Agave Ok:  Agave does not enable ACK_FREQUENCY transmission.
+  --ignore RUSTSEC-2026-0340
+
+  # Crate:     quinn-proto
+  # Version:   0.11.15
+  # Title:     Stream reassembly memory-exhaustion guard in quinn-proto can be bypassed
+  # ID:        RUSTSEC-2026-0341
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0341
+  # Solution:  Upgrade to >=0.11.17
+  # Agave Ok:  Accepted residual risk. Streamer's small per-stream receive window limits impact.
+  # The tpu-client-next exposure is also accepted for v4.3.
+  --ignore RUSTSEC-2026-0341
+
+  # Crate:     quinn-proto
+  # Version:   0.11.15
+  # Title:     Zero-length DATAGRAM frames bypass the receive buffer limit in quinn-proto
+  # ID:        RUSTSEC-2026-0342
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0342
+  # Solution:  Upgrade to >=0.11.17
+  # Agave Ok:  Agave has mitigations. See: https://github.com/anza-xyz/agave/pull/14407. We are not vulnerable.
+  --ignore RUSTSEC-2026-0342
+
   # Crate:     ed25519-dalek
   # Version:   1.0.1
   # Title:     Double Public Key Signing Function Oracle Attack on `ed25519-dalek`
@@ -57,6 +104,36 @@ default_cargo_audit_extra_args=(
   # Agave Ok:  handshake stays authenticated; no integrity or availability impact
   --ignore RUSTSEC-2026-0285
 
+  # Crate:     rustls
+  # Version:   0.23.43
+  # Title:     `Debug` impls for client session values expose TLS secrets
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0346
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0346
+  # Solution:  Upgrade to >=0.23.46
+  # Agave Ok:  local attacker/log-access risk accepted for v4.3.
+  --ignore RUSTSEC-2026-0346
+
+  # Crate:     rustls
+  # Version:   0.23.43
+  # Title:     Brotli certificate decompression can allocate up to 1 GiB before authentication
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0348
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0348
+  # Solution:  Upgrade to >=0.23.46
+  # Agave Ok:  rustls's optional Brotli certificate decompression feature is not enabled.
+  --ignore RUSTSEC-2026-0348
+
+  # Crate:     rustls
+  # Version:   0.23.43
+  # Title:     Unauthenticated ServerHello can downgrade later connections to classical key exchange
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0349
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0349
+  # Solution:  Upgrade to >=0.23.46
+  # Agave Ok:  rustls uses ring's classical key exchanges; post-quantum groups are not enabled.
+  --ignore RUSTSEC-2026-0349
+
   # Crate:     tonic
   # Version:   0.9.2
   # Title:     Remotely exploitable Denial of Service in Tonic
@@ -75,9 +152,64 @@ default_cargo_audit_extra_args=(
   # Solution:  Upgrade to >=0.4.16
   # Agave Ok:  Bigtable is the only use and is being considered a trusted peer
   --ignore RUSTSEC-2026-0258
+
+  # Crate:     imbl-sized-chunks
+  # Version:   0.1.3
+  # Title:     Double free / use-after-free in `Chunk` and `InlineArray` removal methods when an element's `Drop` panics
+  # Date:      2026-09-04
+  # ID:        RUSTSEC-2026-0292
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0292
+  # Solution:  Upgrade to >=0.2.0 (requires imbl >=7.0.2)
+  # Agave Ok:  only imbl::HashMap is used, which never calls the affected methods; stored types have no panicking Drop
+  --ignore RUSTSEC-2026-0292
 )
 
 xtask_cargo_audit_extra_args=(
+  # Crate:     quinn-proto
+  # Version:   0.11.15
+  # Title:     Unbounded growth of pending connection ID retirements in quinn-proto
+  # ID:        RUSTSEC-2026-0339
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0339
+  # Solution:  Upgrade to >=0.11.17
+  # Agave Ok:  xtask does not enable Reqwest's HTTP/3 feature; upstream Quinn is unused.
+  --ignore RUSTSEC-2026-0339
+
+  # Crate:     quinn-proto
+  # Version:   0.11.15
+  # Title:     Remote peer can panic quinn-proto with zero-length STREAM frames during unordered reads
+  # ID:        RUSTSEC-2026-0338
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0338
+  # Solution:  Upgrade to >=0.11.18
+  # Agave Ok:  xtask does not enable Reqwest's HTTP/3 feature; upstream Quinn is unused.
+  --ignore RUSTSEC-2026-0338
+
+  # Crate:     quinn-proto
+  # Version:   0.11.15
+  # Title:     Peer minimum ACK delay can panic quinn-proto when ACK_FREQUENCY transmission is enabled
+  # ID:        RUSTSEC-2026-0340
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0340
+  # Solution:  Upgrade to >=0.11.18
+  # Agave Ok:  xtask does not enable Reqwest's HTTP/3 feature; upstream Quinn is unused.
+  --ignore RUSTSEC-2026-0340
+
+  # Crate:     quinn-proto
+  # Version:   0.11.15
+  # Title:     Stream reassembly memory-exhaustion guard in quinn-proto can be bypassed
+  # ID:        RUSTSEC-2026-0341
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0341
+  # Solution:  Upgrade to >=0.11.17
+  # Agave Ok:  xtask does not enable Reqwest's HTTP/3 feature; upstream Quinn is unused.
+  --ignore RUSTSEC-2026-0341
+
+  # Crate:     quinn-proto
+  # Version:   0.11.15
+  # Title:     Zero-length DATAGRAM frames bypass the receive buffer limit in quinn-proto
+  # ID:        RUSTSEC-2026-0342
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0342
+  # Solution:  Upgrade to >=0.11.17
+  # Agave Ok:  xtask does not enable Reqwest's HTTP/3 feature; upstream Quinn is unused.
+  --ignore RUSTSEC-2026-0342
+
   # Crate:     rsa
   # Version:   0.9.10
   # Title:     Marvin Attack: potential key recovery through timing sidechannels
@@ -97,6 +229,36 @@ xtask_cargo_audit_extra_args=(
   # Solution:  Upgrade to >=0.23.45
   # Agave Ok:  handshake stays authenticated; no integrity or availability impact
   --ignore RUSTSEC-2026-0285
+
+  # Crate:     rustls
+  # Version:   0.23.43
+  # Title:     `Debug` impls for client session values expose TLS secrets
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0346
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0346
+  # Solution:  Upgrade to >=0.23.46
+  # Agave Ok:  local attacker/log-access risk accepted for v4.3.
+  --ignore RUSTSEC-2026-0346
+
+  # Crate:     rustls
+  # Version:   0.23.43
+  # Title:     Brotli certificate decompression can allocate up to 1 GiB before authentication
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0348
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0348
+  # Solution:  Upgrade to >=0.23.46
+  # Agave Ok:  rustls's optional Brotli certificate decompression feature is not enabled.
+  --ignore RUSTSEC-2026-0348
+
+  # Crate:     rustls
+  # Version:   0.23.43
+  # Title:     Unauthenticated ServerHello can downgrade later connections to classical key exchange
+  # Date:      2026-10-14
+  # ID:        RUSTSEC-2026-0349
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2026-0349
+  # Solution:  Upgrade to >=0.23.46
+  # Agave Ok:  rustls uses ring's classical key exchanges; post-quantum groups are not enabled.
+  --ignore RUSTSEC-2026-0349
 )
 
 lock_files="$(git ls-files ':**Cargo.lock')"
