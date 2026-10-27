@@ -4,6 +4,57 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## v4.4.0-rc.1-fh3.0
+
+### Changed
+
+- Merged upstream `v4.4.0-rc.1` (previously `v4.4.0-beta.1`), which brings in 25 upstream
+  commits. The merge was clean: no conflicts. The tree differs from upstream only by
+  `Dockerfile`, `CHANGELOG.sf.md`, the novote guard in
+  `geyser-plugin-manager/src/accounts_update_notifier.rs`, and the three workflows in
+  `.github/workflows/` (`docker-publish.yml`, `dependabot.yml`, `secret-scanning.yml`).
+
+  Released as image `ghcr.io/streamingfast/solana:v4.4.0-rc.1-fh3.0`.
+
+- The novote guard is still required. Under Alpenglow, votes are no longer transactions, but
+  `calc_vote_rewards_update_vote_states` (`runtime/src/block_component_processor/vote_reward.rs`)
+  stores the rewarded vote accounts with `bank.store_accounts` on every block, and upstream
+  sends those writes to Geyser plugins without filtering on the owner.
+
+- The Geyser plugin interface is unchanged: Agave still pins
+  `agave-geyser-plugin-interface = "=5.0.0"`, and `transaction-status`, `rpc-client` and
+  `rpc-client-api` are byte-for-byte identical to `v4.4.0-beta.1`. Consumers only need to
+  re-pin versions.
+
+- Rust toolchain stays at `1.98.1`.
+
+### Feature activations
+
+- No feature gates are added, removed or rekeyed: `feature-set` is identical to
+  `v4.4.0-beta.1`.
+
+### Upstream changes worth knowing about
+
+- Footer verification (clock bounds, finalization certificate) runs while the block's
+  transactions are still executing (#16048). The footer still waits for every transaction to
+  finish before it writes the vote reward accounts, so the order of account notifications is
+  unchanged.
+- `ComputeMeter` moves from `InvokeContext` to `TransactionContext`, and
+  `TransactionContext::new` takes a `ComputeMeter` argument (#15818, #16405).
+- The vote state is serialized with `wincode` (#15972, #15986), and the vote reward path
+  allocates vote accounts without zeroing them first (#16101).
+- The stakes cache checks the `StakeStateV2` tag in `check_and_store()` (#16050).
+- The accounts write cache always keeps at least 32 slots, so account hash lookups read from
+  the write cache instead of storage (#16061).
+- Replay and its hash/verify thread pools use dedicated jemalloc arenas, through a new
+  `jemalloc` crate (#15423, #15656, #16008).
+- The streamer allows 3000 unstaked connections (was 2000). Each unstaked peer gets 400 TPS
+  (was 200) below the throttling threshold and 100 TPS (was 200) above it (#15610, #15611).
+- The banking stage keeps Alpenglow leader window timing across recovery and reports
+  `NOT_LEADER` once the window expires (#15885).
+- PoH caches the start bank's fields so pruned banks are freed (#16302).
+- `blstrs` is replaced by a vendored copy (#15773).
+
 ## v4.4.0-beta.1-fh3.0
 
 ### Changed
