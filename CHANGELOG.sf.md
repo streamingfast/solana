@@ -4,6 +4,10 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## v4.4.0-fh3.0
+
+- Merged upstream `v4.4.0`
+
 ## v4.4.0-rc.1-fh3.0
 
 ### Changed
