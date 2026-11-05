@@ -4,6 +4,33 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## v4.4.1-fh3.0
+
+### Changed
+
+- Merged upstream `v4.4.1` (previously `v4.4.0`), which brings in 7 upstream commits. The
+  merge was clean: no conflicts. The tree differs from upstream by the same files as
+  `v4.4.0-fh3.0`.
+
+- The Geyser plugin interface is unchanged: Agave still pins
+  `agave-geyser-plugin-interface = "=5.0.0"`, and `transaction-status`,
+  `transaction-context`, the `rpc-client` crates and `geyser-plugin-manager` are identical to
+  `v4.4.0`. Consumers only need to re-pin versions.
+
+- Rust toolchain stays at `1.98.1`.
+
+### Feature activations
+
+- Adds `loaderv3_programdata_size_floor` (`8whkDenELnfwYLirBc4Wb4H2Z1z5K7tiykpdxJS7cWg1`),
+  not activated on mainnet-beta, testnet or devnet as of 2026-11-05. Once active, a
+  transaction that invokes a loader-v3 program is charged at least
+  `size_of_programdata_metadata()` for the program's ProgramData account toward its loaded
+  accounts data size, even when that account is missing or smaller. Some transactions can
+  then fail with `MaxLoadedAccountsDataSizeExceeded` where they succeeded before. The
+  Firehose block shape does not change: these show up as failed transactions with that
+  error. Until the feature is active, ProgramData accounts are read-locked implicitly, which
+  changes scheduling only.
+
 ## v4.4.0-fh3.0
 
 - Merged upstream `v4.4.0`
