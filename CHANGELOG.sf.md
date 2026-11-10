@@ -37,7 +37,7 @@ This file tracks StreamingFast-specific changes to this fork of
   `#[non_exhaustive]` (`solana-reward-info` 9.0.0). Not activated on mainnet-beta, testnet or
   devnet as of 2026-11-10.
 
-- Adds 14 features, none activated on mainnet-beta, testnet or devnet as of 2026-11-10.
+- Adds 13 features, none activated on mainnet-beta, testnet or devnet as of 2026-11-10.
   `alpenglow_fast_leader_handover` has a new feature ID with a private key
   (`FLh2kvwNhDNN6kkQrwdDQ4p5FrgdqxnwykgMUryABRwT`), so a cluster can now activate it.
   Agave no longer checks 11 features, all active on every cluster, including
