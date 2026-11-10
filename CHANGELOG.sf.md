@@ -4,6 +4,46 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## v4.5.0-beta.0-fh3.0
+
+### Changed
+
+- Merged upstream `v4.5.0-beta.0` (previously `v4.4.1`), an Anza testnet release from the new
+  4.5 line, which brings in 740 upstream commits. The 64 conflicts were all in files the fork
+  does not change, between the v4.4 backports and the 4.5 line, and were resolved to the
+  `v4.5.0-beta.0` side. Two files the merge combined without conflict were also set to the
+  `v4.5.0-beta.0` side: `ledger/src/blockstore_processor.rs` (a backported `From` impl that
+  4.5 already has) and `scripts/spl-token-cli-version.sh` (the v4.4 release branch pin). The
+  tree differs from upstream by the same files as `v4.4.1-fh3.0`.
+
+- The novote guard in `geyser-plugin-manager/src/accounts_update_notifier.rs` merged cleanly.
+  Upstream moved plugin loading and dispatch to the new `agave-geyser-plugin-host` crate; the
+  account notifier still sends every account write through the guarded functions.
+
+- The Geyser plugin interface is now `agave-geyser-plugin-interface = "=6.0.0"` (was
+  `5.0.0`). It adds `ReplicaAccountInfoV4` and the `ReplicaAccountInfoVersions::V0_0_4`
+  variant; this validator still sends `V0_0_3`. Plugins must be rebuilt against `6.0.0`.
+
+- `Dead` slot notifications now go through `update_bank_status` with the bank ID
+  ([#16156](https://github.com/anza-xyz/agave/pull/16156)).
+
+- Rust toolchain is now `1.99.1` (was `1.98.1`).
+
+### Feature activations
+
+- `block_revenue_sharing` (SIMD-0123): once active, the block revenue part of a stake
+  account's epoch reward is a separate reward of type `BlockRevenueSharing`
+  ([#16130](https://github.com/anza-xyz/agave/pull/16130)), and `RewardType` is now
+  `#[non_exhaustive]` (`solana-reward-info` 9.0.0). Not activated on mainnet-beta, testnet or
+  devnet as of 2026-11-10.
+
+- Adds 14 features, none activated on mainnet-beta, testnet or devnet as of 2026-11-10.
+  `alpenglow_fast_leader_handover` has a new feature ID with a private key
+  (`FLh2kvwNhDNN6kkQrwdDQ4p5FrgdqxnwykgMUryABRwT`), so a cluster can now activate it.
+  Agave no longer checks 11 features, all active on every cluster, including
+  `commission_rate_in_basis_points`. The full review is in `ACTIVATIONS.md` of
+  firehose-geyser-plugin.
+
 ## v4.4.1-fh3.0
 
 ### Changed
