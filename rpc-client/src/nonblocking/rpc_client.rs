@@ -7,6 +7,8 @@
 //! [JSON-RPC]: https://www.jsonrpc.org/specification
 
 pub use crate::mock_sender::Mocks;
+#[allow(deprecated)]
+use crate::rpc_client::SerializableMessage;
 #[cfg(feature = "spinner")]
 use {crate::spinner, solana_clock::MAX_HASH_AGE_IN_SECONDS, std::cmp::min};
 use {
@@ -14,8 +16,7 @@ use {
         http_sender::HttpSender,
         mock_sender::{MockSender, MocksMap, mock_encoded_account},
         rpc_client::{
-            GetConfirmedSignaturesForAddress2Config, RpcClientConfig, SerializableMessage,
-            SerializableTransaction,
+            GetConfirmedSignaturesForAddress2Config, RpcClientConfig, SerializableTransaction,
         },
         rpc_sender::*,
     },
@@ -34,6 +35,7 @@ use {
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
+    solana_message::VersionedMessage,
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{
         client_error::{
@@ -2137,6 +2139,75 @@ impl RpcClient {
     /// ```
     pub async fn get_ag_genesis_cert(&self) -> ClientResult<Option<WireBlockCertMessage>> {
         self.send(RpcRequest::GetAgGenesisCert, Value::Null).await
+    }
+
+    /// Returns the Validator Admission Ticket (VAT) active-set rank map for the epoch
+    /// containing `slot`, with an optional identity filter.
+    ///
+    /// Always queries finalized state, regardless of the client's default commitment.
+    /// Returns `None` if the epoch is unavailable.
+    ///
+    /// The filter preserves the validator's rank and the full map's total stake.
+    /// An unknown identity returns an empty validator list when the map is available.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getVatActiveSetRankMap`] RPC method.
+    ///
+    /// [`getVatActiveSetRankMap`]: https://solana.com/docs/rpc/http/getvatactivesetrankmap
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::{client_error::Error, config::RpcVatActiveSetRankMapConfig};
+    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+    /// # futures::executor::block_on(async {
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let certificate_slot = 100;
+    /// let response = rpc_client.get_vat_active_set_rank_map(
+    ///     certificate_slot,
+    ///     RpcVatActiveSetRankMapConfig::default(),
+    /// ).await?;
+    /// if let Some(rank_map) = response.value {
+    ///     for validator in rank_map.validators {
+    ///         println!("rank {}: {}", validator.rank, validator.node_pubkey);
+    ///     }
+    /// }
+    /// # Ok::<(), Error>(())
+    /// # })?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::{client_error::Error, config::RpcVatActiveSetRankMapConfig};
+    /// # use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+    /// # futures::executor::block_on(async {
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let certificate_slot = 100;
+    /// let identity = "67omRD8GkXTi8daWceprtQABkDeEm3SZYHUCrthQGB9D";
+    /// let response = rpc_client.get_vat_active_set_rank_map(
+    ///     certificate_slot,
+    ///     RpcVatActiveSetRankMapConfig {
+    ///         identity: Some(identity.to_string()),
+    ///         ..RpcVatActiveSetRankMapConfig::default()
+    ///     },
+    /// ).await?;
+    /// if let Some(rank_map) = response.value {
+    ///     if let Some(validator) = rank_map.validators.first() {
+    ///         println!("rank {}: {}", validator.rank, validator.node_pubkey);
+    ///     }
+    /// }
+    /// # Ok::<(), Error>(())
+    /// # })?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub async fn get_vat_active_set_rank_map(
+        &self,
+        slot: Slot,
+        config: RpcVatActiveSetRankMapConfig,
+    ) -> RpcResult<Option<RpcVatActiveSetRankMap>> {
+        self.send(RpcRequest::GetVatActiveSetRankMap, json!([slot, config]))
+            .await
     }
 
     /// Get block production for the current epoch.
@@ -5056,11 +5127,34 @@ impl RpcClient {
     /// This method corresponds directly to the [`getFeeForMessage`] RPC method.
     ///
     /// [`getFeeForMessage`]: https://solana.com/docs/rpc/http/getfeeformessage
+    #[deprecated(since = "4.5.0", note = "Use get_fee_for_versioned_message instead")]
+    #[allow(deprecated)]
     pub async fn get_fee_for_message(
         &self,
         message: &impl SerializableMessage,
     ) -> ClientResult<u64> {
-        let serialized = message.serialize();
+        self.get_fee_for_serialized_message(message.serialize())
+            .await
+    }
+
+    /// Returns the fee that the cluster would charge to process the provided message.
+    ///
+    /// Supports legacy, v0, and v1 messages through [`VersionedMessage`].
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getFeeForMessage`] RPC method.
+    ///
+    /// [`getFeeForMessage`]: https://solana.com/docs/rpc/http/getfeeformessage
+    pub async fn get_fee_for_versioned_message(
+        &self,
+        message: &VersionedMessage,
+    ) -> ClientResult<u64> {
+        self.get_fee_for_serialized_message(message.serialize())
+            .await
+    }
+
+    async fn get_fee_for_serialized_message(&self, serialized: Vec<u8>) -> ClientResult<u64> {
         let serialized_encoded = BASE64_STANDARD.encode(serialized);
         let result = self
             .send::<Response<Option<u64>>>(

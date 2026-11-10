@@ -5,14 +5,12 @@ use {
     },
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     agave_transaction_view::{
-        result::TransactionViewError, sanitize::SanitizeConfig,
-        transaction_view::SanitizedTransactionView,
+        result::TransactionViewError, transaction_view::SanitizedTransactionView,
     },
     crossbeam_channel::RecvTimeoutError,
     solana_measure::{measure::Measure, measure_us},
     solana_perf::packet::bytes::Bytes,
     solana_pubkey::Pubkey,
-    solana_runtime_transaction::sanitize_config::sanitize_config,
     std::{
         collections::HashSet,
         num::Saturating,
@@ -81,13 +79,11 @@ impl VotePacketReceiver {
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) -> Result<(), RecvTimeoutError> {
         let start = Instant::now();
-        let sanitize_config = sanitize_config();
         let mut stats = ReceiveAndBufferStats::default();
 
         let packet_batch = self.banking_packet_receiver.recv_timeout(recv_timeout)?;
         self.buffer_packet_batch(
             &packet_batch,
-            &sanitize_config,
             vote_storage,
             vote_source,
             slot_metrics_tracker,
@@ -97,7 +93,6 @@ impl VotePacketReceiver {
         while let Ok(packet_batch) = self.banking_packet_receiver.try_recv() {
             self.buffer_packet_batch(
                 &packet_batch,
-                &sanitize_config,
                 vote_storage,
                 vote_source,
                 slot_metrics_tracker,
@@ -125,7 +120,6 @@ impl VotePacketReceiver {
     fn buffer_packet_batch(
         &self,
         packet_batch: &BankingPacketBatch,
-        sanitize_config: &SanitizeConfig,
         vote_storage: &mut VoteStorage,
         vote_source: VoteSource,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
@@ -134,14 +128,11 @@ impl VotePacketReceiver {
         stats.num_packets_received += packet_batch.len();
 
         for packet in packet_batch.iter() {
-            let Some(packet_data) = packet.data(..) else {
+            let Some(bytes) = packet_bytes(packet) else {
                 continue;
             };
 
-            match SanitizedTransactionView::try_new_sanitized(
-                packet_bytes(packet, packet_data),
-                sanitize_config,
-            ) {
+            match SanitizedTransactionView::try_new_sanitized(bytes) {
                 Ok(packet) => {
                     if self.should_filter_packet(&packet) {
                         stats.packet_stats.filtered_account_key_count += 1;

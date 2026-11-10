@@ -133,7 +133,7 @@ use {
     crate::entry::{Entry, EntryView, MaxDataShredsLen},
     agave_votor_messages::{
         certificate::{CertSignature, CertificateType, GenesisCert},
-        consensus_message::Block,
+        consensus_message::{Block, BlockId},
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
         unverified_vote_message::UnverifiedCertificate,
     },
@@ -251,20 +251,20 @@ pub struct BlockFooterV1 {
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct BlockHeaderV1 {
     pub parent_slot: Slot,
-    pub parent_block_id: Hash,
+    pub parent_block_id: BlockId,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct UpdateParentV1 {
     pub new_parent_slot: Slot,
-    pub new_parent_block_id: Hash,
+    pub new_parent_block_id: BlockId,
 }
 
 /// Attests to genesis block finalization with a BLS aggregate signature.
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct GenesisCertBlockMarker {
     pub slot: Slot,
-    pub block_id: Hash,
+    pub block_id: BlockId,
     #[wincode(with = "PodBLSSignature")]
     pub bls_signature: BLSSignature,
     #[wincode(with = "WincodeVec<u8, BincodeLen>")]
@@ -299,7 +299,7 @@ impl TryFrom<GenesisCert> for GenesisCertBlockMarker {
 #[derive(Clone, PartialEq, Eq, Debug, SchemaWrite, SchemaRead)]
 pub struct BlockFinalizationCert {
     pub slot: Slot,
-    pub block_id: Hash,
+    pub block_id: BlockId,
     pub final_aggregate: VotesAggregate,
     pub notar_aggregate: Option<VotesAggregate>,
 }
@@ -309,7 +309,7 @@ impl BlockFinalizationCert {
     pub fn new_for_tests() -> BlockFinalizationCert {
         BlockFinalizationCert {
             slot: 1234567890,
-            block_id: Hash::new_from_array([1u8; 32]),
+            block_id: BlockId::new_unique(),
             final_aggregate: VotesAggregate {
                 signature: BLSSignatureCompressed(
                     [0; solana_bls_signatures::BLS_SIGNATURE_COMPRESSED_SIZE],
@@ -544,31 +544,12 @@ impl BlockComponent {
     pub(crate) const ENTRY_COUNT_SIZE: usize = 8;
     pub(crate) const EMPTY_ENTRY_BATCH: [u8; Self::ENTRY_COUNT_SIZE] = 0u64.to_le_bytes();
 
-    pub fn new_entry_batch(entries: Vec<Entry>) -> Result<Self, BlockComponentError> {
-        if entries.is_empty() {
-            return Err(BlockComponentError::EmptyEntryBatch);
-        }
-
-        if entries.len() >= Self::MAX_ENTRIES {
-            return Err(BlockComponentError::TooManyEntries {
-                count: entries.len(),
-                max: Self::MAX_ENTRIES,
-            });
-        }
-
-        Ok(Self::EntryBatch(entries))
-    }
-
-    pub const fn new_block_marker(marker: VersionedBlockMarker) -> Self {
-        Self::BlockMarker(marker)
-    }
-
-    pub fn new_block_header(parent_slot: Slot, parent_block_id: Hash) -> Self {
+    pub fn new_block_header(parent_slot: Slot, parent_block_id: BlockId) -> Self {
         let header = BlockHeaderV1 {
             parent_slot,
             parent_block_id,
         };
-        Self::new_block_marker(VersionedBlockMarker::from_block_header(header))
+        Self::BlockMarker(VersionedBlockMarker::from_block_header(header))
     }
 
     pub const fn as_marker(&self) -> Option<&VersionedBlockMarker> {
@@ -594,6 +575,27 @@ impl BlockComponent {
     /// are aborting the block
     pub fn infer_is_empty_entry_batch(data: &[u8]) -> bool {
         *data == Self::EMPTY_ENTRY_BATCH
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub const fn new_block_marker(marker: VersionedBlockMarker) -> Self {
+        Self::BlockMarker(marker)
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new_entry_batch(entries: Vec<Entry>) -> Result<Self, BlockComponentError> {
+        if entries.is_empty() {
+            return Err(BlockComponentError::EmptyEntryBatch);
+        }
+
+        if entries.len() >= Self::MAX_ENTRIES {
+            return Err(BlockComponentError::TooManyEntries {
+                count: entries.len(),
+                max: Self::MAX_ENTRIES,
+            });
+        }
+
+        Ok(Self::EntryBatch(entries))
     }
 }
 
@@ -759,7 +761,7 @@ mod tests {
     #[test]
     fn parse_genesis_certificate_from_shred() {
         let parent_slot = 41;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let shred_version = 123;
         let signature: BlsSignature = BlsKeypair::new().sign(b"genesis").into();
         let bitmap = vec![0xa5; 64];
@@ -796,7 +798,7 @@ mod tests {
     #[test]
     fn finalization_certificates_from_fast_footer() {
         let slot = 42;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let shred_version = 123;
         let final_bitmap = vec![0x11; 64];
         let (final_aggregate, final_signature) =
@@ -827,7 +829,7 @@ mod tests {
     #[test]
     fn finalization_certificates_from_slow_footer() {
         let slot = 42;
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         let shred_version = 123;
         let final_bitmap = vec![0x11; 64];
         let notar_bitmap = vec![0x22; 64];
@@ -866,7 +868,7 @@ mod tests {
     fn round_trips() {
         let header = BlockHeaderV1 {
             parent_slot: 12345,
-            parent_block_id: Hash::new_unique(),
+            parent_block_id: BlockId::new_unique(),
         };
         let bytes = wincode::serialize(&header).unwrap();
         assert_eq!(
@@ -883,7 +885,7 @@ mod tests {
 
         let marker = GenesisCertBlockMarker {
             slot: 999,
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
             bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![1, 2, 3],
         };
@@ -915,7 +917,7 @@ mod tests {
     fn length_prefixed_rejects_inner_size_mismatch() {
         let header = VersionedBlockHeader::V1(BlockHeaderV1 {
             parent_slot: 12345,
-            parent_block_id: Hash::new_unique(),
+            parent_block_id: BlockId::new_unique(),
         });
         let prefixed = LengthPrefixed::new(header);
         let mut bytes = wincode::serialize(&prefixed).unwrap();
@@ -934,7 +936,7 @@ mod tests {
     fn length_prefixed_rejects_oversized_deserialized_inner() {
         let marker = GenesisCertBlockMarker {
             slot: 999,
-            block_id: Hash::new_unique(),
+            block_id: BlockId::new_unique(),
             bls_signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
             bitmap: vec![0xAB; usize::from(u16::MAX) + 1],
         };

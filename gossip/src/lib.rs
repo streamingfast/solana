@@ -36,14 +36,6 @@ pub mod weighted_shuffle;
 #[macro_use]
 extern crate log;
 
-#[cfg(test)]
-#[macro_use]
-extern crate assert_matches;
-
-#[cfg_attr(feature = "frozen-abi", macro_use)]
-#[cfg(feature = "frozen-abi")]
-extern crate solana_frozen_abi_macro;
-
 #[macro_use]
 extern crate solana_metrics;
 

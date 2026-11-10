@@ -72,6 +72,7 @@ use {
     std::{
         convert::TryFrom,
         fs::File,
+        io::{IoSliceMut, Write},
         path::{Path, PathBuf},
         ptr, slice,
     },
@@ -166,48 +167,56 @@ pub fn read_data_header(
     })
 }
 
-/// Writes `data` entry to `file` at `offset`.
+/// Writes `data` entry to `writer` at `offset`.
 ///
 /// - `offset` to write at, does not need to be aligned; the fn will do it.
 ///   This is to support calling the fn with the current file len as the offset.
 ///
 /// Returns information about the write.
 pub fn write_data_entry(
-    file: &File,
+    writer: &mut impl Write,
     offset: FileOffset,
     address: &Pubkey,
     data: &[u8],
 ) -> Result<WriteInfo, WriteDataEntryError> {
-    let data_len = DataLen::try_from(data.len())?;
     let start_offset = offset
         .0
         .checked_next_multiple_of(DATA_ENTRY_OFFSET_ALIGNMENT as u64)
         .ok_or(WriteDataEntryError::OffsetOverrun(offset))?;
+    // Entries must start aligned, so write any padding from the previous entry as needed.
+    writer.write_all(&[0; DATA_ENTRY_OFFSET_ALIGNMENT][..(start_offset - offset.0) as usize])?;
+
+    let num_bytes_written = write_data_entry_bytes(writer, address, data)?;
+
+    Ok(WriteInfo {
+        start: FileOffset(start_offset),
+        num_bytes_written,
+    })
+}
+
+/// Writes a data entry to `writer`.
+///
+/// Returns the number of bytes written.
+fn write_data_entry_bytes(
+    writer: &mut impl Write,
+    address: &Pubkey,
+    data: &[u8],
+) -> Result</* num bytes written: */ usize, WriteDataEntryError> {
+    let data_len = DataLen::try_from(data.len())?;
     let mut num_bytes_written = 0;
 
-    file_io::write_buffer_to_file(
-        file,
-        address.as_ref(),
-        start_offset + num_bytes_written as FileSize,
-    )?;
+    writer.write_all(address.as_ref())?;
     num_bytes_written += size_of::<Pubkey>();
 
-    file_io::write_buffer_to_file(
-        file,
-        data_len.0.to_le_bytes().as_slice(),
-        start_offset + num_bytes_written as FileSize,
-    )?;
+    writer.write_all(&data_len.0.to_le_bytes())?;
     num_bytes_written += size_of::<DataLen>();
 
-    file_io::write_buffer_to_file(file, data, start_offset + num_bytes_written as u64)?;
+    writer.write_all(data)?;
     num_bytes_written += data.len();
 
     let expected_stored_size = calculate_data_entry_stored_size(data.len());
     if num_bytes_written == expected_stored_size {
-        Ok(WriteInfo {
-            start: FileOffset(start_offset),
-            num_bytes_written,
-        })
+        Ok(num_bytes_written)
     } else {
         Err(WriteDataEntryError::ShortWrite {
             expected: expected_stored_size,
@@ -220,8 +229,8 @@ pub fn write_data_entry(
 ///
 /// - `file_len` is the size of the file, and bounds reading.
 /// - `offset` to read from, must be aligned.
-/// - `expected_address` and `expected_data_len` are checked first
-///   and must match the data entry before the account data itself is read.
+/// - `expected_address` and `expected_data_len` are checked against what is read.
+///   If there is a mismatch, an error is returned.
 ///
 /// Returns the account data.
 pub fn read_data_entry(
@@ -237,19 +246,7 @@ pub fn read_data_entry(
         address: Pubkey::default(),
         data_len: 0,
     };
-    let data_entry_bytes = as_bytes_mut(&mut data_entry);
-    let num_bytes_read = file_io::read_into_buffer(file, file_len, offset.0, data_entry_bytes)
-        .map_err(ReadDataEntryError::Io)?;
-    if num_bytes_read != size_of::<DataEntrySerde>() {
-        return Err(ReadDataEntryError::ShortRead {
-            expected: size_of::<DataEntrySerde>(),
-            actual: num_bytes_read,
-        });
-    }
-
-    validate_data_entry(&data_entry, expected_address, expected_data_len)?;
-
-    let data_len = data_entry.data_len as usize;
+    let data_len = expected_data_len.0 as usize;
     let mut buffer = Vec::<u8>::with_capacity(data_len);
     let num_bytes_read = {
         // SAFETY:
@@ -265,29 +262,34 @@ pub fn read_data_entry(
                 data_len,
             )
         };
-        file_io::read_into_buffer(
+        file_io::read_into_buffers(
             file,
             file_len,
-            offset.0 + DATA_ENTRY_OFFSET_OF_DATA as u64,
-            buffer_bytes,
+            offset.0,
+            &mut [
+                IoSliceMut::new(as_bytes_mut(&mut data_entry)),
+                IoSliceMut::new(buffer_bytes),
+            ],
         )
         .map_err(ReadDataEntryError::Io)?
     };
-    // SAFETY:
-    // * num_bytes_read is <= the buffer's capacity.
-    // * only elements 0..num_bytes_read have been written.
-    unsafe {
-        buffer.set_len(num_bytes_read);
+    let expected_num_bytes_read = calculate_data_entry_stored_size(data_len);
+    if num_bytes_read != expected_num_bytes_read {
+        return Err(ReadDataEntryError::ShortRead {
+            expected: expected_num_bytes_read,
+            actual: num_bytes_read,
+        });
     }
 
-    if num_bytes_read == data_len {
-        Ok(buffer)
-    } else {
-        Err(ReadDataEntryError::ShortRead {
-            expected: data_len,
-            actual: num_bytes_read,
-        })
+    validate_data_entry(&data_entry, expected_address, expected_data_len)?;
+
+    // SAFETY:
+    // * data_len is <= the buffer's capacity.
+    // * only elements 0..data_len have been written.
+    unsafe {
+        buffer.set_len(data_len);
     }
+    Ok(buffer)
 }
 
 pub fn validate_data_entry_offset(
@@ -401,7 +403,9 @@ unsafe impl AsBytesMut for DataHeaderSerde {}
 /// Header for the data file.
 #[derive(Debug)]
 pub struct DataHeader {
+    #[allow(dead_code)] // field currently never read
     pub size: usize,
+    #[allow(dead_code)] // field currently never read
     pub format_version: Version,
     pub uid: u64,
 }
@@ -428,7 +432,15 @@ unsafe impl AsBytesMut for DataEntrySerde {}
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::assert_matches, tempfile::TempDir, test_case::test_case};
+    use {
+        super::*,
+        std::{
+            assert_matches,
+            io::{Seek as _, SeekFrom},
+        },
+        tempfile::TempDir,
+        test_case::test_case,
+    };
 
     fn new_data_entry_bytes(address: &Pubkey, data: &[u8]) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(DATA_ENTRY_FIXED_SIZE + data.len());
@@ -566,13 +578,14 @@ mod tests {
     fn test_write_and_read_data_entry() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().join("base");
-        let (_path, file, size) = create_data_file(&base_path, 42).unwrap();
+        let (_path, mut file, size) = create_data_file(&base_path, 42).unwrap();
 
         let offset = FileOffset(size as FileSize);
         let address = Pubkey::new_unique();
         let data = [0xDA; 123];
 
-        let write_info = write_data_entry(&file, offset, &address, &data).unwrap();
+        file.seek(SeekFrom::Start(offset.0)).unwrap();
+        let write_info = write_data_entry(&mut file, offset, &address, &data).unwrap();
         let end = write_info.start.0 + write_info.num_bytes_written as u64;
         let read_data = read_data_entry(
             &file,
@@ -588,22 +601,17 @@ mod tests {
 
     #[test]
     fn test_write_data_entry_bad_offset() {
-        let file = tempfile::tempfile().unwrap();
+        let mut file = tempfile::tempfile().unwrap();
 
         // offset overflows when aligning
-        let err = write_data_entry(&file, FileOffset(FileSize::MAX), &Pubkey::default(), &[])
-            .unwrap_err();
-        assert_matches!(err, WriteDataEntryError::OffsetOverrun(_));
-
-        // offset overflows when attempting to write the entry
         let err = write_data_entry(
-            &file,
-            FileOffset(FileSize::MAX - DATA_ENTRY_OFFSET_ALIGNMENT as u64),
+            &mut file,
+            FileOffset(FileSize::MAX),
             &Pubkey::default(),
             &[],
         )
         .unwrap_err();
-        assert_matches!(err, WriteDataEntryError::Io(_));
+        assert_matches!(err, WriteDataEntryError::OffsetOverrun(_));
     }
 
     #[test]

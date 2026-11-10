@@ -1,9 +1,9 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::bank::Bank,
     serde::{Deserialize, Serialize},
-    solana_account::{
-        Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
-    },
+    solana_account::{Account, AccountSharedData, state_traits::StateMutWincode as _},
     solana_clock::Epoch,
     solana_genesis_config::GenesisConfig,
     solana_pubkey::Pubkey,
@@ -15,7 +15,7 @@ use {
 
 /// The account address for the off curve account used to store metadata for calculating and
 /// paying voting rewards.
-static VOTE_REWARD_ACCOUNT_ADDR: LazyLock<Pubkey> = LazyLock::new(|| {
+pub(crate) static VOTE_REWARD_ACCOUNT_ADDR: LazyLock<Pubkey> = LazyLock::new(|| {
     let (pubkey, _) = Pubkey::find_program_address(
         &[b"vote_reward_account"],
         &agave_feature_set::alpenglow::id(),
@@ -24,7 +24,7 @@ static VOTE_REWARD_ACCOUNT_ADDR: LazyLock<Pubkey> = LazyLock::new(|| {
 });
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "CrSvqX8ZAYxjZ6XoTp9Z1ED6McdnqhXq8zYFWBDkCwJs",
@@ -64,7 +64,7 @@ impl EpochInflationState {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "FeEFnXTk7DxHkCamcHDpRRjRDfSyMh3DGnefbwSvA8Kc",
@@ -95,7 +95,7 @@ impl EpochInflationAccountState {
     /// the expected size.
     pub(crate) fn new_from_bank(bank: &Bank) -> Option<Self> {
         bank.get_account(&VOTE_REWARD_ACCOUNT_ADDR)
-            .and_then(|acct| wincode::deserialize(acct.data()).ok())
+            .and_then(|acct| acct.state().ok())
     }
 
     /// Returns the epoch-start inflation rewards recorded for `epoch`.
@@ -108,8 +108,7 @@ impl EpochInflationAccountState {
     fn set_state(&self, bank: &Bank) {
         let data = wincode::serialize(&self).unwrap();
         let lamports = bank.get_minimum_balance_for_rent_exemption(data.len());
-        let mut account = AccountSharedData::new(lamports, data.len(), &system_program::ID);
-        account.set_data_from_slice(&data);
+        let account = AccountSharedData::new_with_data(lamports, data, &system_program::ID);
         bank.store_account_and_update_capitalization(&VOTE_REWARD_ACCOUNT_ADDR, &account);
     }
 
@@ -181,7 +180,8 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{
                 GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config,
-                create_genesis_config_with_alpenglow_vote_accounts, deactivate_features,
+                create_genesis_config_with_tower_leader, create_genesis_config_with_vote_accounts,
+                deactivate_features,
             },
             slot_params::slot_time_feature_ids,
         },
@@ -222,7 +222,7 @@ mod tests {
             let validator_keypairs = (0..10)
                 .map(|_| ValidatorVoteKeypairs::new_rand())
                 .collect::<Vec<_>>();
-            let genesis = create_genesis_config_with_alpenglow_vote_accounts(
+            let genesis = create_genesis_config_with_vote_accounts(
                 1_000_000_000,
                 &validator_keypairs,
                 vec![100; validator_keypairs.len()],
@@ -282,7 +282,7 @@ mod tests {
         ] {
             let mut bank_epoch_0 = Bank::new_for_tests(&genesis_config);
             if activate_slot_time_feature {
-                bank_epoch_0.activate_feature(&feature_set::reduce_slot_time_to_350ms::id());
+                bank_epoch_0.activate_feature(&feature_set::reduce_slot_time_to_250ms::id());
             }
             let bank_forks = BankForks::new_rw_arc(bank_epoch_0);
             let bank_epoch_0 = bank_forks.read().unwrap().root_bank();
@@ -340,7 +340,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(10_000);
+        } = create_genesis_config_with_tower_leader(10_000, &Pubkey::new_unique(), 0);
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let root_bank = bank_forks.read().unwrap().root_bank();
 

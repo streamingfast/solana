@@ -9,7 +9,7 @@ pub use pending_snapshot_packages::PendingSnapshotPackages;
 use qualifier_attr::qualifiers;
 use {
     crate::{
-        bank::{Bank, BankSlotDelta, DropCallback},
+        bank::{Bank, BankId, BankSlotDelta, DropCallback},
         bank_forks::BankForks,
         snapshot_controller::SnapshotController,
         snapshot_package::SnapshotPackage,
@@ -17,7 +17,7 @@ use {
     agave_snapshots::{SnapshotArchiveKind, SnapshotKind, error::SnapshotError},
     crossbeam_channel::{Receiver, SendError, Sender},
     log::*,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_measure::{measure::Measure, measure_us},
     stats::StatsManager,
     std::{
@@ -41,8 +41,8 @@ use {
 const MIN_LOOP_INTERVAL: Duration = Duration::from_millis(100);
 // Set the clean interval duration to be approximately how long before the next incremental
 // snapshot request is received, plus some buffer.  The default incremental snapshot interval is
-// 100 slots, which ends up being 40 seconds plus buffer.
-const CLEAN_INTERVAL: Duration = Duration::from_secs(50);
+// 200 slots, which ends up being 50 seconds plus buffer.
+const CLEAN_INTERVAL: Duration = Duration::from_secs(60);
 const SHRINK_INTERVAL: Duration = Duration::from_secs(1);
 // Roots newer than this stay in the write cache, so recently written accounts load from the
 // cache instead of storage. Both the background flush and snapshot requests stop here.
@@ -376,8 +376,8 @@ impl PrunedBanksRequestHandler {
         // Banks for the same slot are purged sequentially
         let accounts_db = bank.rc.accounts.accounts_db.as_ref();
         grouped_banks_to_purge.into_iter().for_each(|group| {
-            group.iter().for_each(|(slot, bank_id)| {
-                accounts_db.purge_slot(*slot, *bank_id, true);
+            group.iter().for_each(|(_, bank_id)| {
+                accounts_db.purge_slot(*bank_id, true);
             })
         });
         num_banks_to_purge
@@ -566,7 +566,7 @@ impl AccountsBackgroundService {
                                 bank.rc
                                     .accounts
                                     .accounts_db
-                                    .clean_accounts(max_clean_slot_inclusive, false);
+                                    .clean_accounts(max_clean_slot_inclusive);
                                 last_cleaned_slot = max_clean_slot_inclusive;
                                 previous_clean_time = Instant::now();
                             }
@@ -764,13 +764,25 @@ mod test {
             &AccountSharedData::new(264, 0, &Pubkey::default()),
         );
         assert!(bank0.get_account(&account_key).is_some());
-        pruned_banks_sender.send((0, 0)).unwrap();
+        pruned_banks_sender.send((0, BankId::new(0))).unwrap();
 
-        assert!(!bank0.rc.accounts.scan_slot(0, |_| Some(())).is_empty());
+        assert!(
+            !bank0
+                .rc
+                .accounts
+                .scan_slot(0, bank0.bank_id(), |_| Some(()))
+                .is_empty()
+        );
 
         pruned_banks_request_handler.remove_dead_slots(&bank0, &mut 0, &mut 0);
 
-        assert!(bank0.rc.accounts.scan_slot(0, |_| Some(())).is_empty());
+        assert!(
+            bank0
+                .rc
+                .accounts
+                .scan_slot(0, bank0.bank_id(), |_| Some(()))
+                .is_empty()
+        );
     }
 
     /// Ensure that unhandled snapshot requests are properly re-enqueued or dropped

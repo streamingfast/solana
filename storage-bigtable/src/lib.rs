@@ -1,6 +1,8 @@
 #![cfg(feature = "agave-unstable-api")]
 #![allow(clippy::arithmetic_side_effects)]
 
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::bigtable::RowKey,
     agave_reserved_account_keys::ReservedAccountKeys,
@@ -41,10 +43,6 @@ use {
 
 #[macro_use]
 extern crate solana_metrics;
-
-#[cfg_attr(feature = "frozen-abi", macro_use)]
-#[cfg(feature = "frozen-abi")]
-extern crate solana_frozen_abi_macro;
 
 mod access_token;
 mod bigtable;
@@ -157,7 +155,7 @@ fn key_to_slot(key: &str) -> Option<Slot> {
 // added to ConfirmedBlock, they must either be excluded or set to `default_on_eof` here
 //
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample, PartialEq),
     frozen_abi(
         abi_digest = "8mtdxbe7kZ8oZi2HP3QFS2nXaT9maB4q2Msdx4AfiDRc",
@@ -227,11 +225,11 @@ impl From<StoredConfirmedBlock> for ConfirmedBlock {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample, PartialEq))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample, PartialEq))]
 #[derive(Serialize, Deserialize)]
 struct StoredConfirmedBlockTransaction {
     #[cfg_attr(
-        feature = "frozen-abi",
+        feature = "stable-abi",
         stable_abi_sample(with = "sample_bincode_compatible_transaction(rng)")
     )]
     transaction: VersionedTransaction,
@@ -242,7 +240,7 @@ struct StoredConfirmedBlockTransaction {
 // would make the ABI digest unstable against the future wincode migration. Restrict the sample to
 // the legacy/v0 versions — the only formats present in historical bincode-serialized bigtable
 // blocks — which encode identically under bincode and wincode.
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 fn sample_bincode_compatible_transaction(
     rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
 ) -> VersionedTransaction {
@@ -291,7 +289,7 @@ impl From<StoredConfirmedBlockTransaction> for TransactionWithStatusMeta {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample, PartialEq))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample, PartialEq))]
 #[derive(Serialize, Deserialize)]
 struct StoredConfirmedBlockTransactionStatusMeta {
     err: Option<TransactionError>,
@@ -350,7 +348,7 @@ impl From<TransactionStatusMeta> for StoredConfirmedBlockTransactionStatusMeta {
 
 type StoredConfirmedBlockRewards = Vec<StoredConfirmedBlockReward>;
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample, PartialEq))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample, PartialEq))]
 #[derive(Serialize, Deserialize)]
 struct StoredConfirmedBlockReward {
     pubkey: String,
@@ -382,7 +380,7 @@ impl From<Reward> for StoredConfirmedBlockReward {
 
 // A serialized `TransactionInfo` is stored in the `tx` table
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "52D8hfqoXUUKceK5LX9U8d2jeFgCPf71rbY64myujjY3",
@@ -433,7 +431,7 @@ impl From<TransactionInfo> for TransactionStatus {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "Arv3gGibvif2UEycMdRBdj4Jid2NaLmg5ZwXYLfBAsRS",
@@ -923,6 +921,31 @@ impl LedgerStorage {
             u32, /*slot index*/
         )>,
     > {
+        self.get_confirmed_signatures_for_address_with_highest_slot(
+            address,
+            before_signature,
+            until_signature,
+            Slot::MAX,
+            limit,
+        )
+        .await
+    }
+
+    /// Get confirmed signatures no newer than `highest_slot` for the provided address, in
+    /// descending ledger order.
+    pub async fn get_confirmed_signatures_for_address_with_highest_slot(
+        &self,
+        address: &Pubkey,
+        before_signature: Option<&Signature>,
+        until_signature: Option<&Signature>,
+        highest_slot: Slot,
+        limit: usize,
+    ) -> Result<
+        Vec<(
+            ConfirmedTransactionStatusWithSignature,
+            u32, /*slot index*/
+        )>,
+    > {
         trace!("LedgerStorage::get_confirmed_signatures_for_address request received: {address:?}");
         let mut bigtable = self.connection.client();
 
@@ -943,6 +966,11 @@ impl LedgerStorage {
                 (slot, index)
             }
         };
+        let (first_slot, before_transaction_index) = if first_slot > highest_slot {
+            (highest_slot, u32::MAX)
+        } else {
+            (first_slot, before_transaction_index)
+        };
 
         // Figure out where to end listing from based on `until_signature`
         let (last_slot, until_transaction_index) = match until_signature {
@@ -960,6 +988,10 @@ impl LedgerStorage {
                 (slot, index)
             }
         };
+
+        if first_slot < last_slot {
+            return Ok(vec![]);
+        }
 
         let mut infos = vec![];
 
@@ -1416,6 +1448,7 @@ impl LedgerStorage {
 mod test {
     use {
         super::*,
+        agave_votor_messages::consensus_message::BlockId,
         solana_entry::block_component::{BlockFooterV1, BlockHeaderV1},
         solana_hash::Hash,
     };
@@ -1426,7 +1459,7 @@ mod test {
         let block_markers = vec![
             VersionedBlockMarker::from_block_header(BlockHeaderV1 {
                 parent_slot: slot - 1,
-                parent_block_id: Hash::new_unique(),
+                parent_block_id: BlockId::from(Hash::new_unique()),
             }),
             VersionedBlockMarker::from_block_footer(BlockFooterV1 {
                 bank_hash: Hash::new_unique(),

@@ -239,13 +239,14 @@ mod tests {
         itertools::Itertools,
         solana_keypair::Keypair,
         solana_ledger::{
-            genesis_utils::{GenesisConfigInfo, create_genesis_config_with_leader},
+            genesis_utils::GenesisConfigInfo,
             get_tmp_ledger_path_auto_delete,
             shred::{Shred, Shredder, override_proof_size},
         },
         solana_runtime::{
             bank::{Bank, SlotLeader},
             bank_forks::BankForks,
+            genesis_utils::create_genesis_config_with_tower_leader,
         },
         solana_signer::Signer,
         solana_time_utils::timestamp,
@@ -266,7 +267,7 @@ mod tests {
         };
         let mut rng = rand::rng();
         let shredder = Shredder::new(slot, slot - 1, 0, shred_version).unwrap();
-        let next_shred_index = 353;
+        let next_shred_index = 352;
         let shred1 = new_rand_shred(&mut rng, next_shred_index, &shredder, &my_keypair);
         let shredder1 = Shredder::new(slot + 1, slot, 0, shred_version).unwrap();
         let shred2 = match expected_error {
@@ -304,7 +305,7 @@ mod tests {
         let mut rng = rand::rng();
         let shredder = Shredder::new(slot, slot - 1, 0, shred_version).unwrap();
         let mut bad_proof_size_shred = || {
-            let shred = new_rand_shred(&mut rng, 353, &shredder, &keypair);
+            let shred = new_rand_shred(&mut rng, 352, &shredder, &keypair);
             let mut payload = shred.payload().to_vec();
             override_proof_size(&mut payload, 5);
             let mut shred = Shred::new_from_serialized_shred(payload).unwrap();
@@ -344,7 +345,7 @@ mod tests {
         let my_pubkey = my_keypair.pubkey();
         let shred_version = 0;
         let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_with_leader(10_000, &my_pubkey, 10_000);
+            create_genesis_config_with_tower_leader(10_000, &my_pubkey, 10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks_arc = BankForks::new_rw_arc(bank);
         {
@@ -401,7 +402,8 @@ mod tests {
         let my_keypair = Arc::new(Keypair::new());
         let my_pubkey = my_keypair.pubkey();
         let shred_version = 0;
-        let genesis_config_info = create_genesis_config_with_leader(10_000, &my_pubkey, 10_000);
+        let genesis_config_info =
+            create_genesis_config_with_tower_leader(10_000, &my_pubkey, 10_000);
         let GenesisConfigInfo { genesis_config, .. } = genesis_config_info;
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks_arc = BankForks::new_rw_arc(bank);
@@ -527,7 +529,8 @@ mod tests {
         let my_keypair = Arc::new(Keypair::new());
         let my_pubkey = my_keypair.pubkey();
         let shred_version = 0;
-        let genesis_config_info = create_genesis_config_with_leader(10_000, &my_pubkey, 10_000);
+        let genesis_config_info =
+            create_genesis_config_with_tower_leader(10_000, &my_pubkey, 10_000);
         let GenesisConfigInfo { genesis_config, .. } = genesis_config_info;
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks_arc = BankForks::new_rw_arc(bank);

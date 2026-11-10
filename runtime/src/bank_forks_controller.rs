@@ -225,7 +225,7 @@ mod tests {
     use {
         super::*,
         crate::{bank::SlotLeader, bank_forks::BankForks, genesis_utils::create_genesis_config},
-        solana_hash::Hash,
+        agave_votor_messages::consensus_message::BlockId,
         std::{thread, time::Duration},
     };
 
@@ -233,7 +233,7 @@ mod tests {
     fn test_bank_forks_controller_keeps_highest_pending_set_root() {
         let (controller, receiver) = BankForksControllerHandle::new();
 
-        let block_id_5 = Hash::new_unique();
+        let block_id_5 = BlockId::new_unique();
         controller.enqueue_set_root(Block {
             slot: 5,
             block_id: block_id_5,
@@ -279,7 +279,7 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis.genesis_config));
         let parent_bank = bank_forks.read().unwrap().root_bank();
         let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), 1);
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         bank.set_block_id(Some(block_id));
         let bank = bank_forks
             .write()
@@ -363,7 +363,7 @@ mod tests {
 
         let parent_bank = bank_forks.read().unwrap().root_bank();
         let bank = Bank::new_from_parent(parent_bank, SlotLeader::default(), 1);
-        let block_id = Hash::new_unique();
+        let block_id = BlockId::new_unique();
         bank.set_block_id(Some(block_id));
         bank.freeze();
         let inserted_bank = controller.insert_bank(bank).unwrap();

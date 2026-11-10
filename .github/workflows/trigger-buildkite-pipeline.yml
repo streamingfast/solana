@@ -4,6 +4,7 @@ on:
   pull_request_target:
     branches:
       - master
+      - v[0-9]+.[0-9]+
     types:
       - opened
       - synchronize
@@ -14,17 +15,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}-${{ github.event.label.name || 'CI' }}
   cancel-in-progress: true
 
 jobs:
   member_check:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     if: github.repository_owner == 'anza-xyz' && github.event.action != 'labeled'
     outputs:
       should_trigger: ${{ steps.check.outputs.should_trigger }}
     permissions:
       contents: read
+      statuses: write
     steps:
       - name: Check permission
         id: check
@@ -33,9 +35,12 @@ jobs:
           REPO: ${{ github.repository }}
           EVENT_SENDER: ${{ github.event.sender.login }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          COMMIT: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           TRUSTED_CI_USERS=(
             "mergify[bot]"
+            "agave-version-bumper[bot]"
           )
           for trusted_ci_user in "${TRUSTED_CI_USERS[@]}"; do
             if [[ "$EVENT_SENDER" == "$trusted_ci_user" && "$PR_AUTHOR" == "$trusted_ci_user" ]]; then
@@ -57,12 +62,23 @@ jobs:
               ;;
             *)
               echo "should_trigger=false" >> $GITHUB_OUTPUT
-              exit 1
+
+              {
+                echo "### ⏳ Waiting for CI approval"
+                echo ""
+                echo 'Waiting for a member to add the `CI` label'
+              } >> "$GITHUB_STEP_SUMMARY"
+
+              gh api --method POST "repos/$REPO/statuses/$COMMIT" \
+                -f state=pending \
+                -f context="buildkite/agave" \
+                -f description="⏳ waiting for a member to add the CI label" \
+                -f target_url="$RUN_URL"
               ;;
           esac
 
   label_check:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     if: github.repository_owner == 'anza-xyz' && github.event.action == 'labeled' && github.event.label.name == 'CI'
     outputs:
       should_trigger: ${{ steps.check.outputs.should_trigger }}
@@ -86,7 +102,7 @@ jobs:
             || echo "CI label was already removed."
 
   trigger:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs:
       - member_check
       - label_check

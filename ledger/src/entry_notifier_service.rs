@@ -1,8 +1,9 @@
 use {
     crate::entry_notifier_interface::{EntryNotifierArc, EntryUpdateParentInfo},
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError, bounded},
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_entry::{block_component::VersionedBlockFooter, entry::EntrySummary},
+    solana_runtime::bank::BankId,
     std::{
         sync::{
             Arc,
@@ -136,6 +137,7 @@ impl EntryNotifierService {
 mod tests {
     use {
         super::*, crate::entry_notifier_interface::EntryNotifier,
+        agave_votor_messages::consensus_message::BlockId,
         solana_entry::block_component::BlockFooterV1, solana_hash::Hash, std::sync::Mutex,
     };
 
@@ -195,7 +197,7 @@ mod tests {
                 update_parent.slot,
                 update_parent.cleared_bank_id,
                 update_parent.parent_slot,
-                update_parent.parent_block_id,
+                update_parent.parent_block_id.to_hash(),
             ));
         }
     }
@@ -212,12 +214,12 @@ mod tests {
             skip_reward_cert: None,
             notar_reward_cert: None,
         });
-        let parent_block_id = Hash::new_unique();
+        let parent_block_id = BlockId::new_unique();
 
         sender
             .send(EntryNotification::Entry {
                 slot: 42,
-                bank_id: 9,
+                bank_id: BankId::new(9),
                 index: 3,
                 entry: EntrySummary {
                     num_hashes: 1,
@@ -230,7 +232,7 @@ mod tests {
         sender
             .send(EntryNotification::UpdateParent(EntryUpdateParentInfo {
                 slot: 42,
-                cleared_bank_id: 9,
+                cleared_bank_id: BankId::new(9),
                 parent_slot: 40,
                 parent_block_id,
             }))
@@ -238,7 +240,7 @@ mod tests {
         sender
             .send(EntryNotification::BlockFooter {
                 slot: 42,
-                bank_id: 9,
+                bank_id: BankId::new(9),
                 block_footer: Box::new(block_footer.clone()),
             })
             .unwrap();
@@ -252,14 +254,14 @@ mod tests {
             vec![
                 TestEvent::Entry {
                     slot: 42,
-                    bank_id: 9,
+                    bank_id: BankId::new(9),
                     index: 3,
                     starting_transaction_index: 7,
                 },
-                TestEvent::UpdateParent(42, 9, 40, parent_block_id),
+                TestEvent::UpdateParent(42, BankId::new(9), 40, parent_block_id.to_hash()),
                 TestEvent::BlockFooter {
                     slot: 42,
-                    bank_id: 9,
+                    bank_id: BankId::new(9),
                     block_footer: Box::new(block_footer),
                 },
             ]

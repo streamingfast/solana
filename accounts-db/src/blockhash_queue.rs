@@ -1,7 +1,8 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 #[allow(deprecated)]
 use solana_sysvar::recent_blockhashes;
 use {
-    serde::{Deserialize, Serialize},
     solana_clock::MAX_RECENT_BLOCKHASHES,
     solana_fee_calculator::FeeCalculator,
     solana_hash::Hash,
@@ -12,8 +13,8 @@ use {
 };
 
 #[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
+#[derive(Debug, PartialEq, Eq, Clone, SchemaRead, SchemaWrite)]
 pub struct HashInfo {
     fee_calculator: FeeCalculator,
     hash_index: u64,
@@ -28,15 +29,15 @@ impl HashInfo {
 
 /// Low memory overhead, so can be cloned for every checkpoint
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "5ojmBDhhu9AjKUc1LSHhZfXF6KeicvZpKP6XdLNaFAdy",
-        abi_serializer = ["bincode", "wincode"],
+        abi_serializer = "wincode",
         test_roundtrip = "eq_and_wire"
     )
 )]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct BlockhashQueue {
     /// index of last hash to be registered
     last_hash_index: u64,
@@ -50,8 +51,7 @@ pub struct BlockhashQueue {
     max_age: usize,
 
     /// durable nonce value for the last hash
-    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
-    #[serde(skip)]
+    #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Default::default()"))]
     #[wincode(skip)]
     durable_nonce: Option<DurableNonce>,
 }
@@ -185,10 +185,7 @@ impl BlockhashQueue {
 mod tests {
     #[allow(deprecated)]
     use solana_sysvar::recent_blockhashes::IterItem;
-    use {
-        super::*, bincode::serialize, solana_clock::MAX_RECENT_BLOCKHASHES,
-        solana_sha256_hasher::hash, std::iter,
-    };
+    use {super::*, solana_clock::MAX_RECENT_BLOCKHASHES, solana_sha256_hasher::hash, std::iter};
 
     #[test]
     fn test_register_hash() {
@@ -224,9 +221,9 @@ mod tests {
     fn test_reject_old_last_hash() {
         let max_age = 100;
         let mut hash_queue = BlockhashQueue::new(max_age);
-        let last_hash = hash(&serialize(&0).unwrap());
+        let last_hash = hash(&wincode::serialize(&0).unwrap());
         for i in 0..102 {
-            let last_hash = hash(&serialize(&i).unwrap());
+            let last_hash = hash(&wincode::serialize(&i).unwrap());
             hash_queue.register_hash(&last_hash, 0);
         }
         // Assert we're no longer able to use the oldest hash.
@@ -234,7 +231,7 @@ mod tests {
         assert!(!hash_queue.is_hash_valid_for_age(&last_hash, 0));
 
         // Assert we are not able to use the oldest remaining hash.
-        let last_valid_hash = hash(&serialize(&1).unwrap());
+        let last_valid_hash = hash(&wincode::serialize(&1).unwrap());
         assert!(hash_queue.is_hash_valid_for_age(&last_valid_hash, max_age));
         assert!(!hash_queue.is_hash_valid_for_age(&last_valid_hash, 0));
     }
@@ -257,7 +254,7 @@ mod tests {
         // Sanity-check an empty BlockhashQueue
         assert_eq!(recent_blockhashes.count(), 0);
         for i in 0..MAX_RECENT_BLOCKHASHES {
-            let hash = hash(&serialize(&i).unwrap());
+            let hash = hash(&wincode::serialize(&i).unwrap());
             blockhash_queue.register_hash(&hash, 0);
         }
         #[allow(deprecated)]

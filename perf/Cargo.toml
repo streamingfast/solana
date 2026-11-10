@@ -32,19 +32,18 @@ dev-context-only-utils = [
     "solana-hash/atomic",
     "solana-transaction/wincode",
 ]
-frozen-abi = [
+stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-packet/frozen-abi",
-    "solana-short-vec/frozen-abi",
-    "solana-vote-program/frozen-abi",
+    "solana-pubkey/stable-abi",
+    "solana-vote-program/stable-abi",
 ]
 
 [dependencies]
 agave-transaction-view = { workspace = true }
 ahash = { workspace = true }
 arc-swap = { workspace = true }
-bincode = { workspace = true }
+bitflags = { workspace = true, features = ["serde"] }
 bytes = { workspace = true, features = ["serde"] }
 log = { workspace = true }
 num_cpus = { workspace = true }
@@ -52,15 +51,13 @@ rand = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 solana-clock = { workspace = true, optional = true }
-solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true, optional = true }
 solana-message = { workspace = true }
-solana-metrics = { workspace = true }
-solana-packet = { workspace = true, features = ["bincode"] }
-solana-pubkey = { workspace = true, default-features = false, features = ["rand"] }
-solana-runtime-transaction = { workspace = true }
+solana-packet = { workspace = true }
+solana-pubkey = { workspace = true, default-features = false, features = ["rand", "serde"] }
 solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true, features = ["verify"] }
@@ -68,7 +65,7 @@ solana-signer = { workspace = true, optional = true }
 solana-system-interface = { workspace = true, optional = true }
 solana-system-transaction = { workspace = true, optional = true }
 solana-time-utils = { workspace = true }
-solana-transaction = { workspace = true, optional = true, features = ["serde"] }
+solana-transaction = { workspace = true, optional = true, features = ["serde", "wincode"] }
 solana-transaction-context = { workspace = true }
 solana-vote = { workspace = true, optional = true }
 solana-vote-program = { workspace = true, optional = true }
@@ -82,7 +79,6 @@ nix = { workspace = true, features = ["user"] }
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-random = { path = "../random", features = ["agave-unstable-api"] }
-assert_matches = { workspace = true }
 bencher = { workspace = true }
 rand_chacha = { workspace = true }
 solana-perf = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
@@ -94,10 +90,6 @@ jemallocator = { workspace = true }
 
 [[bench]]
 name = "dedup"
-harness = false
-
-[[bench]]
-name = "recycler"
 harness = false
 
 [[bench]]

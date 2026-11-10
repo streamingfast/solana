@@ -4,7 +4,6 @@
 use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
-        banking_trace::BankingTracer,
         block_creation_loop::ReplayHighestFrozen,
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
@@ -29,6 +28,8 @@ use {
     agave_bls_sigverify::{
         bls_sigverifier::{self, SigVerifierChannels, SigVerifierContext},
         generated_cert_types::GeneratedCertTypes,
+        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
+        pubkeys::VerifiedVotorSlotsMessage,
         rewards::RewardInput,
     },
     agave_jemalloc::jemalloc::Arena,
@@ -41,10 +42,7 @@ use {
         voting_service::{VotingService as BLSVotingService, votor_rate_limit_pps},
         votor::{Votor, VotorConfig},
     },
-    agave_votor_messages::{
-        VerifiedVotorSlotsMessage, consensus_message::Block,
-        metric_types::MAX_IN_FLIGHT_CONSENSUS_EVENTS,
-    },
+    agave_votor_messages::consensus_message::Block,
     agave_votor_transport::{PeerList, endpoint::QuicDatagramEndpoint},
     arc_swap::ArcSwap,
     crossbeam_channel::{Receiver, Sender, bounded, unbounded},
@@ -98,14 +96,6 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
-
-/// Sets the upper bound on the number of batches stored in the retransmit
-/// stage ingress channel.
-/// Allows for a max of 16k batches of up to 64 packets each
-/// (PACKETS_PER_BATCH).
-/// This translates to about 1 GB of RAM for packet storage in the worst case.
-/// In reality this means about 200K shreds since most batches are not full.
-const CHANNEL_SIZE_RETRANSMIT_INGRESS: usize = 16 * 1024;
 
 /// The maximum number of alpenglow packets that can be processed in a single batch
 pub(crate) const MAX_ALPENGLOW_PACKET_NUM: usize = 10_000;
@@ -257,7 +247,6 @@ impl Tvu {
         block_metadata_notifier: Option<BlockMetadataNotifierArc>,
         wait_to_vote_slot: Option<Slot>,
         snapshot_controller: Option<Arc<SnapshotController>>,
-        banking_tracer: Arc<BankingTracer>,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
         cluster_slots: Arc<ClusterSlots>,
         slot_status_notifier: Option<SlotStatusNotifier>,
@@ -401,8 +390,17 @@ impl Tvu {
 
         let (verified_sender, verified_receiver) = unbounded();
 
-        let (retransmit_sender, retransmit_receiver) =
-            EvictingSender::new_bounded(CHANNEL_SIZE_RETRANSMIT_INGRESS);
+        let (retransmit_sender, retransmit_stage) = RetransmitStage::new(
+            bank_forks.clone(),
+            leader_schedule_cache.clone(),
+            cluster_info.clone(),
+            Arc::new(retransmit_sockets),
+            max_slots.clone(),
+            rpc_subscriptions.clone(),
+            slot_status_notifier.clone(),
+            tvu_config.turbine_xdp_sender,
+            votor_event_sender.clone(),
+        );
 
         let shred_sigverify = solana_turbine::sigverify_shreds::spawn_shred_sigverify(
             cluster_info.clone(),
@@ -421,19 +419,6 @@ impl Tvu {
                 }
             }),
             tvu_config.shred_sigverify_threads,
-        );
-
-        let retransmit_stage = RetransmitStage::new(
-            bank_forks.clone(),
-            leader_schedule_cache.clone(),
-            cluster_info.clone(),
-            Arc::new(retransmit_sockets),
-            retransmit_receiver,
-            max_slots.clone(),
-            rpc_subscriptions.clone(),
-            slot_status_notifier.clone(),
-            tvu_config.turbine_xdp_sender,
-            votor_event_sender.clone(),
         );
 
         let (ancestor_duplicate_slots_sender, ancestor_duplicate_slots_receiver) = unbounded();
@@ -547,7 +532,7 @@ impl Tvu {
             highest_finalized: highest_finalized.clone(),
             bank_forks_controller,
             bls_sender: bls_sender.clone(),
-            commitment_sender: votor_commitment_sender,
+            commitment_sender: votor_commitment_sender.clone(),
             bank_notification_sender: bank_notification_sender.clone(),
             leader_window_info_sender,
             highest_parent_ready: highest_parent_ready.clone(),
@@ -585,6 +570,7 @@ impl Tvu {
             footer_certs_sender,
             optimistic_parent_sender,
             lockouts_sender,
+            votor_commitment_sender,
         };
 
         let replay_receivers = ReplayReceivers {
@@ -619,7 +605,6 @@ impl Tvu {
             tower,
             vote_tracker,
             cluster_slots,
-            banking_tracer,
             snapshot_controller,
             replay_highest_frozen,
             highest_parent_ready,
@@ -774,7 +759,10 @@ pub mod tests {
         solana_net_utils::{SocketAddrSpace, sockets::bind_to_localhost_unique},
         solana_poh::poh_recorder::create_test_recorder,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
-        solana_runtime::{bank::Bank, bank_forks_controller::BankForksControllerHandle},
+        solana_runtime::{
+            bank::{Bank, SlotLeader},
+            bank_forks_controller::BankForksControllerHandle,
+        },
         solana_signer::Signer,
         solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         std::sync::atomic::{AtomicU64, Ordering},
@@ -812,6 +800,14 @@ pub mod tests {
             .expect("Expected to successfully open ledger");
         let blockstore = Arc::new(blockstore);
         let bank = bank_forks.read().unwrap().working_bank();
+        // Give PoH a child bank outside of bank_forks (this also freezes bank 0).
+        // Otherwise PoH may complete bank 0, which ReplayStage tracks as active
+        // without a progress entry, and panics.
+        let poh_bank = Arc::new(Bank::new_from_parent(
+            bank.clone(),
+            SlotLeader::default(),
+            1,
+        ));
         let (
             exit,
             poh_recorder,
@@ -819,7 +815,7 @@ pub mod tests {
             _transaction_recorder,
             poh_service,
             _entry_receiver,
-        ) = create_test_recorder(bank.clone(), blockstore.clone(), None, None);
+        ) = create_test_recorder(poh_bank, blockstore.clone(), None, None);
         let vote_keypair = Keypair::new();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
@@ -908,7 +904,6 @@ pub mod tests {
             None, // block_metadata_notifier
             None, // wait_to_vote_slot
             None, // snapshot_controller
-            BankingTracer::new_disabled(),
             outstanding_repair_requests,
             cluster_slots,
             None, // slot_status_notifier

@@ -98,7 +98,6 @@
 //! scheduler pool.
 use {
     crate::utils::{ShortCounter, Token, TokenCell},
-    assert_matches::assert_matches,
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
     solana_pubkey::Pubkey,
@@ -108,6 +107,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     static_assertions::const_assert_eq,
     std::{
+        assert_matches,
         cmp::Ordering,
         collections::{BTreeMap, HashSet, VecDeque},
         mem,
@@ -1032,6 +1032,11 @@ impl UsageQueue {
     pub fn new(capability: &Capability) -> Self {
         Self(Arc::new(TokenCell::new(UsageQueueInner::new(capability))))
     }
+
+    /// Returns whether another owner currently holds this queue.
+    pub fn is_shared(&self) -> bool {
+        Arc::strong_count(&self.0) > 1
+    }
 }
 
 type TaskHash = Hash;
@@ -1517,9 +1522,7 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_message::{AddressLookupTableAccount, Message, VersionedMessage, v0},
         solana_pubkey::Pubkey,
-        solana_runtime_transaction::{
-            runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
-        },
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signature::Signature,
         solana_svm_transaction::{
             svm_message::SVMStaticMessage, svm_transaction::SVMStaticTransaction,
@@ -1621,8 +1624,7 @@ mod tests {
             message: VersionedMessage::V0(message),
         };
         let data: Bytes = Bytes::from(wincode::serialize(&versioned_transaction).unwrap());
-        let sanitized_view =
-            SanitizedTransactionView::try_new_sanitized(data, &sanitize_config()).unwrap();
+        let sanitized_view = SanitizedTransactionView::try_new_sanitized(data).unwrap();
         let static_runtime_tx = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
             sanitized_view,
             MessageHash::Compute,
@@ -2370,7 +2372,8 @@ mod tests {
 
     #[test_matrix([Capability::FifoQueueing, Capability::PriorityQueueing])]
     #[should_panic(
-        expected = "assertion failed: `Readonly` does not match `RequestedUsage::Writable`"
+        expected = "assertion `left matches right` failed\n  left: Readonly\n right: \
+                    RequestedUsage::Writable"
     )]
     fn test_unreachable_unlock_conditions2(capability: Capability) {
         let mut state_machine = unsafe {

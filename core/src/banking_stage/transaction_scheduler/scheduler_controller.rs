@@ -22,10 +22,10 @@ use {
         validator::SchedulerPacing,
     },
     agave_banking_stage_ingress_types::SchedulerPriorityFloor,
-    solana_clock::{BankId, DEFAULT_MS_PER_SLOT},
+    solana_clock::DEFAULT_MS_PER_SLOT,
     solana_cost_model::cost_tracker::SharedBlockCost,
     solana_measure::measure_us,
-    solana_runtime::bank_forks::SharableBanks,
+    solana_runtime::{bank::BankId, bank_forks::SharableBanks},
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         num::{NonZeroU64, Saturating},
@@ -166,7 +166,7 @@ where
     /// over an interval and during a leader slot.
     timing_metrics: SchedulerTimingMetrics,
     /// Metric report handles for the worker threads.
-    worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
+    worker_metrics: Vec<(String, Arc<ConsumeWorkerMetrics>)>,
     /// Detailed scheduling metrics.
     scheduling_details: SchedulingDetails,
     /// Cursor for incremental recheck sweep of the priority queue.
@@ -205,7 +205,11 @@ where
             scheduler,
             count_metrics: SchedulerCountMetrics::default(),
             timing_metrics: SchedulerTimingMetrics::default(),
-            worker_metrics,
+            worker_metrics: worker_metrics
+                .into_iter()
+                .enumerate()
+                .map(|(id, metrics)| (id.to_string(), metrics))
+                .collect(),
             scheduling_details: SchedulingDetails::default(),
             recheck_cursor: None,
             recheck_chunk: Vec::with_capacity(CHECK_CHUNK),
@@ -295,7 +299,7 @@ where
                         block_limit,
                         shared_block_cost,
                         detection_time: now,
-                        fill_time,
+                        fill_time: self.config.scheduler_pacing.fill_time(),
                     }
                 });
             }
@@ -340,7 +344,7 @@ where
                 .maybe_report_and_reset_interval(should_report);
             self.worker_metrics
                 .iter()
-                .for_each(|metrics| metrics.maybe_report_and_reset());
+                .for_each(|(id, metrics)| metrics.maybe_report_and_reset(id));
             self.scheduling_details.maybe_report();
         }
 
@@ -630,7 +634,10 @@ mod tests {
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_poh::poh_recorder::{LeaderState, SharedLeaderState},
         solana_pubkey::Pubkey,
-        solana_runtime::{bank::Bank, bank_forks::BankForks},
+        solana_runtime::{
+            bank::{Bank, BankIdGenerator},
+            bank_forks::BankForks,
+        },
         solana_runtime_transaction::transaction_meta::TransactionMeta,
         solana_sdk_ids::system_program,
         solana_signer::Signer,
@@ -647,28 +654,32 @@ mod tests {
         // bank_id is globally unique regardless of slot, so tracking it alone
         // also correctly handles a sad leader handover: a new bank for the same
         // slot still carries a new bank_id and is treated as a transition below.
-        let mut scheduling_bank_id = Some(100);
+        let bank_id_generator = BankIdGenerator::default();
+        let in_flight_bank_id = bank_id_generator.next();
+        let newer_bank_id = bank_id_generator.next();
+        let latest_bank_id = bank_id_generator.next();
+        let mut scheduling_bank_id = Some(in_flight_bank_id);
 
         assert_eq!(
-            update_scheduling_bank(&mut scheduling_bank_id, Some(101), true),
+            update_scheduling_bank(&mut scheduling_bank_id, Some(newer_bank_id), true),
             BankTransitionStatus::WaitingForInFlight
         );
-        assert_eq!(scheduling_bank_id, Some(100));
+        assert_eq!(scheduling_bank_id, Some(in_flight_bank_id));
 
         // Ingestion may observe a newer bank while old work is still in flight.
         assert_eq!(
-            update_scheduling_bank(&mut scheduling_bank_id, Some(102), true),
+            update_scheduling_bank(&mut scheduling_bank_id, Some(latest_bank_id), true),
             BankTransitionStatus::WaitingForInFlight
         );
-        assert_eq!(scheduling_bank_id, Some(100));
+        assert_eq!(scheduling_bank_id, Some(in_flight_bank_id));
 
         assert_eq!(
-            update_scheduling_bank(&mut scheduling_bank_id, Some(102), false),
+            update_scheduling_bank(&mut scheduling_bank_id, Some(latest_bank_id), false),
             BankTransitionStatus::Transitioned
         );
-        assert_eq!(scheduling_bank_id, Some(102));
+        assert_eq!(scheduling_bank_id, Some(latest_bank_id));
         assert_eq!(
-            update_scheduling_bank(&mut scheduling_bank_id, Some(102), true),
+            update_scheduling_bank(&mut scheduling_bank_id, Some(latest_bank_id), true),
             BankTransitionStatus::Ready
         );
     }
@@ -701,6 +712,7 @@ mod tests {
             check_work_receiver,
             check_result_sender,
             bank_forks.read().unwrap().sharable_banks(),
+            SharedLeaderState::new(0, None, None),
             Arc::default(),
         );
         TransactionViewReceiveAndBuffer::new(receiver, check_work_sender, check_result_receiver)

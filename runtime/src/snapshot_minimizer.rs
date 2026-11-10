@@ -2,15 +2,20 @@
 #![cfg(feature = "dev-context-only-utils")]
 
 use {
-    crate::{bank::Bank, static_ids},
+    crate::{
+        alpenglow_epoch_type::REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT, bank::Bank,
+        block_component_processor::vote_reward::epoch_inflation_account_state::VOTE_REWARD_ACCOUNT_ADDR,
+        static_ids,
+    },
     agave_reserved_account_keys::ReservedAccountKeys,
+    agave_votor_messages::migration::GENESIS_CERTIFICATE_ACCOUNT,
     dashmap::DashSet,
     log::info,
     rayon::{
         iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
         prelude::ParallelSlice,
     },
-    solana_account::ReadableAccount,
+    solana_account::{ReadableAccount, state_traits::StateMutWincode as _},
     solana_accounts_db::{
         account_storage_entry::AccountStorageEntry,
         accounts_db::{AccountsDb, GetUniqueAccountsResult},
@@ -129,6 +134,11 @@ impl<'a> SnapshotMinimizer<'a> {
         static_ids::STATIC_IDS.iter().for_each(|pubkey| {
             self.minimized_account_set.insert(*pubkey);
         });
+        self.minimized_account_set
+            .insert(*GENESIS_CERTIFICATE_ACCOUNT);
+        self.minimized_account_set.insert(*VOTE_REWARD_ACCOUNT_ADDR);
+        self.minimized_account_set
+            .insert(*REWARD_EPOCH_DELEGATED_STAKES_ACCOUNT);
     }
 
     /// Used to get reserved accounts in `minimize`
@@ -183,7 +193,7 @@ impl<'a> SnapshotMinimizer<'a> {
             .filter_map(|account| {
                 if let Ok(UpgradeableLoaderState::Program {
                     programdata_address,
-                }) = wincode::deserialize(account.data())
+                }) = account.state()
                 {
                     Some(programdata_address)
                 } else {
@@ -325,8 +335,9 @@ impl<'a> SnapshotMinimizer<'a> {
                 StorableAccountsBySlot::new(slot, &accounts, self.accounts_db());
 
             self.accounts_db()
-                .store_accounts_for_shrink(storable_accounts, new_storage);
+                .store_accounts_for_shrink(&storable_accounts, new_storage);
 
+            new_storage.disable_remove_on_drop();
             new_storage.flush().unwrap();
         }
 
@@ -360,13 +371,13 @@ mod tests {
             snapshot_minimizer::SnapshotMinimizer, snapshot_utils,
         },
         agave_snapshots::snapshot_config::SnapshotConfig,
+        agave_votor_messages::consensus_message::BlockId,
         dashmap::DashSet,
         solana_account::{
             AccountSharedData, ReadableAccount, WritableAccount, state_traits::StateMutWincode as _,
         },
         solana_accounts_db::accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
         solana_genesis_config::create_genesis_config,
-        solana_hash::Hash,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey,
@@ -602,9 +613,9 @@ mod tests {
             1,
             [(&pubkey_keep, &account), (&pubkey_multi, &account)].as_slice(),
         ));
-        accounts.add_root(1);
+        accounts.add_root_for_tests(1);
         accounts.store_for_tests((2, [(&pubkey_multi, &account)].as_slice()));
-        accounts.add_root(2);
+        accounts.add_root_for_tests(2);
         // Flush without clean so pubkey_multi keeps both slot list entries
         accounts.flush_rooted_accounts_cache_without_clean();
 
@@ -672,7 +683,7 @@ mod tests {
                 .storage
                 .get_slot_storage_entry(tombstone_slot)
                 .unwrap()
-                .count(),
+                .num_alive_accounts(),
             2
         );
 
@@ -745,7 +756,7 @@ mod tests {
                 .storage
                 .get_slot_storage_entry(tombstone_slot)
                 .unwrap()
-                .count(),
+                .num_alive_accounts(),
             1
         );
 
@@ -807,7 +818,7 @@ mod tests {
         )
         .unwrap();
         bank.fill_bank_with_ticks_for_tests();
-        bank.set_block_id(Some(Hash::default()));
+        bank.set_block_id(Some(BlockId::default()));
         bank.squash();
         bank.force_flush_accounts_cache();
 
@@ -846,7 +857,6 @@ mod tests {
             None,
             None, // leader_for_tests
             None,
-            false,
             false,
             accounts_db_config,
             None,

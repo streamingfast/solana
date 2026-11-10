@@ -3,9 +3,9 @@
 //!
 //! It has two states:
 //! 1. Statically Loaded: after receiving `packet` from sigverify and deserializing
-//!    it into `solana_transaction::versioned::VersionedTransaction`, then sanitizing into
-//!    `solana_transaction::versioned::sanitized::SanitizedVersionedTransaction`, which can be wrapped into
-//!    `RuntimeTransaction` with static transaction metadata extracted.
+//!    it into `solana_transaction::versioned::VersionedTransaction`, the runtime constructor
+//!    sanitizes it into `solana_transaction::versioned::sanitized::SanitizedVersionedTransaction`,
+//!    validates protocol limits, and extracts static transaction metadata.
 //! 2. Dynamically Loaded: after successfully loaded account addresses from onchain
 //!    ALT, RuntimeTransaction<SanitizedMessage> transits into Dynamically Loaded state,
 //!    with its dynamic metadata loaded.
@@ -18,7 +18,6 @@ use {
     agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     bytes::Bytes,
     core::ops::Deref,
-    solana_compute_budget_instruction::compute_budget_instruction_details::*,
     solana_hash::Hash,
     solana_message::{AccountKeys, TransactionSignatureDetails},
     solana_pubkey::Pubkey,

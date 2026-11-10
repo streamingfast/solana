@@ -257,19 +257,19 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
     // Schedule the transaction if it can be.
     let transaction = transaction_state.transaction();
     let account_keys = transaction.account_keys();
-    let write_account_locks = account_keys
+    let transaction_account_locks = account_keys
         .iter()
         .enumerate()
-        .filter_map(|(index, key)| transaction.is_writable(index).then_some(key));
-    let read_account_locks = account_keys
-        .iter()
-        .enumerate()
-        .filter_map(|(index, key)| (!transaction.is_writable(index)).then_some(key))
-        .chain(transaction.implicit_read_locks());
+        .map(|(index, key)| (key, transaction.is_writable(index)))
+        .chain(
+            transaction
+                .implicit_read_locks()
+                .iter()
+                .map(|key| (key, false)),
+        );
 
     let thread_id = match account_locks.try_lock_accounts(
-        write_account_locks,
-        read_account_locks,
+        transaction_account_locks,
         schedulable_threads,
         thread_selector,
     ) {
@@ -316,7 +316,7 @@ mod test {
         solana_svm_transaction::svm_message::SVMMessage,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{Transaction, sanitized::SanitizedTransaction},
-        std::borrow::Borrow,
+        std::{assert_matches, borrow::Borrow},
         test_case::test_matrix,
     };
 

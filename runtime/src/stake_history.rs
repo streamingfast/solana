@@ -1,5 +1,7 @@
 //! This module implements clone-on-write semantics for the SDK's `StakeHistory` to reduce
 //! unnecessary cloning of the underlying vector.
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 pub use solana_stake_history::StakeHistoryGetEntry;
 use {
     solana_clock::Epoch,
@@ -12,7 +14,7 @@ use {
 };
 
 /// The SDK's stake history with clone-on-write semantics
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Default, Clone, PartialEq, Eq, Debug, SchemaRead, SchemaWrite)]
 pub struct StakeHistory(Arc<StakeHistoryInner>);
 

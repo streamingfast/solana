@@ -1,20 +1,19 @@
 use {
     crate::{
         errors::{SigVerifyCertError, SigVerifyVoteError},
+        metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
+        pubkeys::{VerifiedVotorSlotsMessage, VoteAccountPubkeys},
         rewards::RewardInput,
+        sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
         stats::{SenderStats, VoteSenderStats},
     },
-    agave_votor_messages::{
-        VerifiedVotorSlotsMessage, VoteAccountPubkeys,
-        metric_types::{ConsensusMetricsEvent, ConsensusMetricsEventSender},
-        sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
-    },
+    agave_votor_messages::certificate::Certificate,
     crossbeam_channel::{Sender, TrySendError},
     log::{error, info, warn},
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
-    std::{collections::HashMap, time::Instant},
+    std::time::Instant,
 };
 
 const REWARDS_CHANNEL: &str = "channel_to_rewards";
@@ -68,14 +67,15 @@ pub(super) fn send_votes_to_rewards(
 /// blocking send.
 pub(super) fn send_sig_verified_batch_to_pool(
     my_pubkey: &Pubkey,
-    batch: SigVerifiedBatch,
+    votes: Vec<VoteAggregate>,
     channel: &Sender<SigVerifiedBatch>,
     stats: &mut VoteSenderStats,
 ) -> Result<(), SigVerifyVoteError> {
-    if batch.is_empty() {
+    if votes.is_empty() {
         return Ok(());
     }
-    let len = batch.len();
+    let len = votes.len();
+    let batch = SigVerifiedBatch::Votes(votes);
     match channel.try_send(batch) {
         Ok(()) => {
             stats.pool_sender.sent += len as u64;
@@ -101,14 +101,11 @@ pub(super) fn send_sig_verified_batch_to_pool(
 
 pub(super) fn send_votes_to_repair(
     my_pubkey: &Pubkey,
-    votes: HashMap<Slot, VoteAccountPubkeys>,
+    msg: (Slot, VoteAccountPubkeys),
     channel: &EvictingSender<VerifiedVotorSlotsMessage>,
     stats: &mut VoteSenderStats,
 ) {
-    if votes.is_empty() {
-        return;
-    }
-    match channel.try_send(votes) {
+    match channel.try_send(msg) {
         Ok(()) => stats.repair_sender.sent += 1,
         Err(TrySendError::Full(_)) => {
             warn!("{my_pubkey}: channel \"{REPAIR_CHANNEL}\" is full, dropping msg");
@@ -124,14 +121,15 @@ pub(super) fn send_votes_to_repair(
 /// blocking send.
 pub(super) fn send_certs_to_pool(
     my_pubkey: &Pubkey,
-    batch: SigVerifiedBatch,
+    certs: Vec<Certificate>,
     channel: &Sender<SigVerifiedBatch>,
     stats: &mut SenderStats,
 ) -> Result<(), SigVerifyCertError> {
-    if batch.is_empty() {
+    if certs.is_empty() {
         return Ok(());
     }
-    let len = batch.len();
+    let len = certs.len();
+    let batch = SigVerifiedBatch::Certificates(certs);
     match channel.try_send(batch) {
         Ok(()) => {
             stats.sent += len as u64;

@@ -10,9 +10,9 @@ use {
     base64::{Engine, prelude::BASE64_STANDARD},
     chrono_humanize::{Accuracy, HumanTime, Tense},
     log::*,
-    serde::Serialize,
     solana_account::{
-        Account, AccountSharedData, ReadableAccount, state_traits::StateMutWincode as _,
+        Account, AccountSharedData, ReadableAccount, WINCODE_CONFIG, WincodeConfig,
+        state_traits::StateMutWincode as _,
     },
     solana_account_info::AccountInfo,
     solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -36,8 +36,11 @@ use {
     solana_program_entrypoint::{SUCCESS, deserialize},
     solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
-        invoke_context::BuiltinFunctionRegisterer, program_cache_entry::ProgramCacheEntry,
-        serialization::serialize_parameters, stable_log, sysvar_cache::SysvarCache,
+        invoke_context::BuiltinFunctionRegisterer,
+        program_cache_entry::ProgramCacheEntry,
+        serialization::{SerializationResult, serialize_parameters},
+        stable_log,
+        sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
@@ -71,6 +74,7 @@ use {
     },
     thiserror::Error,
     tokio::task::JoinHandle,
+    wincode::{SchemaRead, SchemaWrite, Serialize},
 };
 // Export types so test clients can limit their solana crate dependencies
 pub use {
@@ -139,13 +143,15 @@ pub fn invoke_builtin_function(
         .direct_account_pointers_in_program_input;
 
     // Serialize entrypoint parameters with SBF ABI
-    let (mut parameter_bytes, _regions, _account_lengths, _instruction_data_offset) =
-        serialize_parameters(
-            &instruction_context,
-            false, // There is no VM so virtual_address_space_adjustments can not be implemented here
-            false, // There is no VM so account_data_direct_mapping can not be implemented here
-            direct_account_pointers_in_program_input,
-        )?;
+    let SerializationResult {
+        mut parameter_bytes,
+        ..
+    } = serialize_parameters(
+        &instruction_context,
+        false, // There is no VM so virtual_address_space_adjustments can not be implemented here
+        false, // There is no VM so account_data_direct_mapping can not be implemented here
+        direct_account_pointers_in_program_input,
+    )?;
 
     // Deserialize data back into instruction params
     let (program_id, account_infos, input) =
@@ -319,7 +325,7 @@ pub fn sol_get_last_restart_slot(var_addr: *mut u8) -> u64 {
 struct SyscallStubs {}
 
 impl SyscallStubs {
-    fn fetch_and_write_sysvar<T: Serialize>(
+    fn fetch_and_write_sysvar<T: Serialize<Src = T>>(
         &self,
         var_addr: *mut u8,
         offset: u64,
@@ -356,7 +362,7 @@ impl SyscallStubs {
 
         // Check that the requested length is not greater than
         // the actual serialized length of the sysvar data.
-        let Ok(expected_length) = bincode::serialized_size(&sysvar) else {
+        let Ok(expected_length) = wincode::serialized_size(sysvar.as_ref()) else {
             return UNSUPPORTED_SYSVAR;
         };
 
@@ -365,7 +371,7 @@ impl SyscallStubs {
         }
 
         // Write only the requested slice [offset, offset + length).
-        if let Ok(serialized) = bincode::serialize(&sysvar) {
+        if let Ok(serialized) = wincode::serialize(sysvar.as_ref()) {
             unsafe {
                 ptr::copy_nonoverlapping(
                     serialized[offset as usize..].as_ptr(),
@@ -655,12 +661,15 @@ fn required_sysvar_data_len(sysvar_id: &Pubkey, serialized_len: usize) -> usize 
         .max(serialized_len)
 }
 
-fn create_sysvar_account<T: SysvarId + Serialize>(sysvar: &T) -> Account {
-    let serialized_len = bincode::serialized_size(sysvar).unwrap() as usize;
+fn create_sysvar_account<T>(sysvar: &T) -> Account
+where
+    T: SysvarId
+        + SchemaWrite<WincodeConfig, Src = T>
+        + for<'de> SchemaRead<'de, WincodeConfig, Dst = T>,
+{
+    let serialized_len = wincode::config::serialized_size(sysvar, WINCODE_CONFIG).unwrap() as usize;
     let data_len = required_sysvar_data_len(&T::id(), serialized_len);
-    let mut account = Account::new(1, data_len, &sysvar::id());
-    bincode::serialize_into(account.data.as_mut_slice(), sysvar).unwrap();
-    account
+    Account::new_data_with_space(1, sysvar, data_len, &sysvar::id()).unwrap()
 }
 
 pub fn find_file(filename: &str) -> Option<PathBuf> {
@@ -836,7 +845,12 @@ impl ProgramTest {
         );
     }
 
-    pub fn add_sysvar_account<S: SysvarId + Serialize>(&mut self, address: Pubkey, sysvar: &S) {
+    pub fn add_sysvar_account<S>(&mut self, address: Pubkey, sysvar: &S)
+    where
+        S: SysvarId
+            + SchemaWrite<WincodeConfig, Src = S>
+            + for<'de> SchemaRead<'de, WincodeConfig, Dst = S>,
+    {
         self.add_account(address, create_sysvar_account(sysvar));
     }
 
@@ -1401,7 +1415,12 @@ impl ProgramTestContext {
     /// that would be difficult to replicate on a new test cluster. Beware
     /// that it can be used to create states that would not be reachable
     /// under normal conditions!
-    pub fn set_sysvar<T: SysvarId + wincode::Serialize<Src = T>>(&self, sysvar: &T) {
+    pub fn set_sysvar<T>(&self, sysvar: &T)
+    where
+        T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
+            + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>
+            + SysvarId,
+    {
         let bank_forks = self.bank_forks.read().unwrap();
         let bank = bank_forks.working_bank();
         bank.set_sysvar_for_tests(sysvar);

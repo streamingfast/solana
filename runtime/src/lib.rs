@@ -24,6 +24,8 @@ pub mod loader_utils;
 pub mod non_circulating_supply;
 pub mod prioritization_fee;
 pub mod prioritization_fee_cache;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod program_cache_utils;
 mod read_optimized_dashmap;
 pub mod rent_collector;
 mod reward_info;
@@ -59,7 +61,3 @@ pub mod vote_sender_types;
 
 #[macro_use]
 extern crate solana_metrics;
-
-#[cfg_attr(feature = "frozen-abi", macro_use)]
-#[cfg(feature = "frozen-abi")]
-extern crate solana_frozen_abi_macro;

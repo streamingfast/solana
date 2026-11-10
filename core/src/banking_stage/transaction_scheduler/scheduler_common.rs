@@ -307,17 +307,17 @@ impl<Tx: TransactionWithMeta> SchedulingCommon<Tx> {
         let thread_id = self.in_flight_tracker.complete_batch(batch_id);
         for transaction in transactions {
             let account_keys = transaction.account_keys();
-            let write_account_locks = account_keys
+            let account_locks = account_keys
                 .iter()
                 .enumerate()
-                .filter_map(|(index, key)| transaction.is_writable(index).then_some(key));
-            let read_account_locks = account_keys
-                .iter()
-                .enumerate()
-                .filter_map(|(index, key)| (!transaction.is_writable(index)).then_some(key))
-                .chain(transaction.implicit_read_locks());
-            self.account_locks
-                .unlock_accounts(write_account_locks, read_account_locks, thread_id);
+                .map(|(index, key)| (key, transaction.is_writable(index)))
+                .chain(
+                    transaction
+                        .implicit_read_locks()
+                        .iter()
+                        .map(|key| (key, false)),
+                );
+            self.account_locks.unlock_accounts(account_locks, thread_id);
         }
     }
 }
@@ -379,24 +379,22 @@ mod tests {
             .take_transaction_for_scheduling();
 
         let account_keys = transaction.account_keys();
-        let write_account_locks = account_keys
+        let account_locks = account_keys
             .iter()
             .enumerate()
-            .filter_map(|(index, key)| transaction.is_writable(index).then_some(key));
-        let read_account_locks = account_keys
-            .iter()
-            .enumerate()
-            .filter_map(|(index, key)| (!transaction.is_writable(index)).then_some(key))
-            .chain(transaction.implicit_read_locks());
+            .map(|(index, key)| (key, transaction.is_writable(index)))
+            .chain(
+                transaction
+                    .implicit_read_locks()
+                    .iter()
+                    .map(|key| (key, false)),
+            );
 
         common
             .account_locks
-            .try_lock_accounts(
-                write_account_locks,
-                read_account_locks,
-                ThreadSet::any(NUM_WORKERS),
-                |_thread_set| thread_id,
-            )
+            .try_lock_accounts(account_locks, ThreadSet::any(NUM_WORKERS), |_thread_set| {
+                thread_id
+            })
             .unwrap();
         let transaction_bytes = transaction.serialized_size() as u64;
         common.batches.add_transaction_to_batch(

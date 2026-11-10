@@ -4,7 +4,7 @@ use {
     log::*,
     serde::{Deserialize, Serialize},
     serde_json::Result,
-    solana_account::{AccountSharedData, WritableAccount},
+    solana_account::{AccountSharedData, state_traits::StateMutWincode as _},
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_clock::Slot,
     solana_ledger::blockstore_options::AccessType,
@@ -18,7 +18,7 @@ use {
             DELAY_VISIBILITY_SLOT_OFFSET, ProgramCacheEntry, ProgramCacheEntryType,
         },
         program_metrics::LoadProgramMetrics,
-        serialization::serialize_parameters,
+        serialization::{SerializationResult, serialize_parameters},
         with_mock_invoke_context,
     },
     solana_pubkey::Pubkey,
@@ -112,6 +112,7 @@ impl ProgramSubCommand for App<'_, '_> {
             .index(1);
 
         let load_genesis_config_arg = load_genesis_arg();
+        let accounts_db_config_args = accounts_db_args();
         let snapshot_config_args = snapshot_args();
 
         self.subcommand(
@@ -165,6 +166,7 @@ and the following fields are required
                         .default_value("0"),
                 )
                 .arg(&load_genesis_config_arg)
+                .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
                 .arg(
                     Arg::with_name("mode")
@@ -378,7 +380,11 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             let pubkey = Pubkey::new_unique();
             transaction_accounts.push((
                 pubkey,
-                AccountSharedData::new(0, allocation_size, &Pubkey::new_unique()),
+                AccountSharedData::new_with_data(
+                    0,
+                    vec![0; allocation_size],
+                    &Pubkey::new_unique(),
+                ),
             ));
             instruction_accounts.push(InstructionAccount::new(0, false, true));
             vec![]
@@ -405,27 +411,22 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                     });
                     let data = account_info.data.unwrap_or_default();
                     let space = data.len();
-                    let account = if let Some(account) = bank.get_account_with_fixed_root(&pubkey) {
+                    let account = if let Some(account) = bank.get_account(&pubkey) {
                         let owner = *account.owner();
                         if bpf_loader_upgradeable::check_id(&owner)
                             && let Ok(UpgradeableLoaderState::Program {
                                 programdata_address,
-                            }) = bincode::deserialize(account.data())
+                            }) = account.state()
                         {
                             debug!("Program data address {programdata_address}");
-                            if bank
-                                .get_account_with_fixed_root(&programdata_address)
-                                .is_some()
-                            {
+                            if bank.get_account(&programdata_address).is_some() {
                                 cached_account_keys.push(pubkey);
                             }
                         }
                         // Override account data and lamports from input file if provided
                         if space > 0 {
                             let lamports = account_info.lamports.unwrap_or(account.lamports());
-                            let mut account = AccountSharedData::new(lamports, space, &owner);
-                            account.set_data_from_slice(&data);
-                            account
+                            AccountSharedData::new_with_data(lamports, data, &owner)
                         } else {
                             account
                         }
@@ -438,9 +439,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                             Pubkey::new_unique()
                         });
                         let lamports = account_info.lamports.unwrap_or(0);
-                        let mut account = AccountSharedData::new(lamports, space, &owner);
-                        account.set_data_from_slice(&data);
-                        account
+                        AccountSharedData::new_with_data(lamports, data, &owner)
                     };
                     let txn_acct_index = if let Some(idx) = txn_acct_indices.get(&pubkey) {
                         *idx
@@ -469,11 +468,11 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         program_id, // ID of the loaded program. It can modify accounts with the same owner key
         AccountSharedData::new(0, 0, &loader_id),
     ));
-    let mut epoch_schedule_account =
-        AccountSharedData::new(1, solana_epoch_schedule::SIZE, &sysvar::id());
-    wincode::serialize_into(
-        epoch_schedule_account.data_as_mut_slice(),
+    let epoch_schedule_account = AccountSharedData::new_data_with_space(
+        1,
         bank.epoch_schedule(),
+        solana_epoch_schedule::SIZE,
+        &sysvar::id(),
     )
     .unwrap();
     transaction_accounts.push((sysvar::epoch_schedule::id(), epoch_schedule_account));
@@ -501,17 +500,22 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         )
         .unwrap();
     invoke_context.push().unwrap();
-    let (_parameter_bytes, regions, account_lengths, instruction_data_offset) =
-        serialize_parameters(
-            &invoke_context
-                .transaction_context
-                .get_current_instruction_context()
-                .unwrap(),
-            false, // virtual_address_space_adjustments
-            false, // account_data_direct_mapping
-            false, // direct_account_pointers_in_program_input
-        )
-        .unwrap();
+    let SerializationResult {
+        parameter_bytes: _parameter_bytes,
+        regions,
+        accounts_metadata: account_lengths,
+        instruction_data_offset,
+        ..
+    } = serialize_parameters(
+        &invoke_context
+            .transaction_context
+            .get_current_instruction_context()
+            .unwrap(),
+        false, // virtual_address_space_adjustments
+        false, // account_data_direct_mapping
+        false, // direct_account_pointers_in_program_input
+    )
+    .unwrap();
 
     let regions = [
         MemoryRegion::new_empty(MM_RODATA_START),

@@ -1,9 +1,12 @@
 use {
-    crate::{bank::Bank, prioritization_fee::PrioritizationFee},
+    crate::{
+        bank::{Bank, BankId},
+        prioritization_fee::PrioritizationFee,
+    },
     crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded},
     log::*,
     solana_accounts_db::account_locks::validate_account_locks,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -222,10 +225,12 @@ impl PrioritizationFeeCache {
 
                 let transaction_configuration =
                     sanitized_transaction.transaction_configuration(&bank.feature_set);
-                let lock_result = validate_account_locks(
-                    sanitized_transaction.account_keys(),
-                    bank.get_transaction_account_lock_limit(),
-                );
+                let limits = bank.get_transaction_account_lock_limits();
+                let Ok(limit) = limits.for_version(sanitized_transaction.version()) else {
+                    continue;
+                };
+                let lock_result =
+                    validate_account_locks(sanitized_transaction.account_keys(), limit);
 
                 if transaction_configuration.is_err() || lock_result.is_err() {
                     continue;
@@ -341,13 +346,13 @@ impl PrioritizationFeeCache {
             if pre_purge_bank_count > 0 && post_purge_bank_count == 0 {
                 warn!(
                     "Finalized bank has empty prioritization fee cache. slot {slot} bank id \
-                     {bank_id}"
+                     {bank_id:?}"
                 );
             }
 
             if let Some(prioritization_fee) = &mut prioritization_fee {
                 if let Err(err) = prioritization_fee.mark_block_completed() {
-                    error!("Unsuccessful finalizing slot {slot}, bank ID {bank_id}: {err:?}");
+                    error!("Unsuccessful finalizing slot {slot}, bank ID {bank_id:?}: {err:?}");
                 }
                 prioritization_fee.report_metrics(slot);
             }
