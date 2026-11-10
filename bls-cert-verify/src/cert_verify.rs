@@ -1,6 +1,8 @@
 use {
     agave_votor_messages::{
-        certificate::Certificate, fraction::Fraction,
+        certificate::Certificate,
+        fraction::Fraction,
+        stake::{NonZeroStake, Stake},
         unverified_vote_message::UnverifiedCertificate,
     },
     bitvec::vec::BitVec,
@@ -12,12 +14,13 @@ use {
         signature::AsSignatureAffine,
     },
     solana_signer_store::{DecodeError, Decoded, decode},
-    std::num::NonZero,
     thiserror::Error,
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    agave_votor_messages::{certificate::CertificateType, wire::get_vote_payload_to_sign},
+    agave_votor_messages::{
+        certificate::CertificateType, vote::Vote, wire::get_vote_payload_to_sign,
+    },
     qualifier_attr::qualifiers,
     solana_bls_signatures::Keypair as BLSKeypair,
     solana_signer_store::{encode_base2, encode_base3},
@@ -39,7 +42,7 @@ pub enum Error {
     BitmapOverlap,
     #[error("Not enough stake {aggregate_stake}: {cert_fraction} < {required_fraction}")]
     NotEnoughStake {
-        aggregate_stake: u64,
+        aggregate_stake: Stake,
         cert_fraction: Fraction,
         required_fraction: Fraction,
     },
@@ -71,16 +74,16 @@ pub enum Error {
 pub fn verify_certificate(
     cert: UnverifiedCertificate,
     max_validators: usize,
-    total_stake: NonZero<u64>,
-    mut rank_map: impl FnMut(usize) -> Option<(NonZero<u64>, PopVerified<BlsPubkeyAffine>)>,
+    total_stake: NonZeroStake,
+    mut rank_map: impl FnMut(usize) -> Option<(NonZeroStake, PopVerified<BlsPubkeyAffine>)>,
     thread_pool: Option<&ThreadPool>,
 ) -> Result<Certificate, Error> {
-    let mut aggregate_stake = 0u64;
+    let mut aggregate_stake = Stake(0);
 
     // Wrap the `rank_map` to accumulate stake as a side-effect
     let accumulating_rank_map = |ind: usize| {
         rank_map(ind).map(|(stake, pubkey)| {
-            aggregate_stake = aggregate_stake.saturating_add(stake.get());
+            aggregate_stake.increment(Stake::from(stake));
             pubkey
         })
     };
@@ -117,11 +120,11 @@ pub fn verify_certificate(
 
 fn verify_stake(
     cert: &UnverifiedCertificate,
-    aggregate_stake: u64,
-    total_stake: NonZero<u64>,
+    aggregate_stake: Stake,
+    total_stake: NonZeroStake,
 ) -> Result<(), Error> {
     let required_fraction = cert.cert_type.threshold();
-    let cert_fraction = Fraction::new(aggregate_stake, total_stake);
+    let cert_fraction = total_stake.fraction(aggregate_stake);
     if cert_fraction >= required_fraction {
         Ok(())
     } else {
@@ -286,6 +289,35 @@ fn default_bitvec(max_validators: usize) -> BitVec<u8> {
 }
 
 #[cfg(feature = "dev-context-only-utils")]
+fn base2_cert_vote(cert_type: &CertificateType) -> Vote {
+    match cert_type {
+        CertificateType::Notarize(block) | CertificateType::FinalizeFast(block) => {
+            Vote::new_notarization_vote(*block)
+        }
+        CertificateType::Finalize(slot) => Vote::new_finalization_vote(*slot),
+        CertificateType::Genesis(block) => Vote::new_genesis_vote(*block),
+        CertificateType::NotarizeFallback(_) | CertificateType::Skip(_) => unreachable!(),
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+fn base3_cert_votes(cert_type: &CertificateType) -> (Vote, Vote) {
+    match cert_type {
+        CertificateType::NotarizeFallback(block) => {
+            let vote1 = Vote::new_notarization_vote(*block);
+            let vote2 = Vote::new_notarization_fallback_vote(*block);
+            (vote1, vote2)
+        }
+        CertificateType::Skip(slot) => {
+            let vote1 = Vote::new_skip_vote(*slot);
+            let vote2 = Vote::new_skip_fallback_vote(*slot);
+            (vote1, vote2)
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
 /// Creates a certificate without any checks for testing and benchmarking.
 pub fn test_create_base2_unverified_certificate(
     bls_keypairs: &[BLSKeypair],
@@ -293,8 +325,7 @@ pub fn test_create_base2_unverified_certificate(
     cert_type: CertificateType,
     ranks: &[usize],
 ) -> UnverifiedCertificate {
-    assert!(cert_type.to_source_votes().is_none());
-    let vote = cert_type.to_source_vote();
+    let vote = base2_cert_vote(&cert_type);
     let payload = get_vote_payload_to_sign(vote, shred_version);
     let max_validators = ranks.iter().max().unwrap().saturating_add(1);
     let mut bitmap = default_bitvec(max_validators);
@@ -342,7 +373,7 @@ pub fn test_create_base3_unverified_certificate(
     primary_ranks: &[usize],
     fallback_ranks: &[usize],
 ) -> UnverifiedCertificate {
-    let (primary_vote, fallback_vote) = cert_type.to_source_votes().unwrap();
+    let (primary_vote, fallback_vote) = base3_cert_votes(&cert_type);
     let primary_payload = get_vote_payload_to_sign(primary_vote, shred_version);
     let fallback_payload = get_vote_payload_to_sign(fallback_vote, shred_version);
     let max_validators = std::cmp::max(
@@ -438,11 +469,11 @@ mod test {
         verify_certificate(
             cert,
             10,
-            NonZero::new(600).unwrap(),
+            NonZeroStake::new(600).unwrap(),
             |rank| {
                 bls_keypairs
                     .get(rank)
-                    .map(|kp| (NonZero::new(100).unwrap(), kp.public))
+                    .map(|kp| (NonZeroStake::new(100).unwrap(), kp.public))
             },
             None,
         )
@@ -456,7 +487,7 @@ mod test {
         let cert_type = CertificateType::new_unique_notar(10);
         let per_validator_stake = 100;
         let num_validators = 10;
-        let total_stake = NonZero::new(per_validator_stake * num_validators as u64).unwrap();
+        let total_stake = NonZeroStake::new(per_validator_stake * num_validators as u64).unwrap();
 
         // with enough stake should succeed.
         let cert = test_create_base2_unverified_certificate(
@@ -472,7 +503,7 @@ mod test {
             |rank| {
                 bls_keypairs
                     .get(rank)
-                    .map(|kp| (NonZero::new(100).unwrap(), kp.public))
+                    .map(|kp| (NonZeroStake::new(100).unwrap(), kp.public))
             },
             None,
         )
@@ -492,7 +523,7 @@ mod test {
             |rank| {
                 bls_keypairs
                     .get(rank)
-                    .map(|kp| (NonZero::new(100).unwrap(), kp.public))
+                    .map(|kp| (NonZeroStake::new(100).unwrap(), kp.public))
             },
             None,
         ) else {
@@ -504,9 +535,9 @@ mod test {
                 cert_fraction,
                 required_fraction,
             } => {
-                assert_eq!(aggregate_stake, 500);
+                assert_eq!(aggregate_stake.0, 500);
                 assert_eq!(required_fraction, cert_type.threshold());
-                assert_eq!(cert_fraction, Fraction::new(500, total_stake));
+                assert_eq!(cert_fraction, total_stake.fraction(Stake(500)));
             }
             rest => panic!("wrong variant {rest:?}"),
         }
@@ -529,11 +560,11 @@ mod test {
         verify_certificate(
             cert,
             10,
-            NonZero::new(700).unwrap(),
+            NonZeroStake::new(700).unwrap(),
             |rank| {
                 bls_keypairs
                     .get(rank)
-                    .map(|kp| (NonZero::new(100).unwrap(), kp.public))
+                    .map(|kp| (NonZeroStake::new(100).unwrap(), kp.public))
             },
             None,
         )
@@ -564,11 +595,11 @@ mod test {
             verify_certificate(
                 cert,
                 10,
-                NonZero::new(1000).unwrap(),
+                NonZeroStake::new(1000).unwrap(),
                 |rank| {
                     bls_keypairs
                         .get(rank)
-                        .map(|kp| (NonZero::new(100).unwrap(), kp.public))
+                        .map(|kp| (NonZeroStake::new(100).unwrap(), kp.public))
                 },
                 None
             )
@@ -601,11 +632,11 @@ mod test {
         verify_certificate(
             cert,
             10,
-            NonZero::new(per_validator_stake * max_validators as u64).unwrap(),
+            NonZeroStake::new(per_validator_stake * max_validators as u64).unwrap(),
             |rank| {
                 bls_keypairs
                     .get(rank)
-                    .map(|kp| (NonZero::new(per_validator_stake).unwrap(), kp.public))
+                    .map(|kp| (NonZeroStake::new(per_validator_stake).unwrap(), kp.public))
             },
             None,
         )
@@ -650,7 +681,7 @@ mod test {
     // verification contract.
     // ----------------------------------------------------------------------------
 
-    const STAKE_PER_VALIDATOR: NonZero<u64> = NonZero::new(100).unwrap();
+    const STAKE_PER_VALIDATOR: NonZeroStake = NonZeroStake::new(100).unwrap();
 
     /// Encode a Base2 rank bitmap with the given `ranks` set out of `num_bits`.
     fn encoded_base2_bitmap(ranks: &[usize], num_bits: usize) -> Vec<u8> {
@@ -681,7 +712,7 @@ mod test {
     /// Uniform `rank_map` over `keypairs`, each with `STAKE_PER_VALIDATOR` stake.
     fn rank_map(
         keypairs: &[BLSKeypair],
-    ) -> impl FnMut(usize) -> Option<(NonZero<u64>, PopVerified<BlsPubkeyAffine>)> + '_ {
+    ) -> impl FnMut(usize) -> Option<(NonZeroStake, PopVerified<BlsPubkeyAffine>)> + '_ {
         move |rank| {
             keypairs
                 .get(rank)
@@ -728,7 +759,7 @@ mod test {
             verify_certificate(
                 cert,
                 10,
-                NonZero::new(10).unwrap(),
+                NonZeroStake::new(10).unwrap(),
                 rank_map(&keypairs),
                 None
             )
@@ -759,7 +790,7 @@ mod test {
             verify_certificate(
                 cert,
                 10,
-                NonZero::new(10).unwrap(),
+                NonZeroStake::new(10).unwrap(),
                 rank_map(&keypairs),
                 None
             )
@@ -793,7 +824,7 @@ mod test {
             verify_certificate(
                 forged,
                 10,
-                NonZero::new(10).unwrap(),
+                NonZeroStake::new(10).unwrap(),
                 rank_map(&keypairs),
                 None
             )
@@ -819,7 +850,7 @@ mod test {
             verify_certificate(
                 cert,
                 10,
-                NonZero::new(10).unwrap(),
+                NonZeroStake::new(10).unwrap(),
                 rank_map(&keypairs),
                 None
             )
@@ -842,7 +873,7 @@ mod test {
             verify_certificate(
                 cert,
                 10,
-                NonZero::new(10).unwrap(),
+                NonZeroStake::new(10).unwrap(),
                 rank_map(&keypairs),
                 None
             )
@@ -870,7 +901,7 @@ mod test {
         let result = verify_certificate(
             cert,
             10,
-            NonZero::new(10).unwrap(),
+            NonZeroStake::new(10).unwrap(),
             |rank| {
                 if rank == 3 {
                     None
@@ -903,7 +934,7 @@ mod test {
             verify_certificate(
                 cert,
                 10,
-                NonZero::new(10).unwrap(),
+                NonZeroStake::new(10).unwrap(),
                 rank_map(&keypairs),
                 None
             )
@@ -929,7 +960,7 @@ mod test {
             verify_certificate(
                 cert,
                 10,
-                NonZero::new(10).unwrap(),
+                NonZeroStake::new(10).unwrap(),
                 rank_map(&keypairs),
                 None,
             )
@@ -966,7 +997,7 @@ mod test {
             verify_certificate(
                 forged,
                 10,
-                NonZero::new(10).unwrap(),
+                NonZeroStake::new(10).unwrap(),
                 rank_map(&keypairs),
                 None
             )
@@ -1002,7 +1033,7 @@ mod test {
             verify_certificate(
                 forged,
                 10,
-                NonZero::new(10).unwrap(),
+                NonZeroStake::new(10).unwrap(),
                 rank_map(&keypairs),
                 None
             )

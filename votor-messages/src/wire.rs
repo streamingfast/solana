@@ -40,6 +40,8 @@
 //! `VoteMessage` verification happens in the bls-sigverify crate and
 //! `Certificate` verfication happens in the `bls-cert-verify` crate.
 
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     crate::{
         certificate::{Certificate, CertificateType},
@@ -58,7 +60,7 @@ use {
     },
 };
 
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 fn sample_bls_signature(
     rng: &mut (impl solana_frozen_abi::rand::RngCore + ?Sized),
 ) -> BLSSignature {
@@ -72,11 +74,11 @@ pod_wrapper! {
     unsafe struct PodBLSSignature(BLSSignature);
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireVoteSignature {
     #[cfg_attr(
-        feature = "frozen-abi",
+        feature = "stable-abi",
         stable_abi_sample(with = "sample_bls_signature(rng)")
     )]
     #[wincode(with = "PodBLSSignature")]
@@ -90,27 +92,27 @@ impl From<VoteMessage> for WireVoteSignature {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireBlockVoteMessage {
     pub(crate) block: Block,
     pub(crate) signature: WireVoteSignature,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireSlotVoteMessage {
     pub(crate) slot: Slot,
     pub(crate) signature: WireVoteSignature,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Signature on a wire cert message
 pub struct WireCertSignature {
     #[cfg_attr(
-        feature = "frozen-abi",
+        feature = "stable-abi",
         stable_abi_sample(with = "sample_bls_signature(rng)")
     )]
     #[wincode(with = "PodBLSSignature")]
@@ -129,14 +131,14 @@ impl From<Certificate> for WireCertSignature {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct WireSlotCertMessage {
     pub(crate) slot: Slot,
     pub(crate) signature: WireCertSignature,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaRead, SchemaWrite, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// A wire cert message that holds a block.
@@ -147,7 +149,7 @@ pub struct WireBlockCertMessage {
     pub signature: WireCertSignature,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite, SchemaRead)]
 #[wincode(tag_encoding = "u8")]
 pub(crate) enum WireConsensusMessageKind {
@@ -258,7 +260,7 @@ impl WireConsensusMessageKind {
 /// Context wrapper for the expected shred version during deserialization.
 pub struct ExpectedShredVersion(pub u16);
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample, SchemaRead))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample, SchemaRead))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, SchemaWrite)]
 /// First version of a wire consensus message
 pub struct WireConsensusMessageV1 {
@@ -322,7 +324,7 @@ impl WireConsensusMessageV1 {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample, SchemaRead),
     frozen_abi(
         abi_digest = "ErGjoTr18hn3dvPVA7jFgK5WLwb4jgx7a39Yn8dSzB2K",
@@ -410,7 +412,7 @@ impl VersionedWireConsensusMessage {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "2aBMTuPyDgGSYeYX1aBbXURgA4qqr92Eh9yiTeHX6qZq",
@@ -557,12 +559,12 @@ pub fn get_vote_payload_to_sign(vote: Vote, shred_version: u16) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, crate::consensus_message::BlockId};
 
     fn vote_payloads() -> [VotePayloadToSign; 6] {
         let block = Block {
             slot: 42,
-            block_id: solana_hash::Hash::new_from_array([7; 32]),
+            block_id: BlockId::new_unique(),
         };
         let shred_version = 123;
         [

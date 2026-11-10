@@ -39,7 +39,7 @@ use {
     solana_signature::Signature,
     solana_stake_history::StakeHistoryItem,
     solana_stake_interface::state::{Authorized, Lockup},
-    solana_transaction::{Transaction, versioned::VersionedTransaction},
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::{
         EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,
         UiTransactionStatusMeta,
@@ -1133,7 +1133,8 @@ impl VerboseDisplay for CliKeyedEpochRewards {
                 Some(reward) => {
                     writeln!(
                         w,
-                        "  {:<44}  {:<11}  {:<23}  ◎{:<17.9}  ◎{:<19.9}  {:>13.9}%  {:>7}  {:>10}",
+                        "  {:<44}  {:<11}  {:<23}  ◎{:<17.17}  ◎{:<19.19}  {:>13.9}%  {:>7}  \
+                         {:>10}",
                         keyed_reward.address,
                         reward.effective_slot,
                         Utc.timestamp_opt(reward.block_time, 0).unwrap(),
@@ -1180,7 +1181,7 @@ impl fmt::Display for CliKeyedEpochRewards {
                 Some(reward) => {
                     writeln!(
                         f,
-                        "  {:<44}  ◎{:<17.9}  ◎{:<17.9}  {:>13.9}%  {:>7}  {:>10}",
+                        "  {:<44}  ◎{:<17.17}  ◎{:<17.17}  {:>13.9}%  {:>7}  {:>10}",
                         keyed_reward.address,
                         build_balance_message(reward.amount, false, false),
                         build_balance_message(reward.post_balance, false, false),
@@ -1403,7 +1404,7 @@ fn show_epoch_rewards(
             format_as!(
                 f,
                 "{},{},{},{},{},{}%,{},{}",
-                "  {:<6}  {:<11}  {:<26}  ◎{:<17.11}  ◎{:<17.11}  {:>13.3}%  {:>14}  {:>10}",
+                "  {:<6}  {:<11}  {:<26}  ◎{:<17.17}  ◎{:<17.17}  {:>13.3}%  {:>14}  {:>10}",
                 fmt,
                 reward.epoch,
                 reward.effective_slot,
@@ -2352,12 +2353,9 @@ impl fmt::Display for CliAccountBalances {
         for account in &self.accounts {
             writeln!(
                 f,
-                "{:<44}  {}",
+                "{:<44}  {} SOL",
                 account.address,
-                &format!(
-                    "{} SOL",
-                    build_balance_message(account.lamports, false, false)
-                ),
+                build_balance_message(account.lamports, false, false)
             )?;
         }
         Ok(())
@@ -2677,11 +2675,8 @@ impl fmt::Display for CliProgramsV4 {
         for program in self.programs.iter() {
             writeln!(
                 f,
-                "{}",
-                &format!(
-                    "{:<44} | {:<9} | {:<44} | {:<10}",
-                    program.program_id, program.last_deploy_slot, program.authority, program.status,
-                )
+                "{:<44} | {:<9} | {:<44} | {:<10}",
+                program.program_id, program.last_deploy_slot, program.authority, program.status,
             )?;
         }
         Ok(())
@@ -2753,14 +2748,11 @@ impl fmt::Display for CliUpgradeablePrograms {
         for program in self.programs.iter() {
             writeln!(
                 f,
-                "{}",
-                &format!(
-                    "{:<44} | {:<9} | {:<44} | {}",
-                    program.program_id,
-                    program.last_deploy_slot,
-                    program.authority,
-                    build_balance_message(program.lamports, self.use_lamports_unit, true)
-                )
+                "{:<44} | {:<9} | {:<44} | {}",
+                program.program_id,
+                program.last_deploy_slot,
+                program.authority,
+                build_balance_message(program.lamports, self.use_lamports_unit, true)
             )?;
         }
         Ok(())
@@ -2866,13 +2858,10 @@ impl fmt::Display for CliUpgradeableBuffers {
         for buffer in self.buffers.iter() {
             writeln!(
                 f,
-                "{}",
-                &format!(
-                    "{:<44} | {:<44} | {}",
-                    buffer.address,
-                    buffer.authority,
-                    build_balance_message(buffer.lamports, self.use_lamports_unit, true)
-                )
+                "{:<44} | {:<44} | {}",
+                buffer.address,
+                buffer.authority,
+                build_balance_message(buffer.lamports, self.use_lamports_unit, true)
             )?;
         }
         Ok(())
@@ -2954,14 +2943,14 @@ pub struct ReturnSignersConfig {
 }
 
 pub fn return_signers(
-    tx: &Transaction,
+    tx: &VersionedTransaction,
     output_format: &OutputFormat,
 ) -> Result<String, Box<dyn std::error::Error>> {
     return_signers_with_config(tx, output_format, &ReturnSignersConfig::default())
 }
 
 pub fn return_signers_with_config(
-    tx: &Transaction,
+    tx: &VersionedTransaction,
     output_format: &OutputFormat,
     config: &ReturnSignersConfig,
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -2969,14 +2958,17 @@ pub fn return_signers_with_config(
     Ok(output_format.formatted_string(&cli_command))
 }
 
-pub fn return_signers_data(tx: &Transaction, config: &ReturnSignersConfig) -> CliSignOnlyData {
-    let message_data = tx.message_data();
+pub fn return_signers_data(
+    tx: &VersionedTransaction,
+    config: &ReturnSignersConfig,
+) -> CliSignOnlyData {
+    let message_data = tx.message.serialize();
     let mut signers = Vec::new();
     let mut absent = Vec::new();
     let mut bad_sig = Vec::new();
     tx.signatures
         .iter()
-        .zip(tx.message.account_keys.iter())
+        .zip(tx.message.static_account_keys().iter())
         .for_each(|(sig, key)| {
             if *sig == Signature::default() {
                 absent.push(key.to_string());
@@ -2993,7 +2985,7 @@ pub fn return_signers_data(tx: &Transaction, config: &ReturnSignersConfig) -> Cl
     };
 
     CliSignOnlyData {
-        blockhash: tx.message.recent_blockhash.to_string(),
+        blockhash: tx.message.recent_blockhash().to_string(),
         message,
         signers,
         absent,
@@ -3158,7 +3150,7 @@ impl CliBlock {
                         "-".to_string()
                     },
                     format!(
-                        "{}◎{:<14.9}",
+                        "{}◎{:<14.14}",
                         sign,
                         build_balance_message(reward.lamports.unsigned_abs(), false, false)
                     ),
@@ -3166,7 +3158,7 @@ impl CliBlock {
                         "          -                 -".to_string()
                     } else {
                         format!(
-                            "◎{:<19.9}  {:>13.9}%",
+                            "◎{:<19.19}  {:>13.9}%",
                             build_balance_message(reward.post_balance, false, false),
                             (reward.lamports.abs() as f64
                                 / (reward.post_balance as f64 - reward.lamports as f64))
@@ -3184,7 +3176,7 @@ impl CliBlock {
             let sign = if total_rewards < 0 { "-" } else { "" };
             writeln!(
                 f,
-                "Total Rewards: {}◎{:<12.9}",
+                "Total Rewards: {}◎{:<12.12}",
                 sign,
                 build_balance_message(total_rewards.unsigned_abs(), false, false)
             )?;
@@ -3705,6 +3697,7 @@ mod tests {
         let signers = vec![present.as_ref(), absent.as_ref(), bad.as_ref()];
         let blockhash = Hash::new_from_array([7u8; 32]);
         tx.try_partial_sign(&signers, blockhash).unwrap();
+        let tx = VersionedTransaction::from(tx);
         let res = return_signers(&tx, &OutputFormat::JsonCompact).unwrap();
         let sign_only = parse_sign_only_reply_string(&res);
         assert_eq!(sign_only.blockhash, blockhash);

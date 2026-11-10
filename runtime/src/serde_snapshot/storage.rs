@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// The serialized AccountsFileId type is fixed as usize
@@ -7,7 +9,7 @@ pub(crate) type SerializedAccountsFileId = usize;
 // the wire shape of the deprecated storage entries map in the snapshot manifest.
 #[repr(C)]
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "CMckX3HiC6K5FSmFo4tH44wU1mvGfabNtYAs65uaGvGU",

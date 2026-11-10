@@ -185,16 +185,15 @@ impl EpochBoundaryPreparation {
         None
     }
 
-    /// Before rerooting the blockstore this concludes the epoch boundary preparation
-    pub fn reroot(&mut self, epoch: Epoch) -> Option<ProgramRuntimeEnvironment> {
-        if epoch == self.upcoming_epoch
-            && let Some(upcoming_environment) = self.upcoming_environment.take()
-        {
+    /// Before rerooting the blockstore this concludes the epoch boundary
+    /// preparation. Returns whether there was one to conclude.
+    pub fn reroot(&mut self, epoch: Epoch) -> bool {
+        if epoch == self.upcoming_epoch && self.upcoming_environment.take().is_some() {
             self.programs_to_recompile.clear();
-            return Some(upcoming_environment);
+            return true;
         }
 
-        None
+        false
     }
 }
 
@@ -525,8 +524,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 entries.retain(|_id, second_level| {
                     // Clean up tombstones and unloaded entries
                     if let [candidate] = &second_level[..]
-                        && (matches!(candidate.program, ProgramCacheEntryType::Unloaded(_))
-                            || candidate.is_tombstone())
+                        && (candidate.is_unloaded() || candidate.is_tombstone())
                         && candidate.deployment_slot <= self.latest_root_slot
                         && candidate.latest_access_slot.load(Ordering::Relaxed)
                             < tombstone_slot_cutoff
@@ -624,10 +622,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         increment_usage_counter: bool,
         count_hits_and_misses: bool,
     ) -> Option<Pubkey> {
-        debug_assert!(self.fork_graph.is_some());
-        let fork_graph = self.fork_graph.as_ref().unwrap().upgrade().unwrap();
-        let locked_fork_graph = fork_graph.read().unwrap();
         let entries_in_batch = loaded_programs_for_tx_batch.entries.len();
+        let batch_slot = loaded_programs_for_tx_batch.slot;
         let mut cooperative_loading_task = None;
         match &self.index {
             IndexImplementation::V1 {
@@ -647,72 +643,48 @@ impl<FG: ForkGraph> ProgramCache<FG> {
 
                             // At this point we're sitting on an entry with a matching
                             // deployment slot and owner.
-                            //
-                            // Fork-graph analysis below this is now redundant, and it
-                            // can be removed in follow-up.
-                            let entry_in_same_branch = entry.deployment_slot
-                                <= self.latest_root_slot
-                                || matches!(
-                                    locked_fork_graph.relationship(
-                                        entry.deployment_slot,
-                                        loaded_programs_for_tx_batch.slot
-                                    ),
-                                    BlockRelation::Equal | BlockRelation::Ancestor
-                                );
-                            if entry_in_same_branch {
-                                let entry_is_effective =
-                                    loaded_programs_for_tx_batch.slot >= entry.effective_slot();
-                                let entry_to_return = if entry_is_effective {
-                                    if !Self::matches_environment(
-                                        entry,
-                                        program_runtime_environment_for_execution,
-                                    ) {
-                                        // We found an entry that would work, had its environment
-                                        // matched the one we're planning to use for this slot. A
-                                        // sibling compiled against that environment may follow.
-                                        continue;
-                                    }
-                                    if let ProgramCacheEntryType::Unloaded(_environment) =
-                                        &entry.program
-                                    {
-                                        break;
-                                    }
-                                    entry.clone()
-                                } else if entry.is_implicit_delay_visibility_tombstone(
-                                    loaded_programs_for_tx_batch.slot,
+                            let entry_is_effective = batch_slot >= entry.effective_slot();
+                            let entry_to_return = if entry_is_effective {
+                                if !Self::matches_environment(
+                                    entry,
+                                    program_runtime_environment_for_execution,
                                 ) {
-                                    // Found a program entry on the current fork, but it's not effective
-                                    // yet. It indicates that the program has delayed visibility. Return
-                                    // the tombstone to reflect that.
-                                    Arc::new(ProgramCacheEntry::new_delay_visibility_tombstone(
-                                        entry.deployment_slot,
-                                        entry.account_owner,
-                                        Arc::clone(&entry.stats),
-                                    ))
-                                } else {
+                                    // We found an entry that would work, had its environment
+                                    // matched the one we're planning to use for this slot. A
+                                    // sibling compiled against that environment may follow.
                                     continue;
-                                };
-                                entry.update_access_slot(
-                                    loaded_programs_for_tx_batch.slot.min(self.latest_root_slot),
-                                );
-                                if increment_usage_counter {
-                                    entry_to_return.stats.uses.fetch_add(1, Ordering::Relaxed);
                                 }
-                                loaded_programs_for_tx_batch
-                                    .entries
-                                    .insert(*program_to_load.program_id, entry_to_return);
-                                return false;
+                                if entry.is_unloaded() {
+                                    break;
+                                }
+                                entry.clone()
+                            } else if entry.is_implicit_delay_visibility_tombstone(batch_slot) {
+                                // Found a program entry on the current fork, but it's not effective
+                                // yet. It indicates that the program has delayed visibility. Return
+                                // the tombstone to reflect that.
+                                Arc::new(ProgramCacheEntry::new_delay_visibility_tombstone(
+                                    entry.deployment_slot,
+                                    entry.account_owner,
+                                    Arc::clone(&entry.stats),
+                                ))
+                            } else {
+                                continue;
+                            };
+                            entry.update_access_slot(batch_slot.min(self.latest_root_slot));
+                            if increment_usage_counter {
+                                entry_to_return.stats.uses.fetch_add(1, Ordering::Relaxed);
                             }
+                            loaded_programs_for_tx_batch
+                                .entries
+                                .insert(*program_to_load.program_id, entry_to_return);
+                            return false;
                         }
                     }
                     if cooperative_loading_task.is_none() {
                         let mut loading_entries = loading_entries.lock().unwrap();
                         let entry = loading_entries.entry(*program_to_load.program_id);
                         if let Entry::Vacant(entry) = entry {
-                            entry.insert((
-                                loaded_programs_for_tx_batch.slot,
-                                thread::current().id(),
-                            ));
+                            entry.insert((batch_slot, thread::current().id()));
                             cooperative_loading_task = Some(*program_to_load.program_id);
                         }
                     }
@@ -720,7 +692,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 });
             }
         }
-        drop(locked_fork_graph);
         if count_hits_and_misses {
             let misses = search_for.len() as u64;
             let hits = loaded_programs_for_tx_batch
@@ -773,22 +744,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 was_occupied
             }
         }
-    }
-
-    pub fn merge(
-        &mut self,
-        program_runtime_environment: &ProgramRuntimeEnvironment,
-        current_slot: Slot,
-        modified_entries: &HashMap<Pubkey, Arc<ProgramCacheEntry>>,
-    ) {
-        modified_entries.iter().for_each(|(key, entry)| {
-            self.assign_program(
-                program_runtime_environment,
-                *key,
-                current_slot,
-                entry.clone(),
-            );
-        })
     }
 
     /// Returns the list of entries which are verified and compiled.
@@ -969,7 +924,6 @@ pub(crate) mod tests {
             },
             program_metrics::ProgramStatistics,
         },
-        assert_matches::assert_matches,
         solana_clock::Slot,
         solana_pubkey::Pubkey,
         solana_sbpf::{elf::Executable, program::BuiltinProgram},
@@ -980,7 +934,7 @@ pub(crate) mod tests {
             },
             thread,
         },
-        std::{fs::File, io::Read, ops::ControlFlow},
+        std::{assert_matches, fs::File, io::Read, ops::ControlFlow},
         test_case::{test_case, test_matrix},
     };
 
@@ -1310,7 +1264,8 @@ pub(crate) mod tests {
         let unloaded = entries
             .iter()
             .filter_map(|(key, program)| {
-                matches!(program.program, ProgramCacheEntryType::Unloaded(_))
+                program
+                    .is_unloaded()
                     .then_some((*key, program.stats.uses.load(Ordering::Relaxed)))
             })
             .collect::<Vec<(Pubkey, u64)>>();
@@ -1375,7 +1330,7 @@ pub(crate) mod tests {
             .get_flattened_entries_for_tests()
             .iter()
             .for_each(|(_key, program)| {
-                if matches!(program.program, ProgramCacheEntryType::Unloaded(_)) {
+                if program.is_unloaded() {
                     // Test that the usage counter is retained for the unloaded program
                     assert_eq!(program.stats.uses.load(Ordering::Relaxed), 10);
                     assert_eq!(program.deployment_slot, 0);
@@ -1396,7 +1351,7 @@ pub(crate) mod tests {
             .get_flattened_entries_for_tests()
             .iter()
             .for_each(|(_key, program)| {
-                if matches!(program.program, ProgramCacheEntryType::Unloaded(_))
+                if program.is_unloaded()
                     && program.deployment_slot == 0
                     && program.effective_slot() == 1
                 {
@@ -3456,7 +3411,7 @@ pub(crate) mod tests {
             // with the batch.
             assert_eq!(entry.latest_access_slot.load(Ordering::Relaxed), batch_slot);
             assert_eq!(tombstone.latest_access_slot.load(Ordering::Relaxed), 0);
-        } else if matches!(entry.program, ProgramCacheEntryType::Unloaded(_)) {
+        } else if entry.is_unloaded() {
             // The entry was effective, but there is no binary behind it, so
             // the search breaks off and the caller is left to reload. Nothing
             // is recorded against the entry.
@@ -3989,94 +3944,14 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_extract_entry_not_in_same_branch() {
-        // Fork graph created for the test
-        //                0
-        //              /   \
-        //            50     100
-        //             |
-        //            200
-        let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
-        let mut fork_graph = TestForkGraphSpecific::default();
-        fork_graph.insert_fork(&[0, 50, 200]);
-        fork_graph.insert_fork(&[0, 100]);
-        let fork_graph = Arc::new(RwLock::new(fork_graph));
-        cache.set_fork_graph(Arc::downgrade(&fork_graph));
-
-        let env = get_mock_program_runtime_environment();
-        let program_id = Pubkey::new_unique();
-        let on_other_fork = new_test_entry_with_owner(
-            100,
-            ProgramCacheEntryOwner::LoaderV3,
-            new_loaded_entry(env.clone()),
-        );
-        cache.assign_program(&env, program_id, 100, Arc::clone(&on_other_fork));
-
-        // The only entry was deployed on a fork the batch is not on, which is
-        // still evaluated *in addition to* the exact deployment slot matching.
-        //
-        // Once fork-tracking is removed from `extract`, `deployment_slot` is
-        // assumed to be the slot the caller's account state reports, so naming
-        // 100 is what places the entry here.
-        //
-        // Until then, it cannot be resolved since fork tracking determines it
-        // to be on another fork.
-        let mut search_for = vec![ProgramToLoad {
-            program_id: &program_id,
-            loader: ProgramCacheEntryOwner::LoaderV3,
-            deployment_slot: 100,
-        }];
-        let mut extracted = ProgramCacheForTxBatch::new(200);
-        cache.extract(&mut search_for, &mut extracted, &env, true, true);
-        assert_eq!(search_for.len(), 1);
-        assert!(extracted.entries.is_empty());
-
-        // An older deployment, on the fork the batch is on.
-        let on_same_fork = new_test_entry_with_owner(
-            50,
-            ProgramCacheEntryOwner::LoaderV3,
-            new_loaded_entry(env.clone()),
-        );
-        cache.assign_program(&env, program_id, 50, Arc::clone(&on_same_fork));
-
-        // Here the cache has the one at 50 followed by the one at 100.
-        let slot_versions = cache.get_slot_versions_for_tests(&program_id);
-        assert_eq!(slot_versions.len(), 2);
-        assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &on_same_fork));
-        assert!(Arc::ptr_eq(slot_versions.get(1).unwrap(), &on_other_fork));
-
-        // Asking for 50 still reaches the entry at 50, whichever fork the
-        // one above it is on.
-        let mut search_for = vec![ProgramToLoad {
-            program_id: &program_id,
-            loader: ProgramCacheEntryOwner::LoaderV3,
-            deployment_slot: 50,
-        }];
-        let mut extracted = ProgramCacheForTxBatch::new(200);
-        cache.extract(&mut search_for, &mut extracted, &env, true, true);
-        assert!(search_for.is_empty());
-        assert!(Arc::ptr_eq(
-            extracted.entries.get(&program_id).unwrap(),
-            &on_same_fork
-        ));
-    }
-
-    #[test]
     fn test_extract_deployment_slot_mismatch() {
-        // We keep the cache's `latest_root_slot` at 0 and deploy a loaded
-        // program entry for slot 100 to avoid running into the infamous
-        // `entry.deployment_slot <= self.latest_root_slot` check.
-        //
-        // As such, the `entry_in_same_branch` conditional depends exclusively
-        // on the fork graph relationship, which we set to `Ancestor` here.
-        //
         // Unlike the mismatched owner test above, a mismatched deployment slot
         // is only a genuine miss when the targeted `deployment_slot`
         // is too new.
         //
-        // So, we produce a scenario where `entry_in_same_branch`,
-        // `entry_is_effective` and `matches_environment` all evaluate to
-        // `true`, finally trapping and breaking out on
+        // So, we produce a scenario where `entry_is_effective` and
+        // `matches_environment` both evaluate to `true`, finally trapping and
+        // breaking out on
         // `entry.deployment_slot < program_to_load.deployment_slot`.
         let (mut cache, _fork_graph) = new_test_cache_with_fork_graph(BlockRelation::Ancestor);
         assert_eq!(cache.latest_root_slot, 0);
@@ -4089,9 +3964,9 @@ pub(crate) mod tests {
         );
         cache.assign_program(&env, program_id, 100, Arc::clone(&deployed_at_100));
 
-        // The only entry is in the same branch, effective and on the right
-        // environment, but it is older than the search demands.
-        // Nothing is extracted. The caller must reload.
+        // The only entry is effective and on the right environment, but it is
+        // older than the search demands. Nothing is extracted. The caller must
+        // reload.
         let mut search_for = vec![ProgramToLoad {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
@@ -4120,7 +3995,7 @@ pub(crate) mod tests {
         ));
         assert!(Arc::ptr_eq(slot_versions.get(1).unwrap(), &deployed_at_150));
 
-        // Which is reached first, and is not older than the search demands.
+        // Now a search at 150 finds it.
         let mut search_for = vec![ProgramToLoad {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
@@ -4133,73 +4008,21 @@ pub(crate) mod tests {
             extracted.entries.get(&program_id).unwrap(),
             &deployed_at_150
         ));
-    }
 
-    #[test]
-    fn test_extract_older_entry_on_the_callers_fork() {
-        // Fork graph created for the test
-        //                0
-        //              /   \
-        //            50     150
-        //             |
-        //            200
-        let mut cache = ProgramCache::<TestForkGraphSpecific>::new(0);
-        let mut fork_graph = TestForkGraphSpecific::default();
-        fork_graph.insert_fork(&[0, 50, 200]);
-        fork_graph.insert_fork(&[0, 150]);
-        let fork_graph = Arc::new(RwLock::new(fork_graph));
-        cache.set_fork_graph(Arc::downgrade(&fork_graph));
-
-        let env = get_mock_program_runtime_environment();
-        let program_id = Pubkey::new_unique();
-        let on_other_fork = new_test_entry_with_owner(
-            150,
-            ProgramCacheEntryOwner::LoaderV3,
-            new_loaded_entry(env.clone()),
-        );
-        let on_same_fork = new_test_entry_with_owner(
-            50,
-            ProgramCacheEntryOwner::LoaderV3,
-            new_loaded_entry(env.clone()),
-        );
-        cache.assign_program(&env, program_id, 150, Arc::clone(&on_other_fork));
-        cache.assign_program(&env, program_id, 50, Arc::clone(&on_same_fork));
-
-        // The account on this fork names 50, so the entry at 150 on the other
-        // fork is not what is asked for and the one at 50 is served. There is
-        // no fallback involved: the caller named the slot it wanted.
+        // A caller whose own account still names 100 is served the entry at
+        // 100, not the newer one at 150.
         let mut search_for = vec![ProgramToLoad {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
-            deployment_slot: 50,
+            deployment_slot: 100,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(200);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
+        assert!(search_for.is_empty());
         assert!(Arc::ptr_eq(
             extracted.entries.get(&program_id).unwrap(),
-            &on_same_fork
+            &deployed_at_100
         ));
-
-        // Similar to the case in `test_extract_entry_not_in_same_branch`,
-        // because fork tracking is still evaluated *in addition to* the exact
-        // deployment slot matching, this entry can't be extracted by a batch
-        // in slot 200.
-        //
-        // Once fork-tracking is removed from `extract`, `deployment_slot` is
-        // assumed to be the slot the caller's account state reports, so naming
-        // 150 is what places the entry here.
-        //
-        // Until then, it cannot be resolved since fork tracking determines it
-        // to be on another fork.
-        let mut search_for = vec![ProgramToLoad {
-            program_id: &program_id,
-            loader: ProgramCacheEntryOwner::LoaderV3,
-            deployment_slot: 150,
-        }];
-        let mut extracted = ProgramCacheForTxBatch::new(200);
-        cache.extract(&mut search_for, &mut extracted, &env, true, true);
-        assert_eq!(search_for.len(), 1);
-        assert!(extracted.entries.is_empty());
     }
 
     #[test]
@@ -4224,17 +4047,13 @@ pub(crate) mod tests {
         assert_eq!(slot_versions.len(), 1);
         assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &entry));
 
-        // Overwrite the fork graph to use `BlockRelation::Unknown`, to show
-        // only the `entry.deployment_slot <= self.latest_root_slot` check is
-        // evaluated here.
-        fork_graph.write().unwrap().relation = BlockRelation::Unknown;
-
-        // The batch is below the deployment slot, so the entry is neither
-        // effective nor a delay visibility tombstone.
+        // The caller asks for the correct deployment slot (somehow), but since
+        // the batch slot is below that target slot, the entry is neither
+        // effective nor a delay visibility tombstone, so it is not served.
         let mut search_for = vec![ProgramToLoad {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,
-            deployment_slot: 0,
+            deployment_slot: 100,
         }];
         let mut extracted = ProgramCacheForTxBatch::new(50);
         cache.extract(&mut search_for, &mut extracted, &env, true, true);
@@ -4266,15 +4085,7 @@ pub(crate) mod tests {
         assert_eq!(slot_versions.len(), 1);
         assert!(Arc::ptr_eq(slot_versions.first().unwrap(), &entry));
 
-        // Overwrite the fork graph to use `BlockRelation::Unknown`, to show
-        // only the `entry.deployment_slot <= self.latest_root_slot` check is
-        // evaluated here.
-        fork_graph.write().unwrap().relation = BlockRelation::Unknown;
-
-        // That check alone is still enough to serve the entry, and there is
-        // still no telling which fork it belongs to. What keeps it correct is
-        // that only a caller whose own account names slot 100 can ask for it,
-        // and such a caller has that deployment on its fork by definition.
+        // The entry is still served. The search criteria is still a match.
         let mut search_for = vec![ProgramToLoad {
             program_id: &program_id,
             loader: ProgramCacheEntryOwner::LoaderV3,

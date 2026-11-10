@@ -7,7 +7,10 @@ use {
     },
     crate::cluster_nodes::ClusterNodesCache,
     agave_votor::event::VotorEventSender,
-    agave_votor_messages::{consensus_message::Block, migration::MigrationStatus},
+    agave_votor_messages::{
+        consensus_message::{Block, BlockId},
+        migration::MigrationStatus,
+    },
     solana_cost_model::shred_limit::{
         DEFAULT_MAX_CODE_SHREDS_PER_SLOT, DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
     },
@@ -16,10 +19,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{
-            ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder,
-            merkle_tree::MerkleTree,
-        },
+        shred::{ProcessShredsStats, Shred, ShredType, Shredder, merkle_tree::MerkleTree},
     },
     solana_runtime::bank::Bank,
     solana_sha256_hasher::hashv,
@@ -38,7 +38,7 @@ pub struct StandardBroadcastRun {
     // Parent encoded in shred headers. This must remain stable for the slot
     // because it is used to derive PARENT_OFFSET.
     parent: Slot,
-    parent_block_id: Hash,
+    parent_block_id: BlockId,
     // Parent slot and block id committed into the double-merkle block id. This
     // can change after an UpdateParent marker.
     parent_for_double_merkle: Block,
@@ -59,7 +59,6 @@ pub struct StandardBroadcastRun {
     num_batches: usize,
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
-    reed_solomon_cache: Arc<ReedSolomonCache>,
     migration_status: Arc<MigrationStatus>,
     votor_event_sender: VotorEventSender,
     max_data_shreds_per_slot: u32,
@@ -86,10 +85,10 @@ impl StandardBroadcastRun {
         Self {
             slot: Slot::MAX,
             parent: Slot::MAX,
-            parent_block_id: Hash::default(),
+            parent_block_id: BlockId::default(),
             parent_for_double_merkle: Block {
                 slot: Slot::MAX,
-                block_id: Hash::default(),
+                block_id: BlockId::default(),
             },
             chained_merkle_root: Hash::default(),
             double_merkle_leaves: vec![],
@@ -106,7 +105,6 @@ impl StandardBroadcastRun {
             num_batches: 0,
             cluster_nodes_cache,
             leader_schedule_cache,
-            reed_solomon_cache: Arc::<ReedSolomonCache>::default(),
             migration_status,
             votor_event_sender,
             max_data_shreds_per_slot: DEFAULT_MAX_DATA_SHREDS_PER_SLOT,
@@ -160,7 +158,9 @@ impl StandardBroadcastRun {
             ) {
                 Ok(chained_merkle_root) => chained_merkle_root,
                 // This is a snapshot slot that we don't have the shreds for. Use the block id from the snapshot
-                Err(Error::UnknownLastIndex(_)) | Err(Error::UnknownSlotMeta(_)) => parent_block_id,
+                Err(Error::UnknownLastIndex(_)) | Err(Error::UnknownSlotMeta(_)) => {
+                    parent_block_id.to_hash()
+                }
                 Err(e) => panic!(
                     "Unexpected error while producing leader block for {}: {e:?}",
                     bank.slot()
@@ -207,7 +207,6 @@ impl StandardBroadcastRun {
                 self.chained_merkle_root,
                 self.next_shred_index,
                 self.next_code_index,
-                &self.reed_solomon_cache,
                 &mut self.process_shreds_stats,
             );
         // These shreds will finish the slot so no need to update
@@ -241,7 +240,6 @@ impl StandardBroadcastRun {
                     self.chained_merkle_root,
                     self.next_shred_index,
                     self.next_code_index,
-                    &self.reed_solomon_cache,
                     process_stats,
                 );
         shreds.iter().for_each(|shred| {
@@ -466,12 +464,7 @@ impl StandardBroadcastRun {
             && shred.index() == 0
         {
             blockstore
-                .insert_cow_shreds(
-                    [Cow::Borrowed(shred)],
-                    true, // is_trusted
-                    pinnable_slice,
-                    write_batch,
-                )
+                .insert_trusted_shreds([Cow::Borrowed(shred)], pinnable_slice, write_batch)
                 .expect("Failed to insert shreds in blockstore");
         }
         to_shreds_time.stop();
@@ -561,12 +554,7 @@ impl StandardBroadcastRun {
         let num_shreds = shreds.len();
         let shreds = shreds.iter().skip(offset).map(Cow::Borrowed);
         blockstore
-            .insert_cow_shreds(
-                shreds,
-                /*is_trusted:*/ true,
-                pinnable_slice,
-                write_batch,
-            )
+            .insert_trusted_shreds(shreds, pinnable_slice, write_batch)
             .expect("Failed to insert shreds in blockstore");
         let insert_shreds_elapsed = insert_shreds_start.elapsed();
         let new_insert_shreds_stats = InsertShredsStats {
@@ -710,8 +698,8 @@ impl BroadcastRun for StandardBroadcastRun {
 mod test {
     use {
         super::*,
-        assert_matches::assert_matches,
         rand::Rng,
+        solana_clock::DEFAULT_NS_PER_TICK_400_MS,
         solana_entry::entry::create_ticks,
         solana_genesis_config::GenesisConfig,
         solana_gossip::{cluster_info::ClusterInfo, node::Node},
@@ -732,7 +720,7 @@ mod test {
             slot_params::{slot_time_feature_gates, slot_time_feature_ids},
         },
         solana_signer::Signer,
-        std::{ops::Deref, sync::Arc, time::Duration},
+        std::{assert_matches, ops::Deref, sync::Arc, time::Duration},
         test_case::test_case,
     };
 
@@ -925,6 +913,8 @@ mod test {
             Blockstore::open(&ledger_path).expect("Expected to be able to open database ledger"),
         );
         let mut genesis_config = create_genesis_config(10_000).genesis_config;
+        genesis_config.poh_config.target_tick_duration =
+            Duration::from_nanos(DEFAULT_NS_PER_TICK_400_MS);
         let slot_time_features = slot_time_feature_ids().to_vec();
         deactivate_features(&mut genesis_config, &slot_time_features);
         for feature_id in feature_ids {
@@ -994,12 +984,12 @@ mod test {
         assert!(run.completed);
 
         // Set up the slot to be interrupted
-        let next_shred_index = 10;
+        let next_shred_index = 32;
         let slot = 1;
         let parent = 0;
         run.chained_merkle_root = Hash::new_from_array(rand::rng().random());
         run.next_shred_index = next_shred_index;
-        run.next_code_index = 17;
+        run.next_code_index = next_shred_index;
         run.slot = slot;
         run.parent = parent;
         run.completed = false;
@@ -1107,7 +1097,7 @@ mod test {
 
         // Step 2: Make a transmission for another bank that interrupts the transmission for
         // slot 1
-        bank1.set_block_id(Some(Hash::new_unique()));
+        bank1.set_block_id(Some(BlockId::new_unique()));
         let bank2 = new_child_bank(&bank1, 2);
         let interrupted_slot = standard_broadcast_run.slot;
         // Interrupting the slot should cause the unfinished_slot and stats to reset
@@ -1480,7 +1470,7 @@ mod test {
         );
         bs.slot = 12;
         bs.parent = 10;
-        let original_parent_block_id = Hash::new_unique();
+        let original_parent_block_id = BlockId::new_unique();
         bs.parent_block_id = original_parent_block_id;
         bs.parent_for_double_merkle = Block {
             slot: bs.parent,
@@ -1488,7 +1478,7 @@ mod test {
         };
 
         let new_parent_slot = 7;
-        let new_parent_block_id = Hash::new_unique();
+        let new_parent_block_id = BlockId::new_unique();
         let component = BlockComponent::new_block_marker(VersionedBlockMarker::from_update_parent(
             solana_entry::block_component::UpdateParentV1 {
                 new_parent_slot,

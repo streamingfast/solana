@@ -367,6 +367,7 @@ mod tests {
             certificate::{Certificate, CertificateType},
             consensus_message::{ConsensusMessage, VoteMessage},
             migration::MigrationStatus,
+            stake::NonZeroStake,
             vote::Vote,
             wire::get_vote_payload_to_sign,
         },
@@ -392,15 +393,12 @@ mod tests {
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
-            genesis_utils::{
-                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
-            },
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
         },
         solana_signer::Signer,
         std::{
             collections::HashMap,
             net::SocketAddr,
-            num::NonZero,
             sync::{Arc, RwLock},
         },
         test_case::test_case,
@@ -430,7 +428,7 @@ mod tests {
             vote,
             signature,
             rank,
-            stake: NonZero::new(123).unwrap(),
+            stake: NonZeroStake::new(123).unwrap(),
         }
     }
 
@@ -597,7 +595,7 @@ mod tests {
         let validator_keypairs = (0..10)
             .map(|_| ValidatorVoteKeypairs::new_rand())
             .collect::<Vec<_>>();
-        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
+        let genesis = create_genesis_config_with_vote_accounts(
             1_000_000_000,
             &validator_keypairs,
             vec![100; validator_keypairs.len()],

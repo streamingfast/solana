@@ -7,13 +7,132 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-compatibility)
 
-## 4.4.0
+## 4.5.0
 
 ### RPC
 
 #### Breaking
 
+#### Changes
+
+* `getBlocksWithLimit` now enforces `minContextSlot` before falling back to BigTable: it returns
+  `MinContextSlotNotReached` (-32016) when the node's context slot at the finalized commitment is
+  below the minimum, instead of silently serving blocks from BigTable. This mirrors the existing
+  `getBlocks` behavior.
+* Added `getVatActiveSetRankMap` to return validator ranks, vote accounts, identities, BLS keys,
+  and stakes for the epoch containing a requested slot, with an optional identity filter.
+  Always queries finalized state; there is no commitment parameter.
+* Added `RpcClient::get_vat_active_set_rank_map`, which accepts an optional identity filter
+  and minimum context slot through its config argument.
+* Added `innerInstructionsEncoding` to the `simulateTransaction` config. `json` returns inner
+  instructions in compiled form (`programIdIndex`, `accounts`, `data`); `jsonParsed` (the default)
+  preserves the existing parsed output.
+* `getAccountInfo` and `getMultipleAccounts` are now available on validators running without
+  `--full-rpc-api`.
+* `getFeeForMessage` now computes the fee from the message alone. It no longer returns `null` when
+  the message's recent blockhash has expired or its durable nonce is invalid, and no longer returns
+  an `invalid transaction message` error when it references missing or invalid address lookup
+  tables.
+* `getInflationReward` provides the block rewards for stake accounts as a separate
+  `blockRewardAmount` field in the response, if block revenue sharing is enabled in the epoch.
+  Otherwise, the field is present with a value of `null`. The `amount` field always contains
+  both inflation and block rewards. To get inflation rewards, calculate `amount - blockRewardAmount`.
+* `getBlock` returns block revenue rewards as separate entries in the `rewards` field. This
+  means a single stake account has two separate reward entries in a block if it received
+  block rewards and inflation rewards. The new entries can only appear when block revenue
+  sharing is enabled.
+* Some error messages from `sendTransaction`, `simulateTransaction` and `getFeeForMessage` changed,
+  error codes are unchanged. Size errors say `data` instead of a type name
+  (`base64 encoded data too large: …`), malformed transactions return
+  `failed to deserialize transaction` (including some previously reported as
+  `Transaction failed to sanitize accounts offsets correctly`), and malformed messages return
+  `invalid transaction message` without further detail.
+* `jsonParsed` ProgramData accounts of programs without an upgrade authority no longer return the
+  removed authority's 32 bytes in front of the program data.
+
+### Validator
+
+#### Breaking
+
+* `agave-validator repair-shred-from-peer` now requires `--pubkey`, and the `repairShredFromPeer`
+  admin RPC now requires `pubkey`. Sampling repair peers when no pubkey is given is no longer supported
+  due to the Alpenglow migration. The request now returns an error if the peer has no valid repair socket.
+
+#### Changes
+
+* Added `agave-validator --no-xdp-zero-copy` to explicitly select XDP copy mode. It conflicts
+  with `--xdp-zero-copy` and `--no-xdp`.
+* The default full snapshot interval is now 200,000 slots.
+* XDP interface, address, and transmitter setup failures now report startup errors instead of
+  panicking.
+* Banking trace has been removed. The validator no longer writes the `banking_trace` directory in
+  the ledger, and an existing one can be deleted.
+
+#### Deprecations
+
+* `--vote-use-quic` is deprecated - it only applied to TowerBFT quic-vote path.
+* `--enable-banking-trace` is deprecated and a no-op, since banking trace has been removed.
+* `--tpu-max-connections-per-peer` is deprecated and will be removed in a future release. Until then,
+  it still overrides `--tpu-max-connections-per-staked-peer` and `--tpu-max-connections-per-unstaked-peer`.
+  Replace `--tpu-max-connections-per-peer N` with
+  `--tpu-max-connections-per-staked-peer N --tpu-max-connections-per-unstaked-peer N`.
+* `--require-tower` is deprecated and will be removed in a future release.
+
+### CLI
+
+#### Breaking
+
+* Prebuilt MacOS x86-64 releases are no longer provided.
 * Prebuilt Windows releases are no longer provided.
+* `solana-genesis` no longer accepts the `--alpenglow` option.
+* **`cargo-build-sbf` and `cargo-test-sbf` are no longer bundled with the Agave
+  release.** Installing or updating via `agave-install` (including the
+  `release.anza.xyz/<version>/install` script) no longer puts them in
+  `active_release/bin`. After upgrading, `cargo build-sbf` and `cargo test-sbf`
+  will fail with `no such command`, or silently use an older copy found
+  elsewhere on your `PATH`. Install them separately with
+  `cargo install cargo-build-sbf --force --locked` (this installs both), and run
+  `which cargo-build-sbf` to confirm which copy you're using. Releases are
+  published in the
+  [`cargo-build-sbf`](https://github.com/anza-xyz/cargo-build-sbf) repository.
+* The `solana` CLI now creates version 1 transactions (txv1). Hardware wallets that do not
+  support parsing and signing txv1 transactions may no longer work with the CLI.
+* `withdraw-from-vote-account --sign-only` now requires
+  `--allow-vat-withdrawal`, because the vote account balance and VAT reserve cannot be
+  checked offline.
+* **`solana program deploy` no longer generates an ephemeral keypair signer as a
+  default fallback**. Users must explicitly call `--generate-ephemeral-program-id`
+  if this behavior is desired. This affects both `solana program deploy` and `solana
+  program deploy --buffer <BUFFER>`. This prevents users from creating keypairs they
+  can no longer recover unless they opt in.
+
+#### Changes
+
+* `airdrop` now prints a link to <https://faucet.solana.com>, pre-populated with the recipient address,
+  when the request fails on devnet or testnet.
+* `solana-test-validator` now activates Alpenglow consensus at genesis by default. The `--alpenglow` flag
+  no longer has any effect and it is no longer possible to start a test-validator with TowerBFT.
+* `solana-genesis` now activates Alpenglow consensus at genesis by default.
+* `withdraw-from-vote-account` now preserves enough SOL for the next Validator Admission Ticket (VAT)
+  burn, in addition to the rent-exempt minimum and any rewards pending distribution to delegators.
+  Pass `--allow-vat-withdrawal` to include the VAT reserve in the withdrawable balance; the flag is
+  required with `--sign-only`.
+
+### Geyser
+
+#### Changes
+
+* Contact info notifications now include unchanged gossip republishes. Plugins that subscribe to
+  contact info should be prepared for thousands of callbacks per second, many carrying duplicates.
+  Deduplicate locally if only field changes are needed. Keep callbacks short: a blocked callback
+  can fill the shared channel and cause updates to be dropped for all subscribed plugins.
+  Plugins loaded later can learn about unchanged nodes from subsequent republishes.
+
+## 4.4.0
+
+### RPC
+
+#### Breaking
 
 #### Changes
 
@@ -50,6 +169,8 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 * Added `vote-update-commission-collector` to set the account that collects a vote account's
   commission. The `COMMISSION_KIND` argument selects which collector to update:
   `inflation-rewards` or `block-revenue`.
+* `leader-schedule` now accepts `--key-by-vote-account` to show each slot's leader by vote
+  account instead of validator identity.
 
 ## 4.3.0
 

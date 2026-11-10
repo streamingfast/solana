@@ -105,19 +105,20 @@ pub fn load_genesis_accounts(file: &str, genesis_config: &mut GenesisConfig) -> 
             ))
         })?;
 
-        let mut account = AccountSharedData::new(account_details.balance, 0, &owner_program_id);
-        if account_details.data != "~" {
-            account.set_data_from_slice(
-                &BASE64_STANDARD
-                    .decode(account_details.data.as_str())
-                    .map_err(|err| {
-                        io::Error::other(format!(
-                            "Invalid account data: {}: {:?}",
-                            account_details.data, err
-                        ))
-                    })?,
-            );
-        }
+        let data = if account_details.data == "~" {
+            vec![]
+        } else {
+            BASE64_STANDARD
+                .decode(account_details.data.as_str())
+                .map_err(|err| {
+                    io::Error::other(format!(
+                        "Invalid account data: {}: {:?}",
+                        account_details.data, err
+                    ))
+                })?
+        };
+        let mut account =
+            AccountSharedData::new_with_data(account_details.balance, data, &owner_program_id);
         account.set_executable(account_details.executable);
         lamports += account.lamports();
         genesis_config.add_account(pubkey, account);
@@ -663,14 +664,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .global(true)
                 .validator(is_url_or_moniker)
                 .help(
-                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, \
+                    "URL for Solana's JSON RPC or moniker (or their first letter): [mainnet, \
                      testnet, devnet, localhost]. Used for cloning feature sets",
                 ),
-        )
-        .arg(
-            Arg::with_name("alpenglow")
-                .long("alpenglow")
-                .help("Whether we use Alpenglow consensus."),
         )
         .get_matches();
 
@@ -679,10 +675,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     if matches.is_present("lamports_per_byte_year") {
         eprintln!("lamports_per_byte_year is deprecated and will be removed in a future release");
     }
-    if matches.is_present("rent_exemption_threshold") {
+    if matches.occurrences_of("rent_exemption_threshold") > 0 {
         eprintln!("rent_exemption_threshold is deprecated and will be removed in a future release");
     }
-    if matches.is_present("rent_burn_percentage") {
+    if matches.occurrences_of("rent_burn_percentage") > 0 {
         eprintln!("rent_burn_percentage is deprecated and will be removed in a future release");
     }
 
@@ -815,8 +811,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let commission = value_t_or_exit!(matches, "vote_commission_percentage", u8);
     let rent = genesis_config.rent.clone();
 
-    let is_alpenglow = matches.is_present("alpenglow");
-
     if let Some(creation_time) = unix_timestamp_from_rfc3339_datetime(&matches, "creation_time") {
         genesis_config.creation_time = creation_time;
     }
@@ -836,8 +830,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     add_genesis_stake_config_account(&mut genesis_config);
     add_genesis_epoch_rewards_account(&mut genesis_config);
 
-    if is_alpenglow {
-        solana_runtime::genesis_utils::activate_all_features_alpenglow(&mut genesis_config);
+    if features_to_deactivate.contains(&agave_feature_set::alpenglow::id()) {
+        solana_runtime::genesis_utils::activate_all_features_tower(&mut genesis_config);
     } else {
         solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
     }
@@ -944,7 +938,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
             let (programdata_address, _) =
                 Pubkey::find_program_address(&[address.as_ref()], &loader);
-            let mut program_data = bincode::serialize(&UpgradeableLoaderState::ProgramData {
+            let mut program_data = wincode::serialize(&UpgradeableLoaderState::ProgramData {
                 slot: 0,
                 upgrade_authority_address: Some(upgrade_authority_address),
             })
@@ -961,7 +955,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 }),
             );
 
-            let program_data = bincode::serialize(&UpgradeableLoaderState::Program {
+            let program_data = wincode::serialize(&UpgradeableLoaderState::Program {
                 programdata_address,
             })
             .unwrap();
@@ -1507,9 +1501,9 @@ mod tests {
                     assert_eq!(meta.authorized.withdrawer, identity_pk);
 
                     assert_eq!(stake.delegation.voter_pubkey, vote_pk);
-                    let stake_account = AccountSharedData::new(
+                    let stake_account = AccountSharedData::new_with_data(
                         b64_account.stake_lamports,
-                        StakeStateV2::size_of(),
+                        vec![0; StakeStateV2::size_of()],
                         &stake::program::id(),
                     );
                     let rent_exempt_reserve =

@@ -7,6 +7,7 @@ use {
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand, value_t, value_t_or_exit},
     console::style,
     serde::{Deserialize, Serialize},
+    solana_account::state_traits::StateMutWincode as _,
     solana_clap_utils::{input_parsers::*, input_validators::*},
     solana_cli_output::{
         cli_clientid::CliClientId,
@@ -32,8 +33,9 @@ use {
         client_error::ErrorKind as ClientErrorKind,
         config::{
             RpcAccountInfoConfig, RpcBlockConfig, RpcGetVoteAccountsConfig,
-            RpcLargestAccountsConfig, RpcLargestAccountsFilter, RpcProgramAccountsConfig,
-            RpcTransactionConfig, RpcTransactionLogsConfig, RpcTransactionLogsFilter,
+            RpcLargestAccountsConfig, RpcLargestAccountsFilter, RpcLeaderScheduleConfig,
+            RpcProgramAccountsConfig, RpcTransactionConfig, RpcTransactionLogsConfig,
+            RpcTransactionLogsFilter,
         },
         filter::{Memcmp, RpcFilterType},
         request::DELINQUENT_VALIDATOR_SLOT_DISTANCE,
@@ -57,7 +59,7 @@ use {
         rc::Rc,
         str::FromStr,
         sync::{
-            Arc,
+            Arc, LazyLock,
             atomic::{AtomicBool, Ordering},
         },
         thread::sleep,
@@ -67,6 +69,13 @@ use {
 };
 
 const DEFAULT_RPC_PORT_STR: &str = "8899";
+
+static DELINQUENT_SLOT_DISTANCE_HELP: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "Minimum slot distance from the tip to consider a validator delinquent [default: \
+         {DELINQUENT_VALIDATOR_SLOT_DISTANCE}]"
+    )
+});
 
 pub trait ClusterQuerySubCommands {
     fn cluster_query_subcommands(self) -> Self;
@@ -185,6 +194,14 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .value_name("EPOCH")
                         .validator(is_epoch)
                         .help("Epoch to show leader schedule for [default: current]"),
+                )
+                .arg(
+                    Arg::with_name("key_by_vote_account")
+                        .long("key-by-vote-account")
+                        .takes_value(false)
+                        .help(
+                            "Show each slot's leader by vote account instead of validator identity",
+                        ),
                 ),
         )
         .subcommand(
@@ -370,12 +387,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                         .takes_value(true)
                         .value_name("SLOT_DISTANCE")
                         .validator(is_slot)
-                        .help(concatcp!(
-                            "Minimum slot distance from the tip to consider a validator \
-                             delinquent [default: ",
-                            DELINQUENT_VALIDATOR_SLOT_DISTANCE,
-                            "]",
-                        )),
+                        .help(DELINQUENT_SLOT_DISTANCE_HELP.as_str()),
                 ),
         )
         .subcommand(
@@ -909,7 +921,7 @@ pub async fn process_cluster_date(rpc_client: &RpcClient, config: &CliConfig<'_>
         .get_account_with_commitment(&sysvar::clock::id(), config.commitment)
         .await?;
     if let Some(clock_account) = result.value {
-        let clock: Clock = wincode::deserialize(&clock_account.data).map_err(|_| {
+        let clock: Clock = clock_account.state().map_err(|_| {
             CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
         })?;
         let block_time = CliBlockTime {
@@ -942,8 +954,12 @@ pub async fn process_first_available_block(rpc_client: &RpcClient) -> ProcessRes
 
 pub fn parse_leader_schedule(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
     let epoch = value_of(matches, "epoch");
+    let key_by_vote_account = matches.is_present("key_by_vote_account");
     Ok(CliCommandInfo::without_signers(
-        CliCommand::LeaderSchedule { epoch },
+        CliCommand::LeaderSchedule {
+            epoch,
+            key_by_vote_account,
+        },
     ))
 }
 
@@ -951,6 +967,7 @@ pub async fn process_leader_schedule(
     rpc_client: &RpcClient,
     config: &CliConfig<'_>,
     epoch: Option<Epoch>,
+    key_by_vote_account: bool,
 ) -> ProcessResult {
     let epoch_info = rpc_client.get_epoch_info().await?;
     let epoch = epoch.unwrap_or(epoch_info.epoch);
@@ -962,7 +979,14 @@ pub async fn process_leader_schedule(
     let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch);
 
     let leader_schedule = rpc_client
-        .get_leader_schedule(Some(first_slot_in_epoch))
+        .get_leader_schedule_with_config(
+            Some(first_slot_in_epoch),
+            RpcLeaderScheduleConfig {
+                key_by_vote_account: key_by_vote_account.then_some(true),
+                commitment: Some(rpc_client.commitment()),
+                ..RpcLeaderScheduleConfig::default()
+            },
+        )
         .await?;
     if leader_schedule.is_none() {
         return Err(
@@ -1108,7 +1132,7 @@ pub async fn process_get_ag_genesis_info(
             CliAgGenesisInfo::Ag(CliAgGenesisInfoPayload {
                 epoch,
                 slot: block.slot,
-                block_id: block.block_id,
+                block_id: block.block_id.to_hash(),
                 bitvec,
                 signature: signature.signature,
             })
@@ -1257,7 +1281,8 @@ pub async fn process_show_block_production(
         .value
         .unwrap();
 
-    let slot_history: SlotHistory = wincode::deserialize(&slot_history_account.data)
+    let slot_history: SlotHistory = slot_history_account
+        .state()
         .map_err(|_| CliError::RpcRequestError("Failed to deserialize slot history".to_string()))?;
 
     let (confirmed_blocks, start_slot) =
@@ -1453,16 +1478,9 @@ pub fn parse_logs(
     wallet_manager: &mut Option<Rc<RemoteWalletManager>>,
 ) -> Result<CliCommandInfo, CliError> {
     let address = pubkey_of_signer(matches, "address", wallet_manager)?;
-    let include_votes = matches.is_present("include_votes");
 
     let filter = match address {
-        None => {
-            if include_votes {
-                RpcTransactionLogsFilter::AllWithVotes
-            } else {
-                RpcTransactionLogsFilter::All
-            }
-        }
+        None => RpcTransactionLogsFilter::All,
         Some(address) => RpcTransactionLogsFilter::Mentions(vec![address.to_string()]),
     };
 
@@ -1474,6 +1492,7 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
         "Streaming transaction logs{}. {:?} commitment",
         match filter {
             RpcTransactionLogsFilter::All => "".into(),
+            #[allow(deprecated)]
             RpcTransactionLogsFilter::AllWithVotes => " (including votes)".into(),
             RpcTransactionLogsFilter::Mentions(addresses) =>
                 format!(" mentioning {}", addresses.join(",")),
@@ -1702,13 +1721,13 @@ pub async fn process_show_stakes(
     let stake_history_account = rpc_client.get_account(&stake_history::id()).await?;
     let clock_account = rpc_client.get_account(&sysvar::clock::id()).await?;
     let rent_account = rpc_client.get_account(&sysvar::rent::id()).await?;
-    let clock: Clock = wincode::deserialize(&clock_account.data)
+    let clock: Clock = clock_account
+        .state()
         .map_err(|_| CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string()))?;
     let rent: Rent = wincode::deserialize(&rent_account.data)?;
-    let stake_history: StakeHistory =
-        wincode::deserialize(&stake_history_account.data).map_err(|_| {
-            CliError::RpcRequestError("Failed to deserialize stake history".to_string())
-        })?;
+    let stake_history: StakeHistory = stake_history_account.state().map_err(|_| {
+        CliError::RpcRequestError("Failed to deserialize stake history".to_string())
+    })?;
     let new_rate_activation_epoch = get_feature_activation_epoch(
         rpc_client,
         &agave_feature_set::reduce_stake_warmup_cooldown::id(),
@@ -1722,7 +1741,7 @@ pub async fn process_show_stakes(
             "It should be impossible at this point for the account data not to be decodable. \
              Ensure that the account was fetched using a binary encoding.",
         );
-        if let Ok(stake_state) = wincode::deserialize::<StakeStateV2>(&stake_account.data) {
+        if let Ok(stake_state) = stake_account.state() {
             let rent_exempt_balance = rent.minimum_balance(stake_account.data.len()).max(1);
 
             match stake_state {
@@ -2233,6 +2252,32 @@ mod tests {
         assert_eq!(
             parse_command(&test_get_epoch_info, &default_signer, &mut None).unwrap(),
             CliCommandInfo::without_signers(CliCommand::GetEpochInfo)
+        );
+
+        let test_leader_schedule = test_commands
+            .clone()
+            .get_matches_from(vec!["test", "leader-schedule"]);
+        assert_eq!(
+            parse_command(&test_leader_schedule, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::LeaderSchedule {
+                epoch: None,
+                key_by_vote_account: false,
+            })
+        );
+
+        let test_leader_schedule = test_commands.clone().get_matches_from(vec![
+            "test",
+            "leader-schedule",
+            "--epoch",
+            "42",
+            "--key-by-vote-account",
+        ]);
+        assert_eq!(
+            parse_command(&test_leader_schedule, &default_signer, &mut None).unwrap(),
+            CliCommandInfo::without_signers(CliCommand::LeaderSchedule {
+                epoch: Some(42),
+                key_by_vote_account: true,
+            })
         );
 
         let test_get_genesis_hash = test_commands

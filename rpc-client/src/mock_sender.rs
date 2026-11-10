@@ -3,7 +3,7 @@
 use {
     crate::rpc_sender::*,
     agave_votor_messages::{
-        consensus_message::Block,
+        consensus_message::{Block, BlockId},
         wire::{WireBlockCertMessage, WireCertSignature},
     },
     async_trait::async_trait,
@@ -16,7 +16,6 @@ use {
     solana_clock::{Slot, UnixTimestamp},
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
-    solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_instruction_error::InstructionError,
     solana_message::MessageHeader,
@@ -31,7 +30,7 @@ use {
             RpcContactInfo, RpcIdentity, RpcInflationGovernor, RpcInflationRate,
             RpcInflationReward, RpcKeyedAccount, RpcPerfSample, RpcPrioritizationFee,
             RpcResponseContext, RpcSimulateTransactionResult, RpcSnapshotSlotInfo, RpcSupply,
-            RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,
+            RpcVatActiveSetRankMap, RpcVersionInfo, RpcVoteAccountInfo, RpcVoteAccountStatus,
         },
     },
     solana_signature::Signature,
@@ -180,7 +179,7 @@ impl RpcSender for MockSender {
             })?,
             "getAgGenesisCert" => {
                 let cert = WireBlockCertMessage {
-                    block: Block { slot: 0, block_id: Hash::default() },
+                    block: Block { slot: 0, block_id: BlockId::default() },
                     signature: WireCertSignature {
                         signature:  BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
                         bitmap: vec![],
@@ -188,6 +187,15 @@ impl RpcSender for MockSender {
                 };
                 serde_json::to_value(Some(cert))?
             }
+            "getVatActiveSetRankMap" => serde_json::to_value(Response::<
+                Option<RpcVatActiveSetRankMap>,
+            > {
+                context: RpcResponseContext {
+                    slot: 1,
+                    api_version: None,
+                },
+                value: None,
+            })?,
             "getSignatureStatuses" => {
                 let status: TransactionResult<()> = if self.url == "account_in_use" {
                     Err(TransactionError::AccountInUse)
@@ -418,7 +426,6 @@ impl RpcSender for MockSender {
                 tpu_quic: Some(SocketAddr::from(([10, 239, 6, 48], 8862))),
                 tpu_forwards: Some(SocketAddr::from(([10, 239, 6, 48], 8857))),
                 tpu_forwards_quic: Some(SocketAddr::from(([10, 239, 6, 48], 8863))),
-                tpu_vote: Some(SocketAddr::from(([10, 239, 6, 48], 8870))),
                 serve_repair: Some(SocketAddr::from(([10, 239, 6, 48], 8880))),
                 rpc: Some(SocketAddr::from(([10, 239, 6, 48], 8899))),
                 pubsub: Some(SocketAddr::from(([10, 239, 6, 48], 8900))),
@@ -500,6 +507,7 @@ impl RpcSender for MockSender {
                     post_balance: 499999442500,
                     commission: None,
                     commission_bps: None,
+                    block_reward_amount: None,
                 })])?,
             "minimumLedgerSlot" => json![123],
             "getMaxRetransmitSlot" => json![123],

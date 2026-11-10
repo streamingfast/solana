@@ -11,11 +11,13 @@ use {
     std::{
         cmp::{max, min},
         collections::HashSet,
+        num::NonZeroUsize,
         result::Result,
         sync::{
             Arc,
             atomic::{AtomicBool, Ordering},
         },
+        thread,
         time::{Duration, Instant},
     },
 };
@@ -30,7 +32,8 @@ pub struct ConfirmedBlockUploadConfig {
 
 impl Default for ConfirmedBlockUploadConfig {
     fn default() -> Self {
-        let num_blocks_to_upload_in_parallel = num_cpus::get() / 2;
+        let num_blocks_to_upload_in_parallel =
+            thread::available_parallelism().map_or(1, NonZeroUsize::get) / 2;
         ConfirmedBlockUploadConfig {
             force_reupload: false,
             max_num_slots_to_check: num_blocks_to_upload_in_parallel * 4,
@@ -346,6 +349,7 @@ pub async fn upload_confirmed_blocks(
 mod tests {
     use {
         super::*,
+        agave_votor_messages::consensus_message::BlockId,
         solana_entry::block_component::{BlockFooterV1, UpdateParentV1},
         solana_hash::Hash,
     };
@@ -353,7 +357,7 @@ mod tests {
     #[test]
     fn test_split_components_converts_update_parent_to_block_header() {
         let new_parent_slot = 42;
-        let new_parent_block_id = Hash::new_unique();
+        let new_parent_block_id = BlockId::new_unique();
         let first_entry = EntrySummary {
             num_hashes: 1,
             hash: Hash::new_unique(),

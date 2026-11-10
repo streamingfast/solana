@@ -1,11 +1,11 @@
 //! Defines `AggregateAccumulator` that can used to aggregate votes and produce certificates.
 
 use {
+    agave_bls_sigverify::sig_verified_messages::VoteAggregate,
     agave_votor_messages::{
         certificate::{Certificate, CertificateType},
         consensus_message::VoteMessage,
-        fraction::Fraction,
-        sig_verified_messages::VoteAggregate,
+        stake::{NonZeroStake, Stake},
     },
     bitvec::vec::BitVec,
     solana_bls_signatures::{
@@ -13,7 +13,6 @@ use {
         SignatureProjective,
     },
     solana_signer_store::{EncodeError, encode_base2, encode_base3},
-    std::num::NonZero,
     thiserror::Error,
 };
 
@@ -40,7 +39,7 @@ fn default_bitvec(max_validators: usize) -> BitVec<u8> {
 pub struct AggregateAccumulator {
     ranks: BitVec<u8>,
     signature: SignatureProjective,
-    stake: u64,
+    stake: Stake,
 }
 
 impl AggregateAccumulator {
@@ -49,7 +48,17 @@ impl AggregateAccumulator {
         Self {
             ranks: default_bitvec(max_validators),
             signature: SignatureProjective::identity(),
-            stake: 0,
+            stake: Stake(0),
+        }
+    }
+
+    pub(crate) fn from_recycled_ranks(mut ranks: BitVec<u8>, max_validators: usize) -> Self {
+        ranks.resize(max_validators, false);
+        ranks.fill(false);
+        Self {
+            ranks,
+            signature: SignatureProjective::identity(),
+            stake: Stake(0),
         }
     }
 
@@ -57,12 +66,12 @@ impl AggregateAccumulator {
     pub fn add_aggregate(
         &mut self,
         aggregate: &VoteAggregate,
-    ) -> Result<u64, AggregateAccumulatorError> {
+    ) -> Result<Stake, AggregateAccumulatorError> {
         self.signature
             .aggregate_with(std::iter::once(aggregate.signature()))
             .map_err(AggregateAccumulatorError::SignatureAggregationFailed)?;
         self.ranks |= aggregate.ranks();
-        self.stake = self.stake.saturating_add(aggregate.stake().get());
+        self.stake.increment(Stake::from(aggregate.stake()));
         Ok(self.stake)
     }
 
@@ -72,7 +81,7 @@ impl AggregateAccumulator {
     pub fn add_own_vote_message(
         &mut self,
         msg: &VoteMessage,
-    ) -> Result<u64, AggregateAccumulatorError> {
+    ) -> Result<Stake, AggregateAccumulatorError> {
         let mut signature = self.signature;
         signature
             .aggregate_with(std::iter::once(&msg.signature))
@@ -81,7 +90,7 @@ impl AggregateAccumulator {
             return Err(AggregateAccumulatorError::Duplicate);
         }
         self.signature = signature;
-        self.stake = self.stake.saturating_add(msg.stake.get());
+        self.stake.increment(Stake::from(msg.stake));
         Ok(self.stake)
     }
 
@@ -89,9 +98,9 @@ impl AggregateAccumulator {
     pub fn try_build_base2_cert(
         &self,
         cert_type: CertificateType,
-        total_stake: NonZero<u64>,
+        total_stake: NonZeroStake,
     ) -> Result<Option<Certificate>, AggregateAccumulatorError> {
-        let observed_fraction = Fraction::new(self.stake, total_stake);
+        let observed_fraction = total_stake.fraction(self.stake);
         if observed_fraction < cert_type.threshold() {
             return Ok(None);
         }
@@ -111,9 +120,9 @@ impl AggregateAccumulator {
     ///
     /// Uses base3 encoding when the fallback partition is usable, and base2 encoding when only
     /// the primary partition is usable.
-    pub fn try_build_base3_cert(
+    pub(crate) fn try_build_base3_cert(
         cert_type: CertificateType,
-        total_stake: NonZero<u64>,
+        total_stake: NonZeroStake,
         primary: Option<&AggregateAccumulator>,
         fallback: &AggregateAccumulator,
     ) -> Result<Option<Certificate>, AggregateAccumulatorError> {
@@ -129,11 +138,10 @@ impl AggregateAccumulator {
             };
         }
 
-        let observed_fraction = Fraction::new(
+        let observed_fraction = total_stake.fraction(
             fallback
                 .stake()
-                .saturating_add(primary.map(|p| p.stake).unwrap_or(0)),
-            total_stake,
+                .add(primary.map(|p| p.stake()).unwrap_or(Stake(0))),
         );
         if observed_fraction < cert_type.threshold() {
             return Ok(None);
@@ -181,8 +189,12 @@ impl AggregateAccumulator {
     }
 
     /// Accessor for stake
-    pub fn stake(&self) -> u64 {
+    pub fn stake(&self) -> Stake {
         self.stake
+    }
+
+    pub(crate) fn into_ranks(self) -> BitVec<u8> {
+        self.ranks
     }
 
     fn is_identity(&self) -> bool {
@@ -210,7 +222,7 @@ mod tests {
             accumulator.ranks.set(rank, true);
         }
         accumulator.signature = signature;
-        accumulator.stake = stake;
+        accumulator.stake = Stake(stake);
         accumulator
     }
 
@@ -223,7 +235,7 @@ mod tests {
 
         let cert = AggregateAccumulator::try_build_base3_cert(
             cert_type,
-            NonZero::new(100).unwrap(),
+            NonZeroStake::new(100).unwrap(),
             Some(&primary),
             &fallback,
         )
@@ -246,7 +258,7 @@ mod tests {
 
         let cert = AggregateAccumulator::try_build_base3_cert(
             CertificateType::Skip(1),
-            NonZero::new(100).unwrap(),
+            NonZeroStake::new(100).unwrap(),
             Some(&primary),
             &fallback,
         )
@@ -263,7 +275,7 @@ mod tests {
 
         let cert = AggregateAccumulator::try_build_base3_cert(
             CertificateType::Skip(1),
-            NonZero::new(100).unwrap(),
+            NonZeroStake::new(100).unwrap(),
             Some(&primary),
             &fallback,
         )
@@ -289,7 +301,7 @@ mod tests {
 
         let cert = AggregateAccumulator::try_build_base3_cert(
             CertificateType::Skip(1),
-            NonZero::new(100).unwrap(),
+            NonZeroStake::new(100).unwrap(),
             Some(&primary),
             &fallback,
         )

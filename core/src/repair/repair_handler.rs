@@ -1,6 +1,7 @@
+#[cfg(feature = "dev-context-only-utils")]
+use super::malicious_repair_handler::{MaliciousRepairConfig, MaliciousRepairHandler};
 use {
     super::{
-        malicious_repair_handler::{MaliciousRepairConfig, MaliciousRepairHandler},
         repair_response::repair_response_packet_from_bytes,
         serve_repair::{FecSetRoot, ServeRepair},
         standard_repair_handler::StandardRepairHandler,
@@ -183,10 +184,12 @@ pub trait RepairHandler {
 pub enum RepairHandlerType {
     #[default]
     Standard,
+    #[cfg(feature = "dev-context-only-utils")]
     Malicious(MaliciousRepairConfig),
 }
 
 impl RepairHandlerType {
+    #[cfg_attr(not(feature = "dev-context-only-utils"), allow(unused_variables))]
     pub fn to_handler(
         &self,
         blockstore: Arc<Blockstore>,
@@ -195,6 +198,7 @@ impl RepairHandlerType {
     ) -> Box<dyn RepairHandler + Send + Sync> {
         match self {
             RepairHandlerType::Standard => Box::new(StandardRepairHandler::new(blockstore)),
+            #[cfg(feature = "dev-context-only-utils")]
             RepairHandlerType::Malicious(config) => Box::new(MaliciousRepairHandler::new(
                 blockstore,
                 identity,
@@ -237,7 +241,7 @@ mod tests {
         solana_ledger::{
             blockstore_meta::BlockLocation,
             get_tmp_ledger_path_auto_delete,
-            shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
+            shred::{ProcessShredsStats, Shred, Shredder},
         },
         std::net::{IpAddr, Ipv4Addr, SocketAddr},
     };
@@ -260,7 +264,6 @@ mod tests {
             chained_merkle_root,
             0, // next_shred_index
             0, // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
 

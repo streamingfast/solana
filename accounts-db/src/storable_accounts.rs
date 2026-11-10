@@ -395,16 +395,51 @@ impl<'a> StorableAccounts<'a> for StorableAccountsBySlot<'a> {
     }
 }
 
+/// this tuple contains a single different source slot that applies to all accounts
+/// accounts are StoredAccountInfo
+impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountInfo<'a>], Slot) {
+    fn account<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+    ) -> Ret {
+        let stored_account_info = self.1[index];
+        let account_for_storage = AccountForStorage::StoredAccountInfo(stored_account_info);
+        callback(account_for_storage)
+    }
+    fn account_for_geyser<Ret>(
+        &self,
+        _index: usize,
+        _callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
+    ) -> Ret {
+        unimplemented!();
+    }
+    fn is_zero_lamport(&self, index: usize) -> bool {
+        self.1[index].is_zero_lamport()
+    }
+    fn data_len(&self, index: usize) -> usize {
+        self.1[index].data.len()
+    }
+    fn pubkey(&self, index: usize) -> &Pubkey {
+        self.1[index].pubkey()
+    }
+    fn slot(&self, _index: usize) -> Slot {
+        // same other slot for all accounts
+        self.2
+    }
+    fn target_slot(&self) -> Slot {
+        self.0
+    }
+    fn len(&self) -> usize {
+        self.1.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        crate::{
-            account_info::{AccountInfo, StorageLocation},
-            account_storage_entry::AccountStorageEntry,
-            accounts_db::get_temp_accounts_paths,
-            accounts_file::AccountsFileProvider,
-        },
+        crate::account_info::{AccountInfo, StorageLocation},
         rand::Rng,
         solana_account::{AccountSharedData, accounts_equal},
         std::{iter, sync::Arc},
@@ -519,47 +554,6 @@ mod tests {
         }
     }
 
-    /// this is no longer used. It is very tricky to get these right. There are already tests for this. It is likely worth it to leave this here for a while until everything has settled.
-    /// this tuple contains a single different source slot that applies to all accounts
-    /// accounts are StoredAccountInfo
-    impl<'a> StorableAccounts<'a> for (Slot, &'a [&'a StoredAccountInfo<'a>], Slot) {
-        fn account<Ret>(
-            &self,
-            index: usize,
-            mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
-        ) -> Ret {
-            let stored_account_info = self.1[index];
-            let account_for_storage = AccountForStorage::StoredAccountInfo(stored_account_info);
-            callback(account_for_storage)
-        }
-        fn account_for_geyser<Ret>(
-            &self,
-            _index: usize,
-            _callback: impl for<'local> FnMut(&'local Pubkey, &'local AccountSharedData) -> Ret,
-        ) -> Ret {
-            unimplemented!();
-        }
-        fn is_zero_lamport(&self, index: usize) -> bool {
-            self.1[index].is_zero_lamport()
-        }
-        fn data_len(&self, index: usize) -> usize {
-            self.1[index].data.len()
-        }
-        fn pubkey(&self, index: usize) -> &Pubkey {
-            self.1[index].pubkey()
-        }
-        fn slot(&self, _index: usize) -> Slot {
-            // same other slot for all accounts
-            self.2
-        }
-        fn target_slot(&self) -> Slot {
-            self.0
-        }
-        fn len(&self) -> usize {
-            self.1.len()
-        }
-    }
-
     fn compare<'a>(a: &impl StorableAccounts<'a>, b: &impl StorableAccounts<'a>) {
         assert_eq!(a.target_slot(), b.target_slot());
         assert_eq!(a.len(), b.len());
@@ -644,10 +638,10 @@ mod tests {
 
                     let source_slot = starting_slot % max_slots;
 
-                    let storage = setup_sample_storage(&db, source_slot);
+                    let storage = Arc::new(db.create_store(source_slot, 10_000));
+                    db.storage.insert(storage.clone());
                     // store the accounts so they can be looked up later in `db`
-                    if let Some(offsets) =
-                        storage.accounts.write_accounts(&(source_slot, &three[..]))
+                    if let Ok(offsets) = storage.accounts.write_accounts(&(source_slot, &three[..]))
                     {
                         three_accounts_from_storage_byval
                             .iter_mut()
@@ -687,22 +681,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    fn setup_sample_storage(db: &AccountsDb, slot: Slot) -> Arc<AccountStorageEntry> {
-        let id = 2;
-        let file_size = 10_000;
-        let (_temp_dirs, paths) = get_temp_accounts_paths(1).unwrap();
-        let data = AccountStorageEntry::new(
-            &paths[0],
-            slot,
-            id,
-            file_size,
-            AccountsFileProvider::AppendVec,
-        );
-        let storage = Arc::new(data);
-        db.storage.insert(storage.clone());
-        storage
     }
 
     #[test]
@@ -773,8 +751,9 @@ mod tests {
                                     let mut result =
                                         raw2_accounts_from_storage[range.clone()].to_vec();
                                     // store the accounts so they can be looked up later in `db`
-                                    let storage = setup_sample_storage(&db, slot);
-                                    if let Some(offsets) = storage
+                                    let storage = Arc::new(db.create_store(slot, 10_000));
+                                    db.storage.insert(storage.clone());
+                                    if let Ok(offsets) = storage
                                         .accounts
                                         .write_accounts(&(slot, &raw2_refs[range.clone()]))
                                     {

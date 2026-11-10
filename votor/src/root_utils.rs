@@ -1,12 +1,9 @@
 use {
     crate::{
-        commitment::{CommitmentType, update_commitment_cache},
-        common::nonblocking_send,
-        event_handler::PendingBlocks,
-        voting_utils::VotingContext,
+        common::nonblocking_send, event_handler::PendingBlocks, voting_utils::VotingContext,
         votor::SharedContext,
     },
-    agave_votor_messages::consensus_message::Block,
+    agave_votor_messages::consensus_message::{Block, BlockId},
     crossbeam_channel::Sender,
     solana_clock::Slot,
     solana_hash::Hash,
@@ -19,6 +16,7 @@ use {
     solana_runtime::{
         bank_forks::BankForks, bank_forks_controller::BankForksController,
         installed_scheduler_pool::BankWithScheduler, snapshot_controller::SnapshotController,
+        transaction_execution::TransactionStatusSender,
     },
     solana_time_utils::timestamp,
     std::{
@@ -53,7 +51,7 @@ pub(crate) fn set_root(
     *pending_blocks = pending_blocks.split_off(&new_root_slot);
     *finalized_blocks = finalized_blocks.split_off(&Block {
         slot: new_root_slot,
-        block_id: Hash::default(),
+        block_id: BlockId::default(),
     });
     *received_shred = received_shred.split_off(&new_root_slot);
 
@@ -66,13 +64,6 @@ pub(crate) fn set_root(
     ) {
         error!("failed to record optimistic slot in blockstore: slot={new_root_slot}: {e:?}");
     }
-
-    update_commitment_cache(
-        my_pubkey,
-        CommitmentType::Rooted,
-        new_root_slot,
-        &vctx.commitment_sender,
-    );
 
     // It is critical to send the OC notification in order to keep compatibility with
     // the RPC API. Additionally the PrioritizationFeeCache relies on this notification
@@ -114,6 +105,7 @@ pub fn check_and_handle_new_root<CB>(
     snapshot_controller: Option<&SnapshotController>,
     highest_super_majority_root: Option<Slot>,
     bank_notification_sender: &Option<BankNotificationSenderConfig>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     drop_bank_sender: &Sender<Vec<BankWithScheduler>>,
     blockstore: &Blockstore,
     leader_schedule_cache: &Arc<LeaderScheduleCache>,
@@ -162,6 +154,9 @@ pub fn check_and_handle_new_root<CB>(
         drop_bank_sender,
         callback,
     );
+    if let Some(transaction_status_sender) = transaction_status_sender {
+        transaction_status_sender.send_transaction_status_rooted_message(&root_bank);
+    }
     blockstore.slots_stats.mark_rooted(new_root);
     if let Some(rpc_subscriptions) = rpc_subscriptions {
         rpc_subscriptions.notify_roots(rooted_slots);
@@ -249,17 +244,17 @@ pub fn set_bank_forks_root<CB>(
     }
 
     if !orphaned_slot_bank_ids.is_empty() {
-        // Purge these banks inline so we are not waiting on the lazy Accounts Background Service for cleanup.
-        // Waiting could stall replay if we recreate a bank for this slot.
+        // Clear these banks' slot-keyed caches inline so we are not waiting on the lazy Accounts
+        // Background Service. Waiting could stall replay if we recreate a bank for this slot.
         let root_bank = bank_forks.read().unwrap().root_bank();
-        root_bank.remove_unrooted_slots(&orphaned_slot_bank_ids);
+        root_bank.mark_banks_removed(&orphaned_slot_bank_ids);
         for (slot, _) in &orphaned_slot_bank_ids {
             root_bank.clear_slot_signatures(*slot);
             root_bank.prune_program_cache_by_deployment_slot(*slot);
         }
     }
 
-    bank_forks.read().unwrap().prune_program_cache(new_root);
+    bank_forks.read().unwrap().root_program_cache(new_root);
     let removed_banks = bank_forks.write().unwrap().set_root(
         new_root,
         snapshot_controller,

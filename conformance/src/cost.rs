@@ -7,24 +7,23 @@ use {
         SanitizedTransaction as ProtoSanitizedTransaction, TxnCostMode as ProtoTxnCostMode,
     },
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
-    solana_message::{SimpleAddressLoader, VersionedMessage, v0::LoadedAddresses},
+    solana_message::VersionedMessage,
     solana_packet::PACKET_DATA_SIZE,
-    solana_pubkey::Pubkey,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_signature::Signature,
     solana_svm::conformance::{
         feature_set::feature_set_from_proto, versioned_message::versioned_message_from_proto,
     },
     solana_transaction::{
-        sanitized::{MessageHash, SanitizedTransaction},
-        versioned::VersionedTransaction,
+        sanitized::MessageHash,
+        versioned::{VersionedTransaction, sanitized::SanitizedVersionedTransaction},
     },
     std::ffi::c_int,
 };
 
 fn runtime_transaction_from_proto(
     proto_tx: &ProtoSanitizedTransaction,
-) -> RuntimeTransaction<SanitizedTransaction> {
+) -> RuntimeTransaction<SanitizedVersionedTransaction> {
     let proto_message = proto_tx
         .message
         .as_ref()
@@ -47,43 +46,21 @@ fn runtime_transaction_from_proto(
         message,
     };
 
+    let max_size = match versioned_tx.message {
+        VersionedMessage::V1(_) => solana_message::v1::MAX_TRANSACTION_SIZE,
+        _ => PACKET_DATA_SIZE,
+    } as u64;
     let serialized_size =
-        bincode::serialized_size(&versioned_tx).expect("failed to compute serialized size");
+        wincode::serialized_size(&versioned_tx).expect("failed to compute serialized size");
     assert!(
-        serialized_size <= PACKET_DATA_SIZE as u64,
+        serialized_size <= max_size,
         "transaction exceeds max packet size",
     );
 
-    // Dummy loaded addresses, one per ALUT index. Cost tracking only
-    // tracks counts, so dummy pubkeys are fine.
-    let lookups = match &versioned_tx.message {
-        VersionedMessage::V0(message) => message.address_table_lookups.as_slice(),
-        _ => &[],
-    };
-    let num_writable_lookups: usize = lookups.iter().map(|l| l.writable_indexes.len()).sum();
-    let num_readonly_lookups: usize = lookups.iter().map(|l| l.readonly_indexes.len()).sum();
-    let dummy_key = |tag: u8, index: usize| {
-        let mut bytes = [0u8; 32];
-        bytes[0] = tag;
-        bytes[1] = index as u8;
-        bytes[2] = (index >> 8) as u8;
-        Pubkey::new_from_array(bytes)
-    };
-    let loaded_addresses = LoadedAddresses {
-        writable: (0..num_writable_lookups)
-            .map(|index| dummy_key(0xAA, index))
-            .collect(),
-        readonly: (0..num_readonly_lookups)
-            .map(|index| dummy_key(0xBB, index))
-            .collect(),
-    };
-
-    RuntimeTransaction::try_create(
+    RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
         versioned_tx,
         MessageHash::Compute,
         None,
-        SimpleAddressLoader::Enabled(loaded_addresses),
-        &std::collections::HashSet::new(),
     )
     .expect("failed to create RuntimeTransaction")
 }
@@ -202,7 +179,7 @@ mod tests {
 
     fn simple_transfer_tx() -> ProtoSanitizedTransaction {
         let msg = ProtoTransactionMessage {
-            is_legacy: true,
+            version: protosol::protos::TransactionVersion::Legacy as i32,
             header: Some(ProtoMessageHeader {
                 num_required_signatures: 1,
                 num_readonly_signed_accounts: 0,
@@ -216,6 +193,7 @@ mod tests {
                 data: vec![2, 0, 0, 0],
             }],
             address_table_lookups: vec![],
+            v1_config: None,
         };
         ProtoSanitizedTransaction {
             message: Some(msg),
@@ -226,7 +204,7 @@ mod tests {
 
     fn vote_tx() -> ProtoSanitizedTransaction {
         let msg = ProtoTransactionMessage {
-            is_legacy: true,
+            version: protosol::protos::TransactionVersion::Legacy as i32,
             header: Some(ProtoMessageHeader {
                 num_required_signatures: 1,
                 num_readonly_signed_accounts: 0,
@@ -240,6 +218,7 @@ mod tests {
                 data: vec![0; 16],
             }],
             address_table_lookups: vec![],
+            v1_config: None,
         };
         ProtoSanitizedTransaction {
             message: Some(msg),
@@ -250,7 +229,7 @@ mod tests {
 
     fn v0_tx(lookups: Vec<ProtoMessageAddressTableLookup>) -> ProtoSanitizedTransaction {
         let msg = ProtoTransactionMessage {
-            is_legacy: false,
+            version: protosol::protos::TransactionVersion::V0 as i32,
             header: Some(ProtoMessageHeader {
                 num_required_signatures: 1,
                 num_readonly_signed_accounts: 0,
@@ -264,6 +243,7 @@ mod tests {
                 data: vec![2, 0, 0, 0],
             }],
             address_table_lookups: lookups,
+            v1_config: None,
         };
         ProtoSanitizedTransaction {
             message: Some(msg),
@@ -367,7 +347,7 @@ mod tests {
     #[should_panic(expected = "transaction exceeds max packet size")]
     fn test_oversized_transaction_panics() {
         let msg = ProtoTransactionMessage {
-            is_legacy: true,
+            version: protosol::protos::TransactionVersion::Legacy as i32,
             header: Some(ProtoMessageHeader {
                 num_required_signatures: 1,
                 num_readonly_signed_accounts: 0,
@@ -381,6 +361,7 @@ mod tests {
                 data: vec![0u8; 1300],
             }],
             address_table_lookups: vec![],
+            v1_config: None,
         };
         let tx = ProtoSanitizedTransaction {
             message: Some(msg),

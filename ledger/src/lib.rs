@@ -29,7 +29,6 @@ mod shredder;
 pub mod sigverify_shreds;
 pub mod slot_stats;
 mod staking_utils;
-mod thread_pool;
 mod transaction_address_lookup_table_scanner;
 pub mod use_snapshot_archives_at_startup;
 
@@ -41,10 +40,6 @@ extern crate solana_metrics;
 
 #[macro_use]
 extern crate log;
-
-#[cfg_attr(feature = "frozen-abi", macro_use)]
-#[cfg(feature = "frozen-abi")]
-extern crate solana_frozen_abi_macro;
 
 mod wire_format_tests;
 

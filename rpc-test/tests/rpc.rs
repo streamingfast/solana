@@ -1,5 +1,4 @@
 use {
-    bincode::serialize,
     crossbeam_channel::bounded,
     futures_util::StreamExt,
     log::*,
@@ -93,7 +92,7 @@ fn test_rpc_send_tx() {
         Rent::default().minimum_balance(0),
         blockhash,
     );
-    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+    let serialized_encoded_tx = bs58::encode(wincode::serialize(&tx).unwrap()).into_string();
 
     let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
     let json: Value = post_rpc(req, &rpc_url);
@@ -246,16 +245,13 @@ fn test_rpc_slot_updates() {
         .recv_timeout(Duration::from_secs(2))
         .unwrap();
 
-    // Verify that updates are received in order for an upcoming slot
+    // Verify that updates are received for an upcoming slot
     let verify_slot = first_update.slot() + 2;
-    let expected_updates = vec![
-        "CreatedBank",
-        "Frozen",
-        "OptimisticConfirmation",
-        "Root", // TODO: debug why root signal is sent twice.
-        "Root",
-    ];
+    let expected_updates = ["CreatedBank", "Frozen"];
     let mut expected_updates = expected_updates.into_iter().peekable();
+    // Root will be emitted twice as we emit the parent when rooting a
+    // new slot so tolerate repeated Root notifications.
+    let mut expected_unordered_updates = vec!["OptimisticConfirmation", "Root", "Root"];
     // SlotUpdate::Completed is sent asynchronous to banking-stage and replay
     // when shreds are inserted into blockstore. When the leader generates
     // blocks, replay may freeze the bank before shreds are all inserted into
@@ -264,7 +260,10 @@ fn test_rpc_slot_updates() {
     let mut slot_update_completed = false;
 
     let test_start = Instant::now();
-    while expected_updates.peek().is_some() || !slot_update_completed {
+    while expected_updates.peek().is_some()
+        || !expected_unordered_updates.is_empty()
+        || !slot_update_completed
+    {
         assert!(test_start.elapsed() < Duration::from_secs(30));
         let update = update_receiver
             .recv_timeout(Duration::from_secs(2))
@@ -281,7 +280,18 @@ fn test_rpc_slot_updates() {
                 SlotUpdate::Root { .. } => "Root",
                 _ => continue,
             };
-            assert_eq!(Some(update_name), expected_updates.next());
+            if expected_updates.peek().is_some() {
+                assert_eq!(Some(update_name), expected_updates.next());
+            } else {
+                assert!(
+                    expected_unordered_updates
+                        .iter()
+                        .position(|&update| update == update_name)
+                        .map(|pos| expected_unordered_updates.swap_remove(pos))
+                        .is_some(),
+                    "unexpected slot update: {update_name}"
+                );
+            }
         }
     }
 }
@@ -440,7 +450,7 @@ fn test_rpc_subscriptions() {
     // Send all transactions
     rt.block_on(async {
         for tx in transactions.iter() {
-            let wire_tx = bincode::serialize(&tx).unwrap();
+            let wire_tx = wincode::serialize(tx).unwrap();
             let _ = transaction_sender.send_transaction(wire_tx).await;
         }
     });
@@ -531,7 +541,7 @@ fn test_run_tpu_send_transaction() {
             .expect("Failed to build TPU client")
     });
 
-    let tx_bytes = bincode::serialize(&tx).unwrap();
+    let tx_bytes = wincode::serialize(&tx).unwrap();
     rt.block_on(async {
         let _ = transaction_sender.send_transaction(tx_bytes).await;
     });

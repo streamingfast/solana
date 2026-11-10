@@ -7,7 +7,7 @@ on:
 
 jobs:
   metadata:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     if: github.actor == 'dependabot[bot]'
     outputs:
       crate_name: ${{ steps.dependabot-metadata.outputs.dependency-names }}
@@ -23,10 +23,10 @@ jobs:
     needs: metadata
     if: needs.metadata.outputs.package_ecosystem == 'cargo'
     timeout-minutes: 10
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Create github app token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app-token
         with:
           client-id: ${{ secrets.CLIENT_ID }}
@@ -36,9 +36,6 @@ jobs:
         run: |
           git config --global user.email "49699333+dependabot[bot]@users.noreply.github.com"
           git config --global user.name "dependabot[bot]"
-          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf https://github.com/
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -49,7 +46,7 @@ jobs:
 
       - name: install anza-xtask
         run: |
-          cargo install anza-xtask@0.2.3 --locked
+          cargo install anza-xtask@0.2.6 --locked
 
       - name: update code
         env:
@@ -70,6 +67,8 @@ jobs:
           ./scripts/cargo-for-all-lock-files.sh tree
 
       - name: push
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           if [ -z "$(git status --porcelain)" ]; then
             echo "✅ Nothing to update"
@@ -77,5 +76,8 @@ jobs:
             git add **/Cargo.toml
             git add **/Cargo.lock
             git commit -am "Update all workspaces"
-            git push
+            auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+            echo "::add-mask::$auth"
+            git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" \
+              push
           fi

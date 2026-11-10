@@ -5,8 +5,8 @@ use {
         blockstore::Blockstore,
         shred::{Nonce, SIZE_OF_NONCE},
     },
-    solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::BytesPacket,
+    solana_packet::PACKET_DATA_SIZE,
+    solana_perf::packet::{BytesPacket, Meta},
     std::net::SocketAddr,
 };
 
@@ -53,7 +53,7 @@ mod test {
             shred::Shredder,
             sigverify_shreds::{LruCache, SlotPubkeys, verify_shred_cpu},
         },
-        solana_packet::PacketFlags,
+        solana_perf::packet::PacketFlags,
         solana_signer::Signer,
         std::{
             collections::HashMap,
@@ -79,14 +79,14 @@ mod test {
         packet.meta_mut().flags |= PacketFlags::REPAIR;
 
         let leader_slots: SlotPubkeys = [(slot, keypair.pubkey())].into_iter().collect();
-        assert!(verify_shred_cpu((&packet).into(), &leader_slots, &cache));
+        assert!(verify_shred_cpu(&packet, &leader_slots, &cache));
 
         let wrong_keypair = Keypair::new();
         let leader_slots: SlotPubkeys = [(slot, wrong_keypair.pubkey())].into_iter().collect();
-        assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
+        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
 
         let leader_slots: SlotPubkeys = HashMap::default();
-        assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
+        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
     }
 
     #[test]

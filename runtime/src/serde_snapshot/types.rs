@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 use {
     solana_accounts_db::accounts_hash::AccountsLtHash,
     solana_clock::Epoch,
@@ -8,7 +10,7 @@ use {
 };
 
 /// Snapshot serde-safe AccountsLtHash
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct SerdeAccountsLtHash(pub [u16; LtHash::NUM_ELEMENTS]);
 
@@ -24,8 +26,7 @@ impl From<AccountsLtHash> for SerdeAccountsLtHash {
 }
 
 /// Snapshot serde-safe RentCollector, which is now unused
-#[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]
 pub struct UnusedRentCollector {
     epoch: Epoch,

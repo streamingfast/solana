@@ -4,7 +4,7 @@ use {
     ahash::HashMap,
     itertools::Itertools,
     rand::{Rng, rng},
-    solana_account::ReadableAccount as _,
+    solana_account::state_traits::StateMutWincode as _,
     solana_clock::Epoch,
     solana_perf::packet::bytes::Bytes,
     solana_pubkey::Pubkey,
@@ -138,9 +138,9 @@ impl VoteStorage {
     }
 
     pub fn drain_unprocessed(&mut self, bank: &Bank) -> Vec<SanitizedTransactionView<Bytes>> {
-        let slot_hashes = bank
+        let slot_hashes: Option<SlotHashes> = bank
             .get_account(&sysvar::slot_hashes::id())
-            .and_then(|account| wincode::deserialize::<SlotHashes>(account.data()).ok());
+            .and_then(|account| account.state().ok());
         if slot_hashes.is_none() {
             error!(
                 "Slot hashes sysvar doesn't exist on bank {}. Including all votes without \
@@ -383,7 +383,6 @@ pub(crate) mod tests {
         solana_leader_schedule::SlotLeader,
         solana_perf::packet::{BytesPacket, PacketFlags},
         solana_runtime::genesis_utils::{self, ValidatorVoteKeypairs},
-        solana_runtime_transaction::sanitize_config::sanitize_config,
         solana_signer::Signer,
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
@@ -481,7 +480,7 @@ pub(crate) mod tests {
         timestamp: Option<UnixTimestamp>,
     ) -> LatestValidatorVote {
         let packet = packet_from_slots(slots, keypairs, timestamp);
-        LatestValidatorVote::new(packet.as_ref(), vote_source, true).unwrap()
+        LatestValidatorVote::new(&packet, vote_source, true).unwrap()
     }
 
     /// Create a vote packet with a custom authorized voter keypair
@@ -511,8 +510,7 @@ pub(crate) mod tests {
     }
 
     fn to_sanitized_view(packet: BytesPacket) -> SanitizedTransactionView<Bytes> {
-        SanitizedTransactionView::try_new_sanitized(packet.buffer().clone(), &sanitize_config())
-            .unwrap()
+        SanitizedTransactionView::try_new_sanitized(packet.buffer().clone()).unwrap()
     }
 
     fn insert_packets(

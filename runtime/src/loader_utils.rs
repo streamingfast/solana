@@ -1,7 +1,7 @@
 #![cfg(feature = "dev-context-only-utils")]
 use {
     crate::{bank::Bank, bank_client::BankClient, bank_forks::BankForks},
-    solana_account::{AccountSharedData, WritableAccount},
+    solana_account::{AccountSharedData, WritableAccount, state_traits::StateMutWincode as _},
     solana_client_traits::{Client, SyncClient},
     solana_clock::Clock,
     solana_instruction::{AccountMeta, Instruction},
@@ -88,16 +88,13 @@ pub fn create_program_with_elf(
 pub fn create_buffer_with_elf(bank: &Bank, authority_address: &Pubkey, elf: &[u8]) -> Pubkey {
     let buffer_address = Pubkey::new_unique();
     let size = UpgradeableLoaderState::size_of_buffer(elf.len());
-    let mut account = AccountSharedData::new(
+    let mut account = AccountSharedData::new_data_with_space(
         bank.get_minimum_balance_for_rent_exemption(size),
-        size,
-        &bpf_loader_upgradeable::id(),
-    );
-    wincode::serialize_into(
-        account.data_as_mut_slice(),
         &UpgradeableLoaderState::Buffer {
             authority_address: Some(*authority_address),
         },
+        size,
+        &bpf_loader_upgradeable::id(),
     )
     .unwrap();
     account

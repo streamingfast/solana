@@ -19,7 +19,7 @@ use {
     },
     agave_votor_messages::wire::WireBlockCertMessage,
     serde_json::Value,
-    solana_account::{Account, ReadableAccount},
+    solana_account::{Account, state_traits::StateMutWincode as _},
     solana_account_decoder::UiAccount,
     solana_account_decoder_client_types::token::{UiTokenAccount, UiTokenAmount},
     solana_clock::{Epoch, Slot, UnixTimestamp},
@@ -28,7 +28,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface::Feature,
     solana_hash::Hash,
-    solana_message::{Message as LegacyMessage, v0, v1},
+    solana_message::{Message as LegacyMessage, VersionedMessage, v0, v1},
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{
         client_error::{Error as ClientError, ErrorKind, Result as ClientResult},
@@ -79,19 +79,23 @@ impl RpcClientConfig {
 
 /// Trait used to add support for versioned messages to RPC APIs while
 /// retaining backwards compatibility
+#[deprecated(since = "4.5.0", note = "Use VersionedMessage instead")]
 pub trait SerializableMessage {
     fn serialize(&self) -> Vec<u8>;
 }
+#[allow(deprecated)]
 impl SerializableMessage for LegacyMessage {
     fn serialize(&self) -> Vec<u8> {
         self.serialize()
     }
 }
+#[allow(deprecated)]
 impl SerializableMessage for v0::Message {
     fn serialize(&self) -> Vec<u8> {
         self.serialize()
     }
 }
+#[allow(deprecated)]
 impl SerializableMessage for v1::Message {
     fn serialize(&self) -> Vec<u8> {
         self.serialize()
@@ -1868,6 +1872,68 @@ impl RpcClient {
     /// ```
     pub fn get_ag_genesis_cert(&self) -> ClientResult<Option<WireBlockCertMessage>> {
         self.invoke((self.rpc_client.as_ref()).get_ag_genesis_cert())
+    }
+
+    /// Returns the Validator Admission Ticket (VAT) active-set rank map for the epoch
+    /// containing `slot`, with an optional identity filter.
+    ///
+    /// Always queries finalized state, regardless of the client's default commitment.
+    /// Returns `None` if the epoch is unavailable.
+    ///
+    /// The filter preserves the validator's rank and the full map's total stake.
+    /// An unknown identity returns an empty validator list when the map is available.
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getVatActiveSetRankMap`] RPC method.
+    ///
+    /// [`getVatActiveSetRankMap`]: https://solana.com/docs/rpc/http/getvatactivesetrankmap
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::{client_error::Error, config::RpcVatActiveSetRankMapConfig};
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let certificate_slot = 100;
+    /// let response = rpc_client.get_vat_active_set_rank_map(
+    ///     certificate_slot,
+    ///     RpcVatActiveSetRankMapConfig::default(),
+    /// )?;
+    /// if let Some(rank_map) = response.value {
+    ///     for validator in rank_map.validators {
+    ///         println!("rank {}: {}", validator.rank, validator.node_pubkey);
+    ///     }
+    /// }
+    /// # Ok::<(), Error>(())
+    /// ```
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::{client_error::Error, config::RpcVatActiveSetRankMapConfig};
+    /// # use solana_rpc_client::rpc_client::RpcClient;
+    /// # let rpc_client = RpcClient::new_mock("succeeds".to_string());
+    /// let certificate_slot = 100;
+    /// let identity = "67omRD8GkXTi8daWceprtQABkDeEm3SZYHUCrthQGB9D";
+    /// let response = rpc_client.get_vat_active_set_rank_map(
+    ///     certificate_slot,
+    ///     RpcVatActiveSetRankMapConfig {
+    ///         identity: Some(identity.to_string()),
+    ///         ..RpcVatActiveSetRankMapConfig::default()
+    ///     },
+    /// )?;
+    /// if let Some(rank_map) = response.value {
+    ///     if let Some(validator) = rank_map.validators.first() {
+    ///         println!("rank {}: {}", validator.rank, validator.node_pubkey);
+    ///     }
+    /// }
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn get_vat_active_set_rank_map(
+        &self,
+        slot: Slot,
+        config: RpcVatActiveSetRankMapConfig,
+    ) -> RpcResult<Option<RpcVatActiveSetRankMap>> {
+        self.invoke((self.rpc_client.as_ref()).get_vat_active_set_rank_map(slot, config))
     }
 
     /// Get block production for the current epoch.
@@ -4296,8 +4362,23 @@ impl RpcClient {
     /// This method corresponds directly to the [`getFeeForMessage`] RPC method.
     ///
     /// [`getFeeForMessage`]: https://solana.com/docs/rpc/http/getfeeformessage
+    #[deprecated(since = "4.5.0", note = "Use get_fee_for_versioned_message instead")]
+    #[allow(deprecated)]
     pub fn get_fee_for_message(&self, message: &impl SerializableMessage) -> ClientResult<u64> {
         self.invoke((self.rpc_client.as_ref()).get_fee_for_message(message))
+    }
+
+    /// Returns the fee that the cluster would charge to process the provided message.
+    ///
+    /// Supports legacy, v0, and v1 messages through [`VersionedMessage`].
+    ///
+    /// # RPC Reference
+    ///
+    /// This method corresponds directly to the [`getFeeForMessage`] RPC method.
+    ///
+    /// [`getFeeForMessage`]: https://solana.com/docs/rpc/http/getfeeformessage
+    pub fn get_fee_for_versioned_message(&self, message: &VersionedMessage) -> ClientResult<u64> {
+        self.invoke((self.rpc_client.as_ref()).get_fee_for_versioned_message(message))
     }
 
     /// Fetches a fresh latest blockhash, retrying until it differs from the provided value.
@@ -4325,7 +4406,7 @@ impl RpcClient {
                 maybe_feature_account
                     .value
                     .map(|feature_account| {
-                        bincode::deserialize(feature_account.data()).map_err(|_| {
+                        feature_account.state().map_err(|_| {
                             ClientError::from(ErrorKind::Custom(
                                 "Failed to deserialize feature account".to_string(),
                             ))
@@ -4394,10 +4475,8 @@ mod tests {
         solana_hash::Hash,
         solana_instruction_error::InstructionError,
         solana_keypair::Keypair,
-        solana_message::{
-            MessageHeader, VersionedMessage, compiled_instruction::CompiledInstruction,
-        },
-        solana_rpc_client_api::client_error::ErrorKind,
+        solana_message::{MessageHeader, compiled_instruction::CompiledInstruction},
+        solana_rpc_client_api::{client_error::ErrorKind, request::RpcError},
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_system_transaction as system_transaction,
@@ -4641,6 +4720,98 @@ mod tests {
             })
             .unwrap();
         assert_eq!(leader_with_config, expected_leader);
+    }
+
+    #[test]
+    fn test_get_vat_active_set_rank_map() {
+        let rpc_client = RpcClient::new_mock("succeeds".to_string());
+
+        let response = rpc_client
+            .get_vat_active_set_rank_map(0, RpcVatActiveSetRankMapConfig::default())
+            .unwrap();
+        assert_eq!(response.context.slot, 1);
+        assert!(response.value.is_none());
+
+        let response = rpc_client
+            .get_vat_active_set_rank_map(
+                0,
+                RpcVatActiveSetRankMapConfig {
+                    identity: None,
+                    min_context_slot: Some(1),
+                },
+            )
+            .unwrap();
+        assert_eq!(response.context.slot, 1);
+        assert!(response.value.is_none());
+    }
+
+    #[test]
+    fn test_get_vat_active_set_rank_map_http() {
+        let identity = Pubkey::new_unique().to_string();
+        let config = RpcVatActiveSetRankMapConfig {
+            identity: Some(identity.clone()),
+            min_context_slot: Some(42),
+        };
+        let expected = Response {
+            context: RpcResponseContext::new(42),
+            value: Some(RpcVatActiveSetRankMap {
+                epoch: 3,
+                total_stake: 100.try_into().unwrap(),
+                validators: vec![RpcVatActiveSetRankMapEntry {
+                    rank: 7,
+                    vote_pubkey: Pubkey::new_unique().to_string(),
+                    node_pubkey: identity,
+                    bls_pubkey_compressed: "bls".to_string(),
+                    stake: 10.try_into().unwrap(),
+                }],
+            }),
+        };
+        let expected_json = serde_json::to_value(&expected).unwrap();
+        let expected_config = serde_json::to_value(&config).unwrap();
+        let mut io = IoHandler::default();
+        io.add_sync_method("getVatActiveSetRankMap", move |params: Params| {
+            let params: Vec<Value> = params.parse()?;
+            assert_eq!(params.len(), 2);
+            match params[0].as_u64().unwrap() {
+                100 => {
+                    assert_eq!(params[1], expected_config);
+                    Ok(expected_json.clone())
+                }
+                200 => {
+                    assert_eq!(params[1], json!({"identity": null, "minContextSlot": null}));
+                    Ok(json!({"context": {"slot": 42}, "value": null}))
+                }
+                _ => Err(Error::invalid_params("unexpected slot")),
+            }
+        });
+        let server = ServerBuilder::new(io)
+            .start_http(&"127.0.0.1:0".parse().unwrap())
+            .unwrap();
+        // A processed default commitment must not be added to this finalized-only request.
+        let rpc_client = RpcClient::new_with_commitment(
+            format!("http://{}", server.address()),
+            CommitmentConfig::processed(),
+        );
+        assert_eq!(
+            rpc_client.get_vat_active_set_rank_map(100, config).unwrap(),
+            expected,
+        );
+        let unavailable = rpc_client
+            .get_vat_active_set_rank_map(200, RpcVatActiveSetRankMapConfig::default())
+            .unwrap();
+        assert_eq!(unavailable.context.slot, 42);
+        assert!(unavailable.value.is_none());
+
+        let error = rpc_client
+            .get_vat_active_set_rank_map(300, RpcVatActiveSetRankMapConfig::default())
+            .unwrap_err();
+        assert_eq!(error.request(), Some(&RpcRequest::GetVatActiveSetRankMap));
+        assert_matches!(
+            error.kind(),
+            ErrorKind::RpcError(RpcError::RpcResponseError { code, message, .. })
+                if *code == -32602 && message == "unexpected slot"
+        );
+        server.close();
     }
 
     #[test]
@@ -5139,7 +5310,7 @@ mod tests {
         }
     }
 
-    #[test_case(LegacyMessage {
+    #[test_case(VersionedMessage::Legacy(LegacyMessage {
         header: MessageHeader {
             num_required_signatures: 1,
             num_readonly_signed_accounts: 0,
@@ -5152,8 +5323,8 @@ mod tests {
             accounts: vec![0],
             data: vec![],
         }],
-    }; "legacy message")]
-    #[test_case(v0::Message {
+    }); "legacy message")]
+    #[test_case(VersionedMessage::V0(v0::Message {
             header: MessageHeader {
                 num_required_signatures: 1,
                 num_readonly_signed_accounts: 0,
@@ -5167,17 +5338,18 @@ mod tests {
                 data: vec![],
             }],
             address_table_lookups: vec![],
-        }; "v0 message")]
-    #[test_case(v1::Message::try_compile_with_config(
-        &Pubkey::new_unique(),
-        &[],
-        Hash::new_unique(),
-        v1::TransactionConfig::empty(),
-    ).unwrap(); "v1 message")]
-    fn test_get_fee_for_message_sends_properly_serialized_message<M>(message: M)
-    where
-        M: SerializableMessage,
-    {
+        }); "v0 message")]
+    #[test_case(VersionedMessage::V1(
+        v1::Message::try_compile_with_config(
+            &Pubkey::new_unique(),
+            &[],
+            Hash::new_unique(),
+            v1::TransactionConfig::empty(),
+        ).unwrap()
+    ); "v1 message")]
+    fn test_get_fee_for_versioned_message_sends_properly_serialized_message(
+        message: VersionedMessage,
+    ) {
         let serialized_message = message.serialize();
         let serialized_message_base64 = BASE64_STANDARD.encode(serialized_message);
 
@@ -5222,8 +5394,33 @@ mod tests {
         let rpc_addr = receiver.recv().unwrap();
         let rpc_client = RpcClient::new_socket(rpc_addr);
 
-        let fee: u64 = rpc_client.get_fee_for_message(&message).unwrap();
+        let fee: u64 = rpc_client.get_fee_for_versioned_message(&message).unwrap();
         assert_eq!(fee, 42);
+    }
+
+    #[test_case(Some(0); "zero fee")]
+    #[test_case(None; "invalid blockhash")]
+    fn test_get_fee_for_versioned_message_response(fee: Option<u64>) {
+        let mocks = Mocks::from([(
+            RpcRequest::GetFeeForMessage,
+            json!(Response {
+                context: RpcResponseContext {
+                    slot: 1,
+                    api_version: None
+                },
+                value: fee,
+            }),
+        )]);
+        let rpc_client = RpcClient::new_mock_with_mocks("succeeds".to_string(), mocks);
+        let message = VersionedMessage::Legacy(LegacyMessage::default());
+        let result = rpc_client.get_fee_for_versioned_message(&message);
+        match fee {
+            Some(fee) => assert_eq!(result.unwrap(), fee),
+            None => assert_matches!(
+                result.unwrap_err().kind(),
+                ErrorKind::Custom(message) if message == "Invalid blockhash"
+            ),
+        }
     }
 
     #[test]
