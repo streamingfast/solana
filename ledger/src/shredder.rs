@@ -1,30 +1,12 @@
 use {
-    crate::shred::{
-        self, DATA_SHREDS_PER_FEC_BLOCK, Error, ProcessShredsStats, Shred, ShredData, ShredFlags,
-    },
-    lazy_lru::LruCache,
-    reed_solomon_erasure::{Error::TooFewDataShards, galois_8::ReedSolomon},
+    crate::shred::{self, Error, ProcessShredsStats, Shred, ShredData, ShredFlags},
+    reed_solomon_erasure::Error::TooFewDataShards,
     solana_clock::Slot,
     solana_entry::{block_component::BlockComponent, entry::Entry},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    std::{
-        fmt::Debug,
-        sync::{Arc, OnceLock, RwLock},
-        time::Instant,
-    },
+    std::{fmt::Debug, time::Instant},
 };
-
-// Arc<...> wrapper so that cache entries can be initialized without locking
-// the entire cache.
-type LruCacheOnce<K, V> = RwLock<LruCache<K, Arc<OnceLock<V>>>>;
-
-pub struct ReedSolomonCache(
-    LruCacheOnce<
-        (usize, usize), // number of {data,parity} shards
-        Result<Arc<ReedSolomon>, reed_solomon_erasure::Error>,
-    >,
-);
 
 #[derive(Debug)]
 pub struct Shredder {
@@ -62,7 +44,6 @@ impl Shredder {
         chained_merkle_root: Hash,
         next_shred_index: u32,
         next_code_index: u32,
-        reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> Vec<Shred> {
         let now = Instant::now();
@@ -76,7 +57,6 @@ impl Shredder {
             chained_merkle_root,
             next_shred_index,
             next_code_index,
-            reed_solomon_cache,
             stats,
         )
         .unwrap()
@@ -91,7 +71,6 @@ impl Shredder {
         chained_merkle_root: Hash,
         next_shred_index: u32,
         next_code_index: u32,
-        reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> Vec<Shred> {
         stats.num_entries += entries.len();
@@ -106,7 +85,6 @@ impl Shredder {
             chained_merkle_root,
             next_shred_index,
             next_code_index,
-            reed_solomon_cache,
             stats,
         )
         .unwrap()
@@ -121,7 +99,6 @@ impl Shredder {
         chained_merkle_root: Hash,
         next_shred_index: u32,
         next_code_index: u32,
-        reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> Result<Vec<Shred>, Error> {
         shred::merkle::make_shreds_from_data(
@@ -135,9 +112,43 @@ impl Shredder {
             is_last_in_slot,
             next_shred_index,
             next_code_index,
-            reed_solomon_cache,
             stats,
         )
+    }
+
+    /// Shreds entries the way older leaders did, resigning the trailing
+    /// FEC set(s) of the slot if is_last_in_slot.
+    #[cfg(feature = "dev-context-only-utils")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn entries_to_resigned_merkle_shreds_for_tests(
+        &self,
+        keypair: &Keypair,
+        entries: &[Entry],
+        is_last_in_slot: bool,
+        chained_merkle_root: Hash,
+        next_shred_index: u32,
+        next_code_index: u32,
+    ) -> (
+        Vec<Shred>, // data shreds
+        Vec<Shred>, // coding shreds
+    ) {
+        let entries = wincode::serialize(entries).unwrap();
+        shred::merkle::resigned_for_tests::make_shreds_from_data(
+            keypair,
+            chained_merkle_root,
+            &entries,
+            self.slot,
+            self.parent_slot,
+            self.version,
+            self.reference_tick,
+            is_last_in_slot,
+            next_shred_index,
+            next_code_index,
+            &mut ProcessShredsStats::default(),
+        )
+        .unwrap()
+        .into_iter()
+        .partition(Shred::is_data)
     }
 
     pub fn entries_to_merkle_shreds_for_tests(
@@ -148,7 +159,6 @@ impl Shredder {
         chained_merkle_root: Hash,
         next_shred_index: u32,
         next_code_index: u32,
-        reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> (
         Vec<Shred>, // data shreds
@@ -161,7 +171,6 @@ impl Shredder {
             chained_merkle_root,
             next_shred_index,
             next_code_index,
-            reed_solomon_cache,
             stats,
         )
         .into_iter()
@@ -176,7 +185,6 @@ impl Shredder {
         chained_merkle_root: Hash,
         next_shred_index: u32,
         next_code_index: u32,
-        reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> (
         Vec<Shred>, // data shreds
@@ -189,7 +197,6 @@ impl Shredder {
             chained_merkle_root,
             next_shred_index,
             next_code_index,
-            reed_solomon_cache,
             stats,
         )
         .into_iter()
@@ -246,7 +253,6 @@ impl Shredder {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn single_shred_for_tests(slot: Slot, keypair: &Keypair) -> Shred {
         let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 42).unwrap();
-        let reed_solomon_cache = ReedSolomonCache::default();
         let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             keypair,
             &[],
@@ -254,43 +260,9 @@ impl Shredder {
             Hash::default(),
             0,
             0,
-            &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
         shreds.pop().unwrap()
-    }
-}
-
-impl ReedSolomonCache {
-    const CAPACITY: usize = 4 * DATA_SHREDS_PER_FEC_BLOCK;
-
-    pub(crate) fn get(
-        &self,
-        data_shards: usize,
-        parity_shards: usize,
-    ) -> Result<Arc<ReedSolomon>, reed_solomon_erasure::Error> {
-        let key = (data_shards, parity_shards);
-        // Read from the cache with a shared lock.
-        let entry = self.0.read().unwrap().get(&key).cloned();
-        // Fall back to exclusive lock if there is a cache miss.
-        let entry: Arc<OnceLock<Result<_, _>>> = entry.unwrap_or_else(|| {
-            let mut cache = self.0.write().unwrap();
-            cache.get(&key).cloned().unwrap_or_else(|| {
-                let entry = Arc::<OnceLock<Result<_, _>>>::default();
-                cache.put(key, Arc::clone(&entry));
-                entry
-            })
-        });
-        // Initialize if needed by only a single thread outside locks.
-        entry
-            .get_or_init(|| ReedSolomon::new(data_shards, parity_shards).map(Arc::new))
-            .clone()
-    }
-}
-
-impl Default for ReedSolomonCache {
-    fn default() -> Self {
-        Self(RwLock::new(LruCache::new(Self::CAPACITY)))
     }
 }
 
@@ -299,9 +271,9 @@ mod tests {
     use {
         super::*,
         crate::shred::{
-            CODING_SHREDS_PER_FEC_BLOCK, ShredType, max_ticks_per_n_shreds, verify_test_data_shred,
+            CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK, ShredType,
+            max_ticks_per_n_shreds, verify_test_data_shred,
         },
-        assert_matches::assert_matches,
         itertools::Itertools,
         rand::Rng,
         solana_hash::Hash,
@@ -310,7 +282,7 @@ mod tests {
         solana_shred_version as shred_version,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
-        std::{collections::HashSet, sync::Arc},
+        std::{assert_matches, collections::HashSet, sync::Arc},
         test_case::test_matrix,
     };
 
@@ -357,7 +329,6 @@ mod tests {
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
             start_index,                                // next_shred_index
             start_index,                                // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         let next_index = data_shreds.last().unwrap().index() + 1;
@@ -436,14 +407,15 @@ mod tests {
             })
             .collect();
 
+        let next_shred_index = 384;
+        let next_code_index = next_shred_index;
         let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &entries,
             is_last_in_slot,
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
-            369,                                        // next_shred_index
-            776,                                        // next_code_index
-            &ReedSolomonCache::default(),
+            next_shred_index,
+            next_code_index,
             &mut ProcessShredsStats::default(),
         );
         for shred in [data_shreds, coding_shreds].into_iter().flatten() {
@@ -475,7 +447,6 @@ mod tests {
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
             0,                                          // next_shred_index
             0,                                          // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         data_shreds.iter().for_each(|s| {
@@ -511,7 +482,6 @@ mod tests {
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
             0,                                          // next_shred_index
             0,                                          // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         data_shreds.iter().for_each(|s| {
@@ -554,7 +524,6 @@ mod tests {
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
             0,                                          // next_shred_index
             0,                                          // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         for (i, s) in data_shreds.iter().enumerate() {
@@ -604,7 +573,6 @@ mod tests {
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
             0,                                          // next_shred_index
             0,                                          // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         assert!(
@@ -631,8 +599,8 @@ mod tests {
             .collect_vec();
 
         let chained_merkle_root = Hash::new_from_array(rand::rng().random());
-        let next_shred_index = 10;
-        let next_code_index = 5;
+        let next_shred_index = 32;
+        let next_code_index = next_shred_index;
 
         // Shred using entries directly
         let (data_shreds_entries, coding_shreds_entries) = shredder
@@ -643,7 +611,6 @@ mod tests {
                 chained_merkle_root,
                 next_shred_index,
                 next_code_index,
-                &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             );
 
@@ -657,7 +624,6 @@ mod tests {
                 chained_merkle_root,
                 next_shred_index,
                 next_code_index,
-                &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             );
 
@@ -697,7 +663,7 @@ mod tests {
             })
             .collect();
 
-        let start_index = 0x12;
+        let start_index = 0x20;
         let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &entries,
@@ -705,7 +671,6 @@ mod tests {
             Hash::new_from_array(rand::rng().random()), // chained_merkle_root
             start_index,                                // next_shred_index
             start_index,                                // next_code_index
-            &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
         const MIN_CHUNK_SIZE: usize = DATA_SHREDS_PER_FEC_BLOCK;

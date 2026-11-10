@@ -5,7 +5,6 @@ use {
         snapshot_hash::SnapshotHash,
     },
     agave_fs::{
-        FileSize,
         buffered_reader::FileBufRead as _,
         buffered_writer::{SizeLimitedWriter, large_file_buf_writer},
         io_setup::IoSetupState,
@@ -90,20 +89,20 @@ pub fn archive_snapshot(
     })?;
     let staging_snapshot_file = staging_snapshot_dir.join(&slot_str);
     let src_snapshot_file = src_snapshot_dir.join(slot_str);
-    symlink::symlink_file(&src_snapshot_file, &staging_snapshot_file)
+    agave_fs::symlink(&src_snapshot_file, &staging_snapshot_file)
         .map_err(|err| E::SymlinkSnapshot(err, src_snapshot_file, staging_snapshot_file))?;
 
     // Following the existing archive format, the status cache is under snapshots/, not under <slot>/
     // like in the snapshot dir.
     let staging_status_cache = staging_snapshots_dir.join(paths::SNAPSHOT_STATUS_CACHE_FILENAME);
     let src_status_cache = src_snapshot_dir.join(paths::SNAPSHOT_STATUS_CACHE_FILENAME);
-    symlink::symlink_file(&src_status_cache, &staging_status_cache)
+    agave_fs::symlink(&src_status_cache, &staging_status_cache)
         .map_err(|err| E::SymlinkStatusCache(err, src_status_cache, staging_status_cache))?;
 
     // The bank snapshot has the version file, so symlink it to the correct staging path
     let staging_version_file = staging_dir.path().join(paths::SNAPSHOT_VERSION_FILENAME);
     let src_version_file = src_snapshot_dir.join(paths::SNAPSHOT_VERSION_FILENAME);
-    symlink::symlink_file(&src_version_file, &staging_version_file).map_err(|err| {
+    agave_fs::symlink(&src_version_file, &staging_version_file).map_err(|err| {
         E::SymlinkVersionFile(err, src_version_file, staging_version_file.clone())
     })?;
 
@@ -181,21 +180,25 @@ pub fn archive_snapshot(
 
                 // Queue the whole chunk for read-ahead before consuming any of
                 // it, so the io_uring pipeline can saturate across files.
-                for (storage, file) in &chunk {
-                    chunk_reader
-                        .add_file_to_prefetch(file.as_ref(), storage.accounts.len() as FileSize)
-                        .map_err(E::StorageFileBufReaderError)?;
+                for (_, file) in &chunk {
+                    if let Some(file) = file {
+                        chunk_reader
+                            .add_file_to_prefetch(file.as_ref(), file.read_limit())
+                            .map_err(E::StorageFileBufReaderError)?;
+                    }
                 }
 
                 for (storage, file) in &chunk {
                     let path_in_archive = Path::new(ACCOUNTS_DIR)
                         .join(AccountsFile::file_name(storage.slot(), storage.id()));
 
-                    chunk_reader
-                        .set_file(file.as_ref(), storage.accounts.len() as FileSize)
-                        .map_err(|err| {
-                            E::AccountStorageReaderError(err, storage.path().to_path_buf())
-                        })?;
+                    if let Some(file) = file {
+                        chunk_reader
+                            .set_file(file.as_ref(), file.read_limit())
+                            .map_err(|err| {
+                                E::AccountStorageReaderError(err, storage.path().to_path_buf())
+                            })?;
+                    }
                     let reader = AccountStorageReader::new(
                         storage,
                         Some(snapshot_slot),

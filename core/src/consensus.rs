@@ -1,3 +1,5 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample};
 pub mod fork_choice;
 pub mod heaviest_subtree_fork_choice;
 pub(crate) mod latest_validator_votes_for_frozen_banks;
@@ -20,7 +22,9 @@ use {
         tower1_14_11::Tower1_14_11,
     },
     crate::{consensus::progress_map::LockoutInterval, replay_stage::DUPLICATE_THRESHOLD},
-    agave_votor_messages::{fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD},
+    agave_votor_messages::{
+        consensus_message::BlockId, fraction::Fraction, migration::GENESIS_VOTE_THRESHOLD,
+    },
     chrono::prelude::*,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
@@ -61,7 +65,7 @@ impl ThresholdDecision {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum SwitchForkDecision {
     SwitchProof(Hash),
@@ -200,7 +204,7 @@ impl TowerVersions {
     }
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(PartialEq, Eq, Debug, Default, Clone, Copy)]
 pub(crate) enum BlockhashStatus {
     /// No vote since restart
@@ -678,9 +682,9 @@ impl Tower {
             // Note: since the new shred format is yet to be rolled out to all clusters,
             // this can also happen for non-leader banks. Once rolled out we can assert
             // here that this is our leader bank.
-            Hash::default()
+            BlockId::default()
         });
-        self.record_bank_vote_and_update_lockouts(bank.slot(), bank.hash(), block_id)
+        self.record_bank_vote_and_update_lockouts(bank.slot(), bank.hash(), block_id.to_hash())
     }
 
     /// If we've recently updated the vote state by applying a new vote
@@ -1869,6 +1873,7 @@ pub mod test {
             process_slot_vote_unchecked,
         },
         std::{
+            assert_matches,
             collections::{HashMap, VecDeque},
             fs::{OpenOptions, remove_file},
             io::{Read, Seek, SeekFrom, Write},

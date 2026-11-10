@@ -2,7 +2,7 @@ use {
     crate::{
         account_info::Offset,
         account_storage_entry::AccountStorageEntry,
-        accounts_file::OpenFileForArchive,
+        accounts_file::OpenFileForBulkRead,
         append_vec::{AppendVec, AppendVecAccountWriter},
     },
     agave_fs::{
@@ -14,6 +14,7 @@ use {
     std::{
         cmp,
         io::{self, Write},
+        ops::ControlFlow,
     },
 };
 
@@ -56,7 +57,7 @@ pub fn storage_file_buf_reader<'a>(
         let _ = (max_buf_size, use_page_cache, io_setup);
         buffered_reader::BufferedReader::<READER_STACK_BUFFER_SIZE>::new()
     };
-    // Refer to append vec/split file new_scan_accounts_reader()
+    // Refer to accounts_file::new_scan_accounts_reader()
     // for documentation/comments w.r.t. the minimum capacity.
     const MIN_CAPACITY: usize = 128 * 1024;
     // The max capacity needed is based on the max permitted account data size
@@ -72,14 +73,14 @@ pub fn storage_file_buf_reader<'a>(
 }
 
 /// Lazy iterator yielding a file handle for each storage suitable for
-/// archive-style reads matching `use_direct_io` (see [`OpenFileForArchive`]).
+/// bulk reads matching `use_direct_io` (see [`OpenFileForBulkRead`]).
 pub fn open_storage_files<'s>(
     storages: impl IntoIterator<Item = &'s AccountStorageEntry> + 's,
     use_direct_io: bool,
-) -> impl Iterator<Item = io::Result<OpenFileForArchive<'s>>> + 's {
+) -> impl Iterator<Item = io::Result<Option<OpenFileForBulkRead<'s>>>> + 's {
     storages
         .into_iter()
-        .map(move |storage| storage.accounts.open_file_for_archive(use_direct_io))
+        .map(move |storage| storage.accounts.open_file_for_bulk_read(use_direct_io))
 }
 
 /// Should tombstones be included or excluded when reading from storage?
@@ -97,7 +98,7 @@ pub enum TombstonesFilter {
 ///
 /// The caller is responsible for activating the storage's file on `file_reader`
 /// via `set_file` (typically using a file opened with [`open_storage_files`])
-/// before constructing the reader.
+/// before constructing the reader, unless the storage has no external data file.
 pub struct AccountStorageReader<'s, 'r, R> {
     storage: &'s AccountStorageEntry,
     reader: &'r mut R,
@@ -110,7 +111,7 @@ impl<'s, 'r, R: RequiredLenBufFileRead<'s>> AccountStorageReader<'s, 'r, R> {
     /// The excluded accounts list is sorted during initialization.
     ///
     /// Expects that the caller has already attached the storage's file to
-    /// `file_reader` via `set_file`.
+    /// `file_reader` via `set_file`, unless it has no external data file.
     pub fn new(
         storage: &'s AccountStorageEntry,
         snapshot_slot: Option<Slot>,
@@ -128,11 +129,15 @@ impl<'s, 'r, R: RequiredLenBufFileRead<'s>> AccountStorageReader<'s, 'r, R> {
             excluded_accounts.extend(tombstone_offsets.iter().map(|offset| (*offset, 0)));
         }
 
-        let len_for_archive = storage.accounts.len_for_archive(
-            excluded_accounts
-                .iter()
-                .map(|(_offset, data_len)| *data_len),
-        );
+        let excluded_size: usize = excluded_accounts
+            .iter()
+            .map(|(_offset, data_len)| AppendVec::calculate_stored_size(*data_len))
+            .sum();
+        let len_for_archive = storage
+            .num_stored_bytes()
+            .checked_sub(excluded_size as u64)
+            .expect("stored bytes shall be at least the excluded size")
+            as usize;
 
         let mut excluded_offsets: Vec<_> = excluded_accounts
             .into_iter()
@@ -168,15 +173,12 @@ impl<'s, 'r, R: RequiredLenBufFileRead<'s>> AccountStorageReader<'s, 'r, R> {
             self.storage
                 .accounts
                 .scan_accounts_with(self.reader, |offset, account| {
-                    if write_result.is_err() {
-                        return;
-                    }
                     if self
                         .sorted_excluded_offsets
                         .pop_if(|excluded_offset| *excluded_offset == offset)
                         .is_some()
                     {
-                        return;
+                        return ControlFlow::Continue(());
                     }
                     let stored_size = AppendVec::calculate_stored_size(account.data.len());
                     if stored_size > remaining {
@@ -184,10 +186,14 @@ impl<'s, 'r, R: RequiredLenBufFileRead<'s>> AccountStorageReader<'s, 'r, R> {
                             io::ErrorKind::InvalidData,
                             "account exceeds archive size",
                         ));
-                        return;
+                        return ControlFlow::Break(());
                     }
-                    write_result = account_writer.write_account(&account);
                     remaining -= stored_size;
+                    write_result = account_writer.write_account(&account);
+                    match &write_result {
+                        Ok(_) => ControlFlow::Continue(()),
+                        Err(_) => ControlFlow::Break(()),
+                    }
                 });
         // Preserve the original output error if a later scan also fails.
         write_result?;
@@ -209,8 +215,7 @@ mod tests {
         crate::{
             ObsoleteAccounts,
             account_storage_entry::AccountStorageEntry,
-            accounts_file::{AccountsFile, AccountsFileProvider},
-            append_vec,
+            accounts_file::{self, AccountsFile, AccountsFileProvider},
             utils::create_account_shared_data,
         },
         agave_fs::{FileInfo, buffered_reader::FileBufRead as _, io_setup::IoSetupState},
@@ -232,20 +237,21 @@ mod tests {
     };
 
     #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::Split)]
     fn test_account_storage_reader_no_obsolete_accounts(provider: AccountsFileProvider) {
         let slot = 0;
         let temp_dir = TempDir::new().unwrap();
         let storage = AccountStorageEntry::new(temp_dir.path(), slot, 11, 1_000_000, provider);
 
-        let account = AccountSharedData::new(1, 10, &Pubkey::default());
-        let account2 = AccountSharedData::new(1, 10, &Pubkey::default());
+        let account = AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default());
+        let account2 = AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default());
 
         let accounts = [
             (&Pubkey::new_unique(), &account),
             (&Pubkey::new_unique(), &account2),
         ];
 
-        storage.accounts.write_accounts(&(slot, &accounts[..]));
+        storage.write_accounts(&(slot, &accounts[..])).unwrap();
 
         let files = open_storage_files(iter::once(&storage), false)
             .collect::<io::Result<Vec<_>>>()
@@ -256,9 +262,11 @@ mod tests {
             &IoSetupState::default(),
         )
         .unwrap();
-        buf_reader
-            .set_file(files[0].as_ref(), storage.accounts.len() as u64)
-            .unwrap();
+        if let Some(file) = &files[0] {
+            buf_reader
+                .set_file(file.as_ref(), file.read_limit())
+                .unwrap();
+        }
         let reader =
             AccountStorageReader::new(&storage, None, TombstonesFilter::Include, &mut buf_reader)
                 .unwrap();
@@ -268,35 +276,95 @@ mod tests {
         );
     }
 
-    #[test_case(0, 0, 0, TombstonesFilter::Include)]
-    #[test_case(1, 0, 0, TombstonesFilter::Include)]
-    #[test_case(1, 1, 0, TombstonesFilter::Include)]
-    #[test_case(1, 1, 0, TombstonesFilter::Exclude)]
-    #[test_case(1, 0, 1, TombstonesFilter::Include)]
-    #[test_case(100, 0, 0, TombstonesFilter::Include)]
-    #[test_case(100, 0, 10, TombstonesFilter::Include)]
-    #[test_case(100, 0, 100, TombstonesFilter::Include)]
-    #[test_case(100, 10, 0, TombstonesFilter::Include)]
-    #[test_case(100, 10, 0, TombstonesFilter::Exclude)]
-    #[test_case(100, 100, 0, TombstonesFilter::Include)]
-    #[test_case(100, 100, 0, TombstonesFilter::Exclude)]
-    #[test_case(100, 10, 10, TombstonesFilter::Include)]
-    #[test_case(100, 10, 10, TombstonesFilter::Exclude)]
-    fn test_account_storage_reader_with_excluded_accounts(
-        total_accounts: usize,
-        num_tombstones: usize,
-        num_obsolete: usize,
-        tombstones_filter: TombstonesFilter,
-    ) {
-        let slot = 0;
+    #[test_case(false)]
+    #[test_case(true)]
+    fn test_archive_split_without_data_file(use_direct_io: bool) {
         let temp_dir = TempDir::new().unwrap();
         let storage = AccountStorageEntry::new(
             temp_dir.path(),
-            slot,
+            0,
             11,
             1_000_000,
-            AccountsFileProvider::AppendVec,
+            AccountsFileProvider::Split,
         );
+        let pubkey = Pubkey::new_unique();
+        let account = AccountSharedData::new_with_data(
+            1,
+            rand::random_iter().take(10).collect(),
+            &Pubkey::default(),
+        );
+        storage
+            .write_accounts(&(0, &[(&pubkey, &account)][..]))
+            .unwrap();
+
+        let files = open_storage_files(iter::once(&storage), use_direct_io)
+            .collect::<io::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].is_none());
+
+        let mut buf_reader = storage_file_buf_reader(
+            ACCOUNT_STORAGE_MAX_BUFFER_SIZE,
+            false,
+            &IoSetupState::default(),
+        )
+        .unwrap();
+        let reader =
+            AccountStorageReader::new(&storage, None, TombstonesFilter::Include, &mut buf_reader)
+                .unwrap();
+        let mut output = Vec::new();
+        reader.write_to(&mut output).unwrap();
+        assert_eq!(output.len(), AppendVec::calculate_stored_size(10));
+
+        let archive_path = temp_dir.path().join("archive");
+        fs::write(&archive_path, output).unwrap();
+        let archived =
+            AccountsFile::open_append_vec(FileInfo::new_from_path(archive_path).unwrap()).unwrap();
+        let mut count = 0;
+        archived
+            .scan_accounts(
+                &mut accounts_file::new_scan_accounts_reader(),
+                |_, stored| {
+                    count += 1;
+                    assert_eq!(*stored.pubkey, pubkey);
+                    assert_eq!(stored.lamports, account.lamports());
+                    assert_eq!(stored.data, account.data());
+                    ControlFlow::Continue(())
+                },
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test_matrix(
+        [AccountsFileProvider::AppendVec, AccountsFileProvider::Split],
+        [
+            (0, 0, 0, TombstonesFilter::Include),
+            (1, 0, 0, TombstonesFilter::Include),
+            (1, 1, 0, TombstonesFilter::Include),
+            (1, 1, 0, TombstonesFilter::Exclude),
+            (1, 0, 1, TombstonesFilter::Include),
+            (100, 0, 0, TombstonesFilter::Include),
+            (100, 0, 10, TombstonesFilter::Include),
+            (100, 0, 100, TombstonesFilter::Include),
+            (100, 10, 0, TombstonesFilter::Include),
+            (100, 10, 0, TombstonesFilter::Exclude),
+            (100, 100, 0, TombstonesFilter::Include),
+            (100, 100, 0, TombstonesFilter::Exclude),
+            (100, 10, 10, TombstonesFilter::Include),
+            (100, 10, 10, TombstonesFilter::Exclude),
+        ]
+    )]
+    fn test_account_storage_reader_with_excluded_accounts(
+        accounts_file_provider: AccountsFileProvider,
+        test_case: (usize, usize, usize, TombstonesFilter),
+    ) {
+        let (total_accounts, num_tombstones, num_obsolete, tombstones_filter) = test_case;
+
+        let slot = 0;
+        let temp_dir = TempDir::new().unwrap();
+        let storage =
+            AccountStorageEntry::new(temp_dir.path(), slot, 11, 1_000_000, accounts_file_provider);
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();
@@ -321,7 +389,7 @@ mod tests {
                 if tombstone_indexes.contains(&index) {
                     AccountSharedData::new(0, 0, &Pubkey::default())
                 } else {
-                    AccountSharedData::new(1, 10, &Pubkey::default())
+                    AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default())
                 }
             })
             .collect();
@@ -332,9 +400,7 @@ mod tests {
             .collect();
 
         let offsets = storage
-            .accounts
             .write_accounts(&(slot, &accounts_to_append[..]))
-            .map(|stored_accounts_info| stored_accounts_info.offsets)
             .unwrap_or_default();
 
         let tombstone_offsets: Vec<_> = tombstone_indexes
@@ -370,9 +436,11 @@ mod tests {
             &IoSetupState::default(),
         )
         .unwrap();
-        file_reader
-            .set_file(files[0].as_ref(), storage.accounts.len() as u64)
-            .unwrap();
+        if let Some(file) = &files[0] {
+            file_reader
+                .set_file(file.as_ref(), file.read_limit())
+                .unwrap();
+        }
         let reader =
             AccountStorageReader::new(&storage, None, tombstones_filter, &mut file_reader).unwrap();
         let mut number_of_accounts_to_remove = num_obsolete;
@@ -396,7 +464,7 @@ mod tests {
         // and verify that the number of accounts in the new file is correct
         if (total_accounts - number_of_accounts_to_remove) != 0 {
             let file_info = FileInfo::new_from_path(temp_file_path).unwrap();
-            let accounts_file = AccountsFile::new_for_startup(file_info).unwrap();
+            let accounts_file = AccountsFile::open_append_vec(file_info).unwrap();
 
             // Verify that the correct number of accounts were found in the file
             let mut num_accounts = 0;
@@ -429,7 +497,7 @@ mod tests {
                         .then(|| (*pubkey, account.clone()))
                 })
                 .collect();
-            let mut reader_for_scan_accounts = append_vec::new_scan_accounts_reader();
+            let mut reader_for_scan_accounts = accounts_file::new_scan_accounts_reader();
             let accounts_in_new_storage = {
                 let mut accounts = HashMap::new();
                 new_storage
@@ -440,6 +508,7 @@ mod tests {
                             create_account_shared_data(&stored_account),
                         );
                         assert!(old_value.is_none());
+                        ControlFlow::Continue(())
                     })
                     .unwrap();
                 accounts
@@ -448,24 +517,21 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_account_storage_reader_filter_by_slot() {
+    #[test_case(AccountsFileProvider::AppendVec)]
+    #[test_case(AccountsFileProvider::Split)]
+    fn test_account_storage_reader_filter_by_slot(accounts_file_provider: AccountsFileProvider) {
         let slot = 0;
         let temp_dir = TempDir::new().unwrap();
-        let storage = AccountStorageEntry::new(
-            temp_dir.path(),
-            slot,
-            11,
-            1_000_000,
-            AccountsFileProvider::AppendVec,
-        );
+        let storage =
+            AccountStorageEntry::new(temp_dir.path(), slot, 11, 1_000_000, accounts_file_provider);
         let total_accounts = 30;
 
         // Create a bunch of accounts and add them to the storage
-        let accounts: Vec<_> =
-            iter::repeat_with(|| AccountSharedData::new(1, 10, &Pubkey::default()))
-                .take(total_accounts)
-                .collect();
+        let accounts: Vec<_> = iter::repeat_with(|| {
+            AccountSharedData::new_with_data(1, vec![0; 10], &Pubkey::default())
+        })
+        .take(total_accounts)
+        .collect();
 
         let accounts_to_append: Vec<_> = accounts
             .into_iter()
@@ -473,8 +539,8 @@ mod tests {
             .collect();
 
         let offsets = storage
-            .accounts
-            .write_accounts(&(slot, &accounts_to_append[..]));
+            .write_accounts(&(slot, &accounts_to_append[..]))
+            .unwrap();
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();
@@ -483,20 +549,12 @@ mod tests {
         // Use a seedable RNG with the generated seed for reproducibility
         let mut rng = StdRng::seed_from_u64(seed);
 
-        let max_offset = offsets
-            .as_ref()
-            .and_then(|offsets| offsets.offsets.iter().max().cloned())
-            .unwrap();
+        let max_offset = offsets.iter().max().cloned().unwrap();
 
         let mut obsolete_account_offset = offsets
-            .map(|offsets| {
-                offsets
-                    .offsets
-                    .choose_multiple(&mut rng, total_accounts - 1)
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+            .choose_multiple(&mut rng, total_accounts - 1)
+            .cloned()
+            .collect::<Vec<_>>();
 
         // Ensure that the last entry will be marked obsolete at some point
         if !obsolete_account_offset.contains(&max_offset) {
@@ -536,9 +594,11 @@ mod tests {
         .unwrap();
         for snapshot_slot in 0..slot_marked_dead {
             let obsolete_slot = Some(snapshot_slot);
-            file_reader
-                .set_file(files[0].as_ref(), storage.accounts.len() as u64)
-                .unwrap();
+            if let Some(file) = &files[0] {
+                file_reader
+                    .set_file(file.as_ref(), file.read_limit())
+                    .unwrap();
+            }
             let reader = AccountStorageReader::new(
                 &storage,
                 obsolete_slot,
@@ -561,7 +621,7 @@ mod tests {
 
             // Create a new AccountStorageEntry from the output file
             let file_info = FileInfo::new_from_path(temp_file_path).unwrap();
-            let accounts_file = AccountsFile::new_for_startup(file_info).unwrap();
+            let accounts_file = AccountsFile::open_append_vec(file_info).unwrap();
             let new_storage = AccountStorageEntry::new_existing(
                 slot,
                 0,
@@ -573,7 +633,7 @@ mod tests {
             assert_eq!(new_storage.accounts.len(), reader_len);
 
             // Verify that the new storage has all the expected accounts
-            let mut reader_for_scan_accounts = append_vec::new_scan_accounts_reader();
+            let mut reader_for_scan_accounts = accounts_file::new_scan_accounts_reader();
             let accounts_in_old_storage = {
                 let mut accounts = HashMap::new();
                 storage
@@ -601,6 +661,7 @@ mod tests {
                             create_account_shared_data(&stored_account),
                         );
                         assert!(old_value.is_none());
+                        ControlFlow::Continue(())
                     })
                     .unwrap();
                 accounts
@@ -615,35 +676,34 @@ mod tests {
     /// * excluded accounts
     /// * exceeding the file reader's stack buffer
     #[test_matrix(
+        [AccountsFileProvider::AppendVec, AccountsFileProvider::Split],
         [false, true],
         [0, 1, 2, 3, 4, 5, 6, 7])
     ]
-    fn test_write_to(exclude_last_account: bool, data_len_last_account: usize) {
+    fn test_write_to(
+        accounts_file_provider: AccountsFileProvider,
+        exclude_last_account: bool,
+        data_len_last_account: usize,
+    ) {
         let slot = 11;
         let temp_dir = TempDir::new().unwrap();
-        let storage = AccountStorageEntry::new(
-            temp_dir.path(),
-            slot,
-            11,
-            1_000_000,
-            AccountsFileProvider::AppendVec,
-        );
+        let storage =
+            AccountStorageEntry::new(temp_dir.path(), slot, 11, 1_000_000, accounts_file_provider);
         let accounts: Vec<_> = [3, 256 * 1024 + 1, data_len_last_account]
             .into_iter()
             .enumerate()
             .map(|(i, data_len)| {
-                let mut account =
-                    AccountSharedData::new(100 + i as u64, data_len, &Pubkey::new_unique());
-                account.set_data_from_slice(&vec![i as u8 + 1; data_len]);
+                let mut account = AccountSharedData::new_with_data(
+                    100 + i as u64,
+                    vec![i as u8 + 1; data_len],
+                    &Pubkey::new_unique(),
+                );
                 account.set_executable(i == 1);
                 account.set_rent_epoch(42 + i as u64);
                 (Pubkey::new_unique(), account)
             })
             .collect();
-        let stored_accounts_info = storage
-            .accounts
-            .write_accounts(&(0, &accounts[..]))
-            .unwrap();
+        let stored_account_offsets = storage.write_accounts(&(0, &accounts[..])).unwrap();
         // exclude one account, either the first or last
         let excluded_index = if exclude_last_account { 2 } else { 0 };
         storage
@@ -652,7 +712,7 @@ mod tests {
             .unwrap()
             .mark_accounts_obsolete(
                 [(
-                    stored_accounts_info.offsets[excluded_index],
+                    stored_account_offsets[excluded_index],
                     accounts[excluded_index].1.data().len(),
                 )]
                 .into_iter(),
@@ -668,9 +728,11 @@ mod tests {
             128 * 1024,
             4096 + MAX_PERMITTED_DATA_LENGTH as usize,
         );
-        file_reader
-            .set_file(files[0].as_ref(), storage.accounts.len() as u64)
-            .unwrap();
+        if let Some(file) = &files[0] {
+            file_reader
+                .set_file(file.as_ref(), file.read_limit())
+                .unwrap();
+        }
         let storage_reader =
             AccountStorageReader::new(&storage, None, TombstonesFilter::Include, &mut file_reader)
                 .unwrap();
@@ -693,20 +755,24 @@ mod tests {
         fs::write(&archive_path, output_buf).unwrap();
 
         let archived_file_info = FileInfo::new_from_path(&archive_path).unwrap();
-        let archived_storage = AccountsFile::new_for_startup(archived_file_info).unwrap();
+        let archived_storage = AccountsFile::open_append_vec(archived_file_info).unwrap();
         let mut archived_num_accounts = 0;
         let mut expected_accounts_iter = included_accounts.iter();
         archived_storage
-            .scan_accounts(&mut append_vec::new_scan_accounts_reader(), |_, account| {
-                let (_, (pubkey, original)) = expected_accounts_iter.next().unwrap();
-                assert_eq!(account.pubkey, pubkey);
-                assert_eq!(account.lamports, original.lamports());
-                assert_eq!(account.owner, original.owner());
-                assert_eq!(account.data, original.data());
-                assert_eq!(account.executable, original.executable());
-                assert_eq!(account.rent_epoch, original.rent_epoch());
-                archived_num_accounts += 1;
-            })
+            .scan_accounts(
+                &mut accounts_file::new_scan_accounts_reader(),
+                |_, account| {
+                    let (_, (pubkey, original)) = expected_accounts_iter.next().unwrap();
+                    assert_eq!(account.pubkey, pubkey);
+                    assert_eq!(account.lamports, original.lamports());
+                    assert_eq!(account.owner, original.owner());
+                    assert_eq!(account.data, original.data());
+                    assert_eq!(account.executable, original.executable());
+                    assert_eq!(account.rent_epoch, original.rent_epoch());
+                    archived_num_accounts += 1;
+                    ControlFlow::Continue(())
+                },
+            )
             .unwrap();
         assert!(expected_accounts_iter.next().is_none());
         assert_eq!(archived_num_accounts, included_accounts.len());

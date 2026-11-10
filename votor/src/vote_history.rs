@@ -1,10 +1,15 @@
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 use {
     super::vote_history_storage::{
         Result, SavedVoteHistory, SavedVoteHistoryVersions, VoteHistoryStorage,
     },
-    agave_votor_messages::{consensus_message::Block, vote::Vote, wire::VotePayloadToSign},
+    agave_votor_messages::{
+        consensus_message::{Block, BlockId},
+        vote::Vote,
+        wire::VotePayloadToSign,
+    },
     solana_clock::Slot,
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     std::collections::{HashMap, HashSet, hash_map::Entry},
@@ -33,7 +38,7 @@ impl VoteHistoryVersions {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "MYpTecggZfULsn6SC1bojefNFK1R5kjBZg7wE8H8dHF",
@@ -49,12 +54,12 @@ pub struct VoteHistory {
     voted: HashSet<Slot>,
 
     /// The blocks for which this node has cast a notarization vote
-    /// In the format of slot, block_id, bank_hash
-    voted_notar: HashMap<Slot, Hash>,
+    /// In the format of slot, block_id
+    voted_notar: HashMap<Slot, BlockId>,
 
     /// The blocks for which this node has cast a notarization fallback
     /// vote in this slot
-    voted_notar_fallback: HashMap<Slot, HashSet<Hash>>,
+    voted_notar_fallback: HashMap<Slot, HashSet<BlockId>>,
 
     /// The slots for which this node has cast a skip fallback vote
     voted_skip_fallback: HashSet<Slot>,
@@ -72,10 +77,10 @@ pub struct VoteHistory {
     /// All votes cast for a `slot`, for use in refresh
     votes_cast: HashMap<Slot, Vec<VotePayloadToSign>>,
 
-    /// Blocks which have a notarization certificate via the certificate pool
+    /// Blocks which have a notarization certificate via the consensus pool
     notarized_blocks: HashSet<Block>,
 
-    /// Slots which have a parent ready condition via the certificate pool
+    /// Slots which have a parent ready condition via the consensus pool
     parent_ready_slots: HashMap<Slot, HashSet<Block>>,
 
     /// The latest root set by the voting loop. The above structures will not
@@ -127,13 +132,13 @@ impl VoteHistory {
     }
 
     /// The block for which we voted notarize in slot `slot`
-    pub fn voted_notar(&self, slot: Slot) -> Option<Hash> {
+    pub fn voted_notar(&self, slot: Slot) -> Option<BlockId> {
         assert!(slot >= self.root);
         self.voted_notar.get(&slot).copied()
     }
 
-    /// Whether we voted notarize fallback in `slot` for block `(block_id, bank_hash)`
-    pub fn voted_notar_fallback(&self, slot: Slot, block_id: Hash) -> bool {
+    /// Whether we voted notarize fallback in `slot` for block `block_id`
+    pub fn voted_notar_fallback(&self, slot: Slot, block_id: BlockId) -> bool {
         assert!(slot >= self.root);
         self.voted_notar_fallback
             .get(&slot)
@@ -152,7 +157,7 @@ impl VoteHistory {
         self.skipped.contains(&slot)
     }
 
-    /// Have we casted a finalization vote for `slot`
+    /// Have we cast a finalization vote for `slot`
     pub fn its_over(&self, slot: Slot) -> bool {
         assert!(slot >= self.root);
         self.its_over.contains(&slot)
@@ -170,7 +175,7 @@ impl VoteHistory {
             .collect()
     }
 
-    /// Have we casted a bad window vote for `slot`:
+    /// Have we cast a bad window vote for `slot`:
     /// - Skip
     /// - Notarize fallback
     /// - Skip fallback
@@ -379,7 +384,7 @@ mod test {
         assert!(vote_history.votes_cast_since(0).is_empty());
 
         // Vote Notarize on slot 1
-        let block_id_1 = Hash::new_unique();
+        let block_id_1 = BlockId::new_unique();
         let vote_notarize_1 = Vote::new_notarization_vote(Block {
             slot: 1,
             block_id: block_id_1,
@@ -416,7 +421,7 @@ mod test {
         assert!(vote_history.bad_window(2));
 
         // Now vote NotarizeFallback on slot 2
-        let block_id_2 = Hash::new_unique();
+        let block_id_2 = BlockId::new_unique();
         let vote_notarize_fallback_2 = Vote::new_notarization_fallback_vote(Block {
             slot: 2,
             block_id: block_id_2,
@@ -440,7 +445,7 @@ mod test {
         assert!(vote_history.bad_window(2));
 
         // Vote Notarize on slot 3
-        let block_id_3 = Hash::new_unique();
+        let block_id_3 = BlockId::new_unique();
         let vote_notarize_3 = Vote::new_notarization_vote(Block {
             slot: 3,
             block_id: block_id_3,
@@ -535,7 +540,7 @@ mod test {
         let genesis_block = Block::new_unique(2);
         vote_history
             .voted_notar
-            .insert(genesis_block.slot, Hash::new_unique());
+            .insert(genesis_block.slot, BlockId::new_unique());
 
         vote_history.initialize_genesis(genesis_block);
     }

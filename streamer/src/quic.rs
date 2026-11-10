@@ -6,10 +6,8 @@ use {
             simple_qos::{SimpleQos, SimpleQosBanlist, SimpleQosConfig},
             swqos::{SwQos, SwQosConfig},
         },
-        streamer::StakedNodes,
+        streamer::{ChannelSend, StakedNodes},
     },
-    crossbeam_channel::Sender,
-    pem::Pem,
     quinn::{
         Endpoint, IdleTimeout, ServerConfig, VarInt,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
@@ -23,6 +21,7 @@ use {
     std::{
         num::NonZeroUsize,
         ops::RangeInclusive,
+        str,
         sync::{
             Arc, RwLock,
             atomic::{AtomicUsize, Ordering},
@@ -86,17 +85,11 @@ pub struct SpawnServerResult {
 }
 
 /// Returns default server configuration along with its PEM certificate chain.
-#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 pub(crate) fn configure_server(
     identity_keypair: &Keypair,
     quic_server_params: &QuicStreamerConfig,
-) -> Result<(ServerConfig, String), QuicServerError> {
+) -> Result<ServerConfig, QuicServerError> {
     let (cert, priv_key) = new_dummy_x509_certificate(identity_keypair);
-    let cert_chain_pem_parts = vec![Pem {
-        tag: "CERTIFICATE".to_string(),
-        contents: cert.as_ref().to_vec(),
-    }];
-    let cert_chain_pem = pem::encode_many(&cert_chain_pem_parts);
 
     let mut server_tls_config =
         tls_server_config_builder().with_single_cert(vec![cert], priv_key)?;
@@ -130,7 +123,7 @@ pub(crate) fn configure_server(
     // See https://github.com/anza-xyz/agave/pull/1647.
     config.enable_segmentation_offload(false);
 
-    Ok((server_config, cert_chain_pem))
+    Ok(server_config)
 }
 
 fn rt(name: String, num_threads: NonZeroUsize) -> Runtime {
@@ -159,7 +152,7 @@ pub struct EndpointKeyUpdater {
 
 impl NotifyKeyUpdate for EndpointKeyUpdater {
     fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        let (config, _) = configure_server(key, &self.quic_server_params)?;
+        let config = configure_server(key, &self.quic_server_params)?;
         for endpoint in &self.endpoints {
             endpoint.set_server_config(Some(config.clone()));
         }
@@ -615,14 +608,14 @@ impl QuicStreamerConfig {
 }
 
 /// Generic function to spawn a tokio runtime with a QUIC server
-/// Generic over QoS implementation
+/// Generic over QoS implementation and over the packet sink (see [`ChannelSend`])
 fn spawn_runtime_and_server<Q, C>(
     thread_name: &'static str,
     metrics_name: &'static str,
     stats: Arc<StreamerStats>,
     sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: impl ChannelSend<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
     qos: Q,
     cancel: CancellationToken,
@@ -671,7 +664,7 @@ pub fn spawn_stake_weighted_qos_server(
     metrics_name: &'static str,
     sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: impl ChannelSend<PacketBatch>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicStreamerConfig,
     qos_config: SwQosConfig,
@@ -700,7 +693,7 @@ pub fn spawn_simple_qos_server(
     metrics_name: &'static str,
     sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: impl ChannelSend<PacketBatch>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicStreamerConfig,
     qos_config: SimpleQosConfig,
@@ -1010,7 +1003,12 @@ mod test {
             stream.write_all(&[9u8]).await.unwrap();
             stream.finish().unwrap();
             let packet_batch = wait_for_packet().await.unwrap();
-            let remote_pubkey = packet_batch.get(0).unwrap().meta().remote_pubkey().unwrap();
+            let remote_pubkey = packet_batch
+                .first()
+                .unwrap()
+                .meta()
+                .remote_pubkey()
+                .unwrap();
 
             // Ban the pubkey and ensure new connections are rejected.
             banlist.ban(remote_pubkey, Duration::from_secs(30));
@@ -1145,26 +1143,19 @@ mod test {
                     debug!("Received packet batch (iteration {iterations})");
 
                     // Verify we get the client pubkey
-                    match &packet_batch {
-                        PacketBatch::Bytes(_) => {
-                            panic!("Expected PacketBatch::Simple but got PacketBatch::Bytes");
-                        }
-                        PacketBatch::Pinned(_) => {
-                            panic!("Expected PacketBatch::Simple but got PacketBatch::Pinned");
-                        }
-                        PacketBatch::Single(packet) => {
-                            if *packet.data(0).unwrap() == 0u8 {
-                                debug!("Packet from stream with client 1");
-                                assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey_1);
-                            } else if *packet.data(0).unwrap() == 1u8 {
-                                debug!("Packet from stream with client 2");
-                                assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey_2);
-                            } else {
-                                panic!("Unexpected data in packet: {:?}", packet.data(0));
-                            }
-                            total_packets += 1;
-                        }
+                    let PacketBatch::Single(packet) = &packet_batch else {
+                        panic!("Expected PacketBatch::Single but got PacketBatch::Bytes");
+                    };
+                    if *packet.data(0).unwrap() == 0u8 {
+                        debug!("Packet from stream with client 1");
+                        assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey_1);
+                    } else if *packet.data(0).unwrap() == 1u8 {
+                        debug!("Packet from stream with client 2");
+                        assert_eq!(packet.meta().remote_pubkey(), expected_client_pubkey_2);
+                    } else {
+                        panic!("Unexpected data in packet: {:?}", packet.data(0));
                     }
+                    total_packets += 1;
                 }
                 Err(e) => {
                     if iterations % 10 == 0 {

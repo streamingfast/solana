@@ -1,5 +1,7 @@
-#[cfg(feature = "frozen-abi")]
+#[cfg(feature = "stable-abi")]
 use solana_frozen_abi::stable_abi;
+#[cfg(feature = "stable-abi")]
+use solana_frozen_abi_macro::{StableAbi, StableAbiSample, frozen_abi};
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 use std::{
     ffi::{CStr, CString},
@@ -16,11 +18,10 @@ use {
     },
     agave_fs::FileInfo,
     agave_snapshots::error::SnapshotError,
+    agave_votor_messages::consensus_message::BlockId,
     log::*,
     smallvec::SmallVec,
     solana_accounts_db::{
-        ObsoleteAccounts,
-        account_storage_entry::AccountStorageEntry,
         accounts::Accounts,
         accounts_db::{
             AccountsDb, AccountsDbConfig, AccountsFileId, AtomicAccountsFileId, IndexGenerationInfo,
@@ -74,10 +75,12 @@ pub use startup_hints::StartupHints;
 #[cfg(feature = "dev-context-only-utils")]
 pub use status_cache::serialize_status_cache_into;
 pub(crate) use {
-    obsolete_accounts::{SerdeObsoleteAccounts, SerdeObsoleteAccountsMap},
+    obsolete_accounts::{
+        LegacyObsoleteAccountsMap, SerdeObsoleteAccounts, SerdeObsoleteAccountsMap,
+    },
     status_cache::{deserialize_status_cache, serialize_status_cache},
     storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
-    storages_list::{StorageListItem, StoragesList},
+    storages_list::{LegacyStoragesList, StorageListItem, StoragesList},
 };
 
 const MAX_STREAM_SIZE: usize = 32 * 1024 * 1024 * 1024;
@@ -85,7 +88,7 @@ type MaxStreamSizeConfig = wincode::config::Configuration<true, MAX_STREAM_SIZE>
 
 /// A slot paired with its account storage entries; only kept to name the wire shape of the
 /// no-longer-used storage entries map in [`AccountsDbFields`] and [`SerializableAccountsDb`].
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Debug, SchemaRead, SchemaWrite)]
 pub(crate) struct SlotAccountStorageEntries {
     slot: Slot,
@@ -93,7 +96,7 @@ pub(crate) struct SlotAccountStorageEntries {
     /// `SmallVec` has no `StableAbi` impl (the length range no longer matters, as the map holding
     /// these entries is itself sampled empty).
     #[cfg_attr(
-        feature = "frozen-abi",
+        feature = "stable-abi",
         stable_abi_sample(with = "solana_frozen_abi::stable_abi::sample_collection_sized(rng, \
                                   solana_frozen_abi::stable_abi::context::SequenceLenRange::new(0.\
                                   .=5))")
@@ -102,14 +105,14 @@ pub(crate) struct SlotAccountStorageEntries {
 }
 
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(SchemaWrite, StableAbi, StableAbiSample)
 )]
 #[derive(Debug, SchemaRead)]
 pub(crate) struct AccountsDbFields(
     /// unused storage entries map, skipped without allocating a backing `Vec`, as old snapshots
     /// still carry a populated one; sampled empty, so the abi digests pin its wire shape only
-    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Vec::new()"))]
+    #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Vec::new()"))]
     #[wincode(with = "DiscardSeq<SlotAccountStorageEntries, BincodeLen>")]
     Vec<SlotAccountStorageEntries>,
     u64, // unused, formerly write_version
@@ -124,7 +127,7 @@ pub(crate) struct AccountsDbFields(
 );
 
 #[repr(C)]
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct UnusedIncrementalSnapshotPersistence {
@@ -137,7 +140,7 @@ pub struct UnusedIncrementalSnapshotPersistence {
 
 #[repr(C)]
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "EcPdH21GSyYYTiSZbAN157YfrT3G8rKvDiNh7q1fw8Bc",
@@ -152,7 +155,7 @@ struct BankHashInfo {
     stats: BankHashStats,
 }
 
-#[cfg_attr(feature = "frozen-abi", derive(StableAbi, StableAbiSample))]
+#[cfg_attr(feature = "stable-abi", derive(StableAbi, StableAbiSample))]
 #[derive(Default, Clone, PartialEq, Eq, Debug, SchemaRead, SchemaWrite)]
 struct UnusedAccounts {
     unused1: HashSet<Pubkey>,
@@ -161,10 +164,10 @@ struct UnusedAccounts {
 }
 
 // Deserializable version of Bank; keep fields synced with SerializableVersionedBank.
-// frozen-abi Serialize/SchemaWrite exist only to pin the read-path abi digest (see
+// stable-abi Serialize/SchemaWrite exist only to pin the read-path abi digest (see
 // DeserializableBankSnapshot).
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(SchemaWrite, StableAbi, StableAbiSample)
 )]
 #[derive(Clone, SchemaRead)]
@@ -197,7 +200,7 @@ struct DeserializableVersionedBank {
     _unused_rent_collector: UnusedRentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
-    stakes: DeserializableDelegationStakes,
+    _unused_stakes: DeserializableDelegationStakes,
     _unused_accounts: UnusedAccounts,
     unused_epoch_stakes: HashMap<Epoch, ()>,
     is_delta: bool,
@@ -234,7 +237,6 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             fee_rate_governor: dvb.fee_rate_governor,
             epoch_schedule: dvb.epoch_schedule,
             inflation: dvb.inflation,
-            stakes: dvb.stakes,
             is_delta: dvb.is_delta,
             versioned_epoch_stakes: vec![], // populated from ExtraFieldsToDeserialize
             accounts_lt_hash: AccountsLtHash(LT_HASH_CANARY), // populated from ExtraFieldsToDeserialize
@@ -247,7 +249,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
 // Serializable version of Bank, not Deserializable to avoid cloning by using refs.
 // Sync fields with DeserializableVersionedBank!
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     // Write-only type (its deserialize counterpart is `DeserializableVersionedBank`), so the abi
     // digest only verifies the serialized wire format; there is no roundtrip.
@@ -422,7 +424,7 @@ where
 /// added to this struct a minor release before they are added to the serialize
 /// struct.
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(SchemaWrite, StableAbi, StableAbiSample)
 )]
 #[derive(Clone, Debug, SchemaRead)]
@@ -436,15 +438,15 @@ struct ExtraFieldsToDeserialize {
     #[wincode(with = "DefaultOnEmptyRead<Vec<(u64, DeserializableVersionedEpochStakes)>>")]
     // Match the serialize side's `HashMap<u64, VersionedEpochStakes>`, which samples `0..=1` entries.
     #[cfg_attr(
-        feature = "frozen-abi",
+        feature = "stable-abi",
         stable_abi_sample(with = "stable_abi::sample_collection_sized(rng, \
                                   stable_abi::context::SequenceLenMax(1))")
     )]
     versioned_epoch_stakes: Vec<(u64, DeserializableVersionedEpochStakes)>,
     #[wincode(with = "DefaultOnEmptyRead<Option<SerdeAccountsLtHash>>")]
     accounts_lt_hash: Option<SerdeAccountsLtHash>,
-    #[wincode(with = "DefaultOnEmptyRead<Option<Hash>>")]
-    block_id: Option<Hash>,
+    #[wincode(with = "DefaultOnEmptyRead<Option<BlockId>>")]
+    block_id: Option<BlockId>,
 }
 
 /// Extra fields that are serialized at the end of snapshots.
@@ -454,7 +456,7 @@ struct ExtraFieldsToDeserialize {
 /// be added to the deserialize struct a minor release before they are added to
 /// this one.
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     // Write-only type (its deserialize counterpart is `ExtraFieldsToDeserialize`), so the abi digest
     // only verifies the serialized wire format; there is no roundtrip.
@@ -472,16 +474,16 @@ pub struct ExtraFieldsToSerialize {
     pub unused_epoch_accounts_hash: Option<Hash>,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     pub accounts_lt_hash: Option<SerdeAccountsLtHash>,
-    pub block_id: Option<Hash>,
+    pub block_id: Option<BlockId>,
 }
 
 /// Deserializable counterpart of [`SerializableBankSnapshot`], read as one struct (wincode reads
 /// the parts sequentially, matching separate reads).
 ///
-/// Its frozen-abi digest must equal [`SerializableBankSnapshotForAbi`]'s, so the read and write
+/// Its abi digest must equal [`SerializableBankSnapshotForAbi`]'s, so the read and write
 /// wire formats can't diverge.
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(SchemaWrite, StableAbi, StableAbiSample),
     frozen_abi(
         abi_digest = "EULkWXkHiQJQazbeCQSP6L7ZMDBXZpBg1JntdHZktrEh",
@@ -645,7 +647,7 @@ where
 // The full serialized form of a bank snapshot: the bank fields, the accounts db fields, and the
 // extra fields, in wire order.
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     // Write-only type (its deserialize counterparts are `DeserializableVersionedBank`,
     // `AccountsDbFields` and `ExtraFieldsToDeserialize`), so there is no roundtrip.
@@ -682,7 +684,7 @@ pub fn serialize_bank_snapshot_into(
 
 // Serializable counterpart of `AccountsDbFields`. Sync fields with `AccountsDbFields`!
 #[cfg_attr(
-    feature = "frozen-abi",
+    feature = "stable-abi",
     derive(StableAbi, StableAbiSample),
     // Write-only type (its deserialize counterpart is `AccountsDbFields`), so there is no
     // roundtrip.
@@ -696,7 +698,7 @@ pub fn serialize_bank_snapshot_into(
 struct SerializableAccountsDb {
     /// unused storage entries map, always written empty; sampled empty, so the abi digests pin its
     /// wire shape only
-    #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Vec::new()"))]
+    #[cfg_attr(feature = "stable-abi", stable_abi_sample(with = "Vec::new()"))]
     unused_accounts_storage_entries: Vec<SlotAccountStorageEntries>,
     unused_write_version: u64, // unused, formerly write_version
     slot: Slot,
@@ -786,6 +788,7 @@ pub(crate) fn reconstruct_bank_from_fields(
         leader_for_tests,
         debug_keys,
         reconstructed_accounts_db_info.accounts_data_len,
+        reconstructed_accounts_db_info.pubkeys_by_owner,
         epoch_stakes,
     );
 
@@ -796,42 +799,6 @@ pub(crate) fn reconstruct_bank_from_fields(
             calculated_capitalization: reconstructed_accounts_db_info.calculated_capitalization,
         },
     ))
-}
-
-pub(crate) fn reconstruct_single_storage(
-    slot: &Slot,
-    append_vec_file_info: FileInfo,
-    id: AccountsFileId,
-    obsolete_accounts: Option<(ObsoleteAccounts, AccountsFileId, usize)>,
-) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
-    // The storage length is taken directly from the on-disk file size (see
-    // `AccountsFile::new_for_startup`). When restoring from an archive the obsolete accounts have
-    // been physically removed during serialization, and when restoring from a snapshot directory
-    // they are still present in the file. In both cases the file size already reflects the exact
-    // number of bytes the storage spans, so there is no need to carry the length separately in the
-    // snapshot fields.
-    //
-    // When restoring from an archive, obsolete accounts will always be `None`.
-    // When restoring from fastboot, obsolete accounts will be 'Some' if the storage contained
-    // accounts marked obsolete at the time the snapshot was taken.
-    let obsolete_accounts =
-        if let Some((obsolete_accounts, obsolete_id, _obsolete_bytes)) = obsolete_accounts {
-            if obsolete_id != id {
-                return Err(SnapshotError::MismatchedAccountsFileId(id, obsolete_id));
-            }
-
-            obsolete_accounts
-        } else {
-            ObsoleteAccounts::default()
-        };
-
-    let accounts_file = AccountsFile::new_for_startup(append_vec_file_info)?;
-    Ok(Arc::new(AccountStorageEntry::new_existing(
-        *slot,
-        id,
-        accounts_file,
-        obsolete_accounts,
-    )))
 }
 
 // Remap the AppendVec ID to handle any duplicate IDs that may previously existed
@@ -916,29 +883,6 @@ pub(crate) fn remap_append_vec_file(
     ))
 }
 
-pub(crate) fn remap_and_reconstruct_single_storage(
-    slot: Slot,
-    old_append_vec_id: SerializedAccountsFileId,
-    append_vec_file_info: FileInfo,
-    next_append_vec_id: &AtomicAccountsFileId,
-    num_collisions: &mut usize,
-) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
-    let (remapped_append_vec_id, remapped_append_vec_file_info) = remap_append_vec_file(
-        slot,
-        old_append_vec_id,
-        append_vec_file_info,
-        next_append_vec_id,
-        num_collisions,
-    )?;
-    let storage = reconstruct_single_storage(
-        &slot,
-        remapped_append_vec_file_info,
-        remapped_append_vec_id,
-        None,
-    )?;
-    Ok(storage)
-}
-
 /// This struct contains side-info while reconstructing the accounts DB from fields.
 #[derive(Debug)]
 pub struct ReconstructedAccountsDbInfo {
@@ -948,6 +892,9 @@ pub struct ReconstructedAccountsDbInfo {
     pub calculated_accounts_lt_hash: AccountsLtHash,
     /// The capitalization, in lamports, calculated during index generation.
     pub calculated_capitalization: u64,
+    /// Stake and vote program accounts found while building the index,
+    /// keyed by owner.
+    pub pubkeys_by_owner: ahash::HashMap<Pubkey, Vec<Pubkey>>,
     pub bank_hash_stats: BankHashStats,
 }
 
@@ -1005,7 +952,12 @@ fn reconstruct_accountsdb_from_fields(
         accounts_data_len,
         calculated_accounts_lt_hash,
         calculated_capitalization,
-    } = accounts_db.generate_index(limit_load_slot_count_from_snapshot, verify_index);
+        pubkeys_by_owner,
+    } = accounts_db.generate_index(
+        limit_load_slot_count_from_snapshot,
+        verify_index,
+        &[solana_sdk_ids::stake::id(), solana_sdk_ids::vote::id()],
+    );
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
     Ok((
@@ -1014,6 +966,7 @@ fn reconstruct_accountsdb_from_fields(
             accounts_data_len,
             calculated_accounts_lt_hash,
             calculated_capitalization,
+            pubkeys_by_owner,
             bank_hash_stats: snapshot_bank_hash_info.stats,
         },
     ))

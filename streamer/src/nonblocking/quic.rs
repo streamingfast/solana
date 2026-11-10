@@ -5,10 +5,10 @@ use {
             qos::{ConnectionContext, OpaqueStreamerCounter, QosController},
         },
         quic::{QuicServerError, QuicStreamerConfig, StreamerStats, configure_server},
-        streamer::StakedNodes,
+        streamer::{ChannelSend, StakedNodes},
     },
     bytes::{BufMut, Bytes, BytesMut},
-    crossbeam_channel::{Sender, TrySendError},
+    crossbeam_channel::TrySendError,
     futures::{Future, StreamExt as _, stream::FuturesUnordered},
     indexmap::map::{Entry, IndexMap},
     quinn::{Accept, Connecting, Connection, Endpoint},
@@ -16,8 +16,7 @@ use {
     smallvec::SmallVec,
     solana_keypair::Keypair,
     solana_net_utils::{quic_socket::QuicSocket, token_bucket::TokenBucket},
-    solana_packet::Meta,
-    solana_perf::packet::{BytesPacket, PacketBatch},
+    solana_perf::packet::{BytesPacket, Meta, PacketBatch},
     solana_pubkey::Pubkey,
     solana_tls_utils::get_remote_pubkey,
     std::{
@@ -88,7 +87,7 @@ pub(crate) const MIN_RTT: Duration = Duration::from_millis(2);
 /// before considering stream to be "too late". 1.5 RTT should be enough
 /// for any reasonable fragmentation to be resolved, so the only way
 /// a stream reassembly would be delayed more is when something
-/// extraordinary has occured (congestion control or flow control blocking)
+/// extraordinary has occurred (congestion control or flow control blocking)
 const LATE_REASSEMBLY_THRESHOLD: f32 = 1.5;
 
 // With the previous 1232-byte transaction limit, transactions were empirically
@@ -174,12 +173,14 @@ pub struct SpawnNonBlockingServerResult {
 }
 
 /// Spawn a streamer instance in the current tokio runtime.
+///
+/// Accepts any packet sink implementing [`ChannelSend`].
 pub(crate) fn spawn_server<Q, C>(
     name: &'static str,
     stats: Arc<StreamerStats>,
     sockets: impl IntoIterator<Item = QuicSocket>,
     keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: impl ChannelSend<PacketBatch>,
     quic_server_params: QuicStreamerConfig,
     qos: Q,
     cancel: CancellationToken,
@@ -190,7 +191,7 @@ where
 {
     let sockets: Vec<_> = sockets.into_iter().collect();
     info!("Start {name} quic server on {sockets:?}");
-    let (config, _) = configure_server(keypair, &quic_server_params)?;
+    let config = configure_server(keypair, &quic_server_params)?;
 
     let endpoints = sockets
         .into_iter()
@@ -270,7 +271,7 @@ impl ClientConnectionTracker {
 async fn run_server<Q, C>(
     name: &'static str,
     endpoints: Vec<Endpoint>,
-    packet_batch_sender: Sender<PacketBatch>,
+    packet_batch_sender: impl ChannelSend<PacketBatch>,
     stats: Arc<StreamerStats>,
     quic_server_params: QuicStreamerConfig,
     cancel: CancellationToken,
@@ -487,7 +488,7 @@ async fn setup_connection<Q, C>(
     rate_limiter: Arc<ConnectionRateLimiter>,
     overall_connection_rate_limiter: Arc<TokenBucket>,
     client_connection_tracker: ClientConnectionTracker,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: impl ChannelSend<PacketBatch>,
     stats: Arc<StreamerStats>,
     server_params: Arc<QuicStreamerConfig>,
     qos: Arc<Q>,
@@ -608,7 +609,7 @@ fn handle_connection_error(e: quinn::ConnectionError, stats: &StreamerStats, fro
 }
 
 async fn handle_connection<Q, C>(
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: impl ChannelSend<PacketBatch>,
     remote_address: SocketAddr,
     connection: Connection,
     stats: Arc<StreamerStats>,
@@ -775,7 +776,7 @@ fn handle_chunks(
     chunks: impl ExactSizeIterator<Item = Bytes>,
     accum: &mut PacketAccumulator,
     rtt: Duration,
-    packet_sender: &Sender<PacketBatch>,
+    packet_sender: &impl ChannelSend<PacketBatch>,
     stats: &StreamerStats,
     peer_type: ConnectionPeerType,
     max_stream_data_bytes: u32,
@@ -854,7 +855,7 @@ fn handle_chunks(
     let packet_size = packet.meta().size;
     let total_latency = accum.start_time.elapsed();
     if total_latency > rtt.mul_f32(LATE_REASSEMBLY_THRESHOLD) {
-        debug!("Stream reassembly dealyed {}", total_latency.as_millis());
+        debug!("Stream reassembly delayed {}", total_latency.as_millis());
         stats
             .reassembly_delayed_streams
             .fetch_add(1, Ordering::Relaxed);
@@ -1192,7 +1193,6 @@ pub mod test {
                 spawn_stake_weighted_qos_server,
             },
         },
-        assert_matches::assert_matches,
         crossbeam_channel::{Receiver, bounded},
         quinn::{ApplicationClose, ConnectionError, EndpointConfig, TokioRuntime},
         solana_keypair::Keypair,
@@ -1200,7 +1200,7 @@ pub mod test {
         solana_net_utils::sockets::bind_to_localhost_unique,
         solana_packet::PACKET_DATA_SIZE,
         solana_signer::Signer,
-        std::collections::HashMap,
+        std::{assert_matches, collections::HashMap},
         tokio::time::sleep,
     };
 
@@ -1343,7 +1343,7 @@ pub mod test {
         }
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_exit_on_cancel() {
         let SpawnTestServerResult {
             join_handle,
@@ -1363,7 +1363,7 @@ pub mod test {
         drop(receiver);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_timeout() {
         agave_logger::setup();
         let SpawnTestServerResult {
@@ -1383,7 +1383,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_stream_timeout() {
         agave_logger::setup();
         let SpawnTestServerResult {
@@ -1423,7 +1423,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_block_multiple_connections() {
         agave_logger::setup();
         let SpawnTestServerResult {
@@ -1443,7 +1443,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_multiple_connections_on_single_client_endpoint() {
         agave_logger::setup();
 
@@ -1529,7 +1529,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_multiple_writes() {
         agave_logger::setup();
         let SpawnTestServerResult {
@@ -1548,7 +1548,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_staked_connection_removal() {
         agave_logger::setup();
 
@@ -1583,7 +1583,7 @@ pub mod test {
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_evicts_destaked_connection() {
         agave_logger::setup();
 
@@ -1662,7 +1662,7 @@ pub mod test {
         thread.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_zero_staked_connection_removal() {
         // In this test, the client has a pubkey, but is not in stake table.
         agave_logger::setup();
@@ -1698,7 +1698,7 @@ pub mod test {
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_unstaked_connection_removal() {
         agave_logger::setup();
         let SpawnTestServerResult {
@@ -1726,7 +1726,7 @@ pub mod test {
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_unstaked_node_connect_failure() {
         agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
@@ -1762,7 +1762,7 @@ pub mod test {
         t.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_quic_server_multiple_streams() {
         agave_logger::setup();
         let s = bind_to_localhost_unique().expect("should bind");
@@ -2139,7 +2139,7 @@ pub mod test {
         assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_throttling_check_no_packet_drop() {
         agave_logger::setup_with_default_filter();
 
@@ -2451,7 +2451,7 @@ pub mod test {
         );
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_client_connection_close_invalid_stream() {
         let SpawnTestServerResult {
             join_handle,
@@ -2484,7 +2484,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_client_connection_accepts_packet_up_to_configured_max_stream_data_bytes() {
         let max_stream_data_bytes = MAX_TRANSACTION_SIZE as u32;
         let SpawnTestServerResult {

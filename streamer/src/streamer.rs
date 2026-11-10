@@ -3,11 +3,13 @@
 
 use {
     crate::{
-        packet::{self, BytesPacketBatch, PACKETS_PER_BATCH, PacketBatch, PacketRef},
+        packet::{self, BytesPacket, BytesPacketBatch, PACKETS_PER_BATCH, PacketBatch},
         recvmmsg::PacketBufferPool,
         sendmmsg::SendPktsError,
     },
-    crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
+    crossbeam_channel::{
+        Receiver, RecvTimeoutError, SendError, Sender, TryRecvError, TrySendError,
+    },
     solana_measure::measure::Measure,
     solana_net_utils::{
         SocketAddrSpace,
@@ -36,7 +38,7 @@ use {
     std::os::fd::AsFd,
 };
 
-pub trait ChannelSend<T>: Send + 'static {
+pub trait ChannelSend<T>: Clone + Send + 'static {
     fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>>;
 
     fn is_empty(&self) -> bool;
@@ -61,6 +63,53 @@ where
     #[inline]
     fn len(&self) -> usize {
         self.len()
+    }
+}
+
+impl<T> ChannelSend<T> for agave_wake_channel::Sender<T>
+where
+    T: Send + 'static,
+{
+    #[inline]
+    fn try_send(&self, msg: T) -> std::result::Result<(), TrySendError<T>> {
+        self.try_send(msg)
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
+/// The receiving-side counterpart of [`ChannelSend`], for code that needs to pop from a channel it
+/// also sends to, such as [`crate::evicting_sender::EvictingSender`].
+pub trait ChannelTryRecv<T>: Clone + Send + 'static {
+    fn try_recv(&self) -> std::result::Result<T, TryRecvError>;
+}
+
+impl<T> ChannelTryRecv<T> for Receiver<T>
+where
+    T: Send + 'static,
+{
+    #[inline]
+    fn try_recv(&self) -> std::result::Result<T, TryRecvError> {
+        self.try_recv()
+    }
+}
+
+impl<T, Mode> ChannelTryRecv<T> for agave_wake_channel::common::Receiver<T, Mode>
+where
+    T: Send + 'static,
+    Mode: Send + 'static,
+{
+    #[inline]
+    fn try_recv(&self) -> std::result::Result<T, TryRecvError> {
+        self.try_recv()
     }
 }
 
@@ -386,7 +435,7 @@ impl StreamerSendStats {
         self.since = Some(Instant::now());
     }
 
-    fn record(&mut self, pkt: PacketRef) {
+    fn record(&mut self, pkt: &BytesPacket) {
         let ent = self.host_map.entry(pkt.meta().addr).or_default();
         ent.count += 1;
         ent.bytes += pkt.data(..).map(<[u8]>::len).unwrap_or_default() as u64;
@@ -430,7 +479,7 @@ impl StakedNodes {
 }
 
 pub fn filter_packets_by_socket_addr_space<'a>(
-    packets: impl Iterator<Item = PacketRef<'a>> + 'a,
+    packets: impl Iterator<Item = &'a BytesPacket> + 'a,
     socket_addr_space: &'a SocketAddrSpace,
 ) -> impl Iterator<Item = (&'a [u8], SocketAddr)> + 'a {
     packets.filter_map(move |pkt| {
@@ -529,7 +578,7 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{PACKET_DATA_SIZE, Packet, RecycledPacketBatch},
+            packet::{BytesPacket, BytesPacketBatch, Meta, PACKET_DATA_SIZE},
             sendmmsg::batch_send,
             streamer::receiver,
         },
@@ -577,8 +626,7 @@ mod test {
 
     #[test]
     fn streamer_debug() {
-        write!(io::sink(), "{:?}", Packet::default()).unwrap();
-        write!(io::sink(), "{:?}", RecycledPacketBatch::default()).unwrap();
+        write!(io::sink(), "{:?}", BytesPacketBatch::default()).unwrap();
     }
     #[test]
     fn streamer_send_test() {
@@ -615,15 +663,14 @@ mod test {
                     );
                 })
                 .unwrap();
-            let mut packet_batch = RecycledPacketBatch::default();
+            let mut packet_batch = BytesPacketBatch::with_capacity(NUM_PACKETS);
             for i in 0..NUM_PACKETS {
-                let mut p = Packet::default();
-                {
-                    p.buffer_mut()[0] = i as u8;
-                    p.meta_mut().size = PACKET_DATA_SIZE;
-                    p.meta_mut().set_socket_addr(&addr);
-                }
-                packet_batch.push(p);
+                let mut buffer = vec![0u8; PACKET_DATA_SIZE];
+                buffer[0] = i as u8;
+                let mut meta = Meta::default();
+                meta.size = PACKET_DATA_SIZE;
+                meta.set_socket_addr(&addr);
+                packet_batch.push(BytesPacket::new(buffer.into(), meta));
             }
             let packet_batch = PacketBatch::from(packet_batch);
             s_responder.send(packet_batch).expect("send");

@@ -20,14 +20,15 @@ use {
         },
         votor::{ExitOnDrop, SharedContext},
     },
+    agave_bls_sigverify::metric_types::ConsensusMetricsEvent,
     agave_votor_messages::{
-        consensus_message::Block, metric_types::ConsensusMetricsEvent, migration::MigrationStatus,
+        consensus_message::{Block, BlockId},
+        migration::MigrationStatus,
         vote::Vote,
     },
     crossbeam_channel::select,
     parking_lot::RwLock,
     solana_clock::Slot,
-    solana_hash::Hash,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -388,7 +389,13 @@ impl EventHandler {
                 if vctx.vote_history.voted(slot) || local_context.received_shred.contains(&slot) {
                     return Ok(votes);
                 }
-                Self::try_skip_window(&local_context.my_pubkey, slot, vctx, &mut votes)?;
+                Self::try_skip_window(
+                    &local_context.my_pubkey,
+                    slot,
+                    &mut local_context.pending_blocks,
+                    vctx,
+                    &mut votes,
+                )?;
             }
 
             // Skip timer for the slot has fired
@@ -397,13 +404,25 @@ impl EventHandler {
                 if vctx.vote_history.voted(slot) {
                     return Ok(votes);
                 }
-                Self::try_skip_window(&local_context.my_pubkey, slot, vctx, &mut votes)?;
+                Self::try_skip_window(
+                    &local_context.my_pubkey,
+                    slot,
+                    &mut local_context.pending_blocks,
+                    vctx,
+                    &mut votes,
+                )?;
             }
 
             // We have observed the safe to notar condition, and can send a notar fallback vote
             VotorEvent::SafeToNotar(block) => {
                 info!("{}: SafeToNotar {block:?}", local_context.my_pubkey);
-                Self::try_skip_window(&local_context.my_pubkey, block.slot, vctx, &mut votes)?;
+                Self::try_skip_window(
+                    &local_context.my_pubkey,
+                    block.slot,
+                    &mut local_context.pending_blocks,
+                    vctx,
+                    &mut votes,
+                )?;
                 if vctx.vote_history.its_over(block.slot)
                     || vctx
                         .vote_history
@@ -426,7 +445,13 @@ impl EventHandler {
             // We have observed the safe to skip condition, and can send a skip fallback vote
             VotorEvent::SafeToSkip(slot) => {
                 info!("{}: SafeToSkip {slot}", local_context.my_pubkey);
-                Self::try_skip_window(&local_context.my_pubkey, slot, vctx, &mut votes)?;
+                Self::try_skip_window(
+                    &local_context.my_pubkey,
+                    slot,
+                    &mut local_context.pending_blocks,
+                    vctx,
+                    &mut votes,
+                )?;
                 if vctx.vote_history.its_over(slot) || vctx.vote_history.voted_skip_fallback(slot) {
                     return Ok(votes);
                 }
@@ -724,7 +749,7 @@ impl EventHandler {
             // id to snapshots, which can allow us to remove this and update
             // the default case in parent ready tracker.
             trace!("Using default block id for {slot} parent {parent_slot}");
-            Hash::default()
+            BlockId::default()
         });
         let parent_block = Block {
             slot: parent_slot,
@@ -862,6 +887,7 @@ impl EventHandler {
     fn try_skip_window(
         my_pubkey: &Pubkey,
         slot: Slot,
+        pending_blocks: &mut PendingBlocks,
         voting_context: &mut VotingContext,
         votes: &mut Vec<BLSOp>,
     ) -> Result<(), VoteError> {
@@ -883,6 +909,7 @@ impl EventHandler {
             {
                 votes.push(bls_op);
             }
+            pending_blocks.remove(&s);
         }
         Ok(())
     }
@@ -1027,16 +1054,16 @@ mod tests {
             },
             voting_service::BLSOp,
         },
-        agave_bls_sigverify::rewards::RewardInput,
+        agave_bls_sigverify::{metric_types::ConsensusMetricsEventReceiver, rewards::RewardInput},
         agave_votor_messages::{
             consensus_message::{BLS_KEYPAIR_DERIVE_SEED, VoteMessage},
-            metric_types::ConsensusMetricsEventReceiver,
             wire::get_vote_payload_to_sign,
         },
         crossbeam_channel::{Receiver, Sender, TryRecvError, bounded},
         parking_lot::RwLock as PlRwLock,
         solana_bls_signatures::{keypair::Keypair as BLSKeypair, signature::SignatureAffine},
         solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
+        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore, blockstore_options::BlockstoreOptions, get_tmp_ledger_path,
@@ -1047,9 +1074,7 @@ mod tests {
             bank::{Bank, BankTestConfig, SlotLeader},
             bank_forks::BankForks,
             bank_forks_controller::{BankForksController, BankForksControllerError},
-            genesis_utils::{
-                ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
-            },
+            genesis_utils::{ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts},
             installed_scheduler_pool::BankWithScheduler,
         },
         solana_streamer::evicting_sender::EvictingSender,
@@ -1110,6 +1135,7 @@ mod tests {
                 None,
                 Some(new_root),
                 &None,
+                None,
                 &self.drop_bank_sender,
                 &self.blockstore,
                 &self.leader_schedule_cache,
@@ -1152,11 +1178,8 @@ mod tests {
             .rev()
             .map(|i| 100_u64.saturating_add(i as u64))
             .collect::<Vec<_>>();
-        let genesis = create_genesis_config_with_alpenglow_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            stakes,
-        );
+        let genesis =
+            create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes);
         let my_index = 0;
         let my_node_keypair = validator_keypairs[my_index].node_keypair.insecure_clone();
         let my_vote_keypair = validator_keypairs[my_index].vote_keypair.insecure_clone();
@@ -1447,7 +1470,7 @@ mod tests {
 
         fn create_block_only(&mut self, slot: Slot, parent_bank: Arc<Bank>) -> Arc<Bank> {
             let bank = Bank::new_from_parent(parent_bank, SlotLeader::new_unique(), slot);
-            bank.set_block_id(Some(Hash::new_unique()));
+            bank.set_block_id(Some(BlockId::new_unique()));
             bank.freeze();
             let mut bank_forks_w = self.bank_forks.write().unwrap();
             bank_forks_w.insert(bank);
@@ -1866,6 +1889,29 @@ mod tests {
     }
 
     #[test]
+    fn test_try_skip_window_clears_pending_blocks() {
+        let mut test_context = setup();
+
+        // Without a parent ready, the replayed block for slot 1 can't be voted on yet
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        test_context.create_block_and_send_block_event(1, root_bank);
+        test_context.check_no_vote_or_commitment();
+        assert!(test_context.local_context.pending_blocks.contains_key(&1));
+
+        // Skipping the window means we will never vote notarize on the pending block
+        test_context.send_timeout_event(1);
+        test_context.check_for_vote(&Vote::new_skip_vote(1));
+        test_context.check_for_vote(&Vote::new_skip_vote(2));
+        test_context.check_for_vote(&Vote::new_skip_vote(3));
+        assert!(test_context.local_context.pending_blocks.is_empty());
+    }
+
+    #[test]
     fn test_received_safe_to_notar() {
         let mut test_context = setup();
 
@@ -1889,7 +1935,7 @@ mod tests {
         test_context.check_for_commitment(CommitmentType::Notarize, 1);
 
         // Now we got safe_to_notar event for slot 1 and a different block id
-        let block_id_1_1 = Hash::new_unique();
+        let block_id_1_1 = BlockId::new_unique();
         test_context.send_safe_to_notar_event(Block {
             slot: 1,
             block_id: block_id_1_1,
@@ -1907,7 +1953,7 @@ mod tests {
         // In this test you can trigger this any number of times, but the white paper
         // proved we can only get up to 3 different block ids on a slot, and our
         // certificate pool implementation checks that.
-        let block_id_1_2 = Hash::new_unique();
+        let block_id_1_2 = BlockId::new_unique();
         test_context.send_safe_to_notar_event(Block {
             slot: 1,
             block_id: block_id_1_2,
@@ -1980,7 +2026,7 @@ mod tests {
         );
 
         // Suddenly I found out I produced block 1 already, send new produce window event
-        let block_id_1 = Hash::new_unique();
+        let block_id_1 = BlockId::new_unique();
         test_context.send_produce_window_event(
             2,
             3,
@@ -2040,6 +2086,62 @@ mod tests {
     }
 
     #[test]
+    fn test_finalized_leaves_rooted_commitment_to_replay() {
+        // Ignores set-root commands, like replay before it gets to one.
+        struct NoopSetRootBankForksController {
+            inner: Arc<dyn BankForksController>,
+        }
+
+        impl BankForksController for NoopSetRootBankForksController {
+            fn insert_bank(
+                &self,
+                bank: Bank,
+            ) -> Result<BankWithScheduler, BankForksControllerError> {
+                self.inner.insert_bank(bank)
+            }
+
+            fn enqueue_set_root(&self, _new_root: Block) {}
+
+            fn clear_bank(&self, slot: Slot) -> Result<(), BankForksControllerError> {
+                self.inner.clear_bank(slot)
+            }
+        }
+
+        let mut test_context = setup();
+        test_context.root_context.bank_forks_controller =
+            Arc::new(NoopSetRootBankForksController {
+                inner: test_context.root_context.bank_forks_controller.clone(),
+            });
+
+        let root_bank = test_context
+            .bank_forks
+            .read()
+            .unwrap()
+            .sharable_banks()
+            .root();
+        let bank1 = test_context.create_block_and_send_block_event(1, root_bank);
+        let block_1 = Block {
+            slot: 1,
+            block_id: bank1.block_id().unwrap(),
+        };
+        test_context.send_parent_ready_event(1, test_context.local_context.genesis_block);
+        test_context.check_parent_ready_slot((1, test_context.local_context.genesis_block));
+        test_context.check_for_vote(&Vote::new_notarization_vote(block_1));
+        test_context.check_for_commitment(CommitmentType::Notarize, 1);
+
+        // Votor picks slot 1 as root, but replay hasn't written the root marker
+        // yet, so the commitment cache must not hear about the root.
+        test_context.send_finalized_event(block_1, true);
+        assert!(
+            !test_context
+                .commitment_receiver
+                .try_iter()
+                .any(|commitment| commitment.commitment_type == CommitmentType::Rooted),
+            "votor published a root before replay applied it",
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "we have a bank hash mismatch")]
     fn test_finalized_block_with_bank_hash_mismatch_panics() {
         let mut test_context = setup();
@@ -2069,7 +2171,7 @@ mod tests {
         let bank = test_context.create_block_only(1, root_bank);
         let expected_hash = Hash::new_unique();
         bank.set_expected_bank_hash(expected_hash);
-        let finalized_block_id = Hash::new_unique();
+        let finalized_block_id = BlockId::new_unique();
 
         test_context.send_finalized_event(
             Block {

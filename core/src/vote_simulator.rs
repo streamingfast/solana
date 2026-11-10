@@ -17,6 +17,7 @@ use {
         replay_stage::{HeaviestForkFailures, ReplayStage, TowerBFTStructures},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
+    agave_votor_messages::consensus_message::BlockId,
     crossbeam_channel::bounded,
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
@@ -27,7 +28,8 @@ use {
         bank::{Bank, BankTestConfig},
         bank_forks::BankForks,
         genesis_utils::{
-            GenesisConfigInfo, ValidatorVoteKeypairs, create_genesis_config_with_vote_accounts,
+            GenesisConfigInfo, ValidatorVoteKeypairs,
+            create_genesis_config_with_tower_vote_accounts,
         },
     },
     solana_signer::Signer,
@@ -159,7 +161,7 @@ impl VoteSimulator {
 
             new_bank.fill_bank_with_ticks_for_tests();
             if !visit.node().has_no_child() || is_frozen {
-                new_bank.set_block_id(Some(Hash::new_unique()));
+                new_bank.set_block_id(Some(BlockId::new_unique()));
                 new_bank.freeze();
                 self.progress
                     .get_fork_stats_mut(new_bank.slot())
@@ -413,7 +415,7 @@ pub fn initialize_state_with(
         mut genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config_with_vote_accounts(
+    } = create_genesis_config_with_tower_vote_accounts(
         1_000_000_000,
         &validator_keypairs,
         vec![stake; validator_keypairs.len()],
@@ -424,7 +426,7 @@ pub fn initialize_state_with(
     let (bank0, bank_forks) =
         Bank::new_with_paths_for_tests(&genesis_config, Some(bank_test_config), vec![], None)
             .wrap_with_bank_forks_for_tests();
-    bank0.set_block_id(Some(Hash::new_unique()));
+    bank0.set_block_id(Some(BlockId::new_unique()));
 
     for pubkey in validator_keypairs_map.keys() {
         bank0.transfer(10_000, &mint_keypair, pubkey).unwrap();

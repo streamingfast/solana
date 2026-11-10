@@ -1,6 +1,6 @@
 /// Module responsible for notifying plugins of transactions
 use {
-    crate::geyser_plugin_manager::GeyserPluginManager,
+    agave_geyser_plugin_host::GeyserPluginHost,
     agave_geyser_plugin_interface::{
         geyser_plugin_interface::{ReplicaTransactionInfoV4, ReplicaTransactionInfoVersions},
         transaction_status_meta as mirror,
@@ -9,9 +9,10 @@ use {
     log::*,
     smallvec::SmallVec,
     solana_account_decoder_client_types::token::UiTokenAmount,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_hash::Hash,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
+    solana_runtime::bank::BankId,
     solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_context::transaction::TransactionReturnData,
@@ -24,9 +25,9 @@ use {
 /// This implementation of TransactionNotifier is passed to the rpc's TransactionStatusService
 /// at the validator startup. TransactionStatusService invokes the notify_transaction method
 /// for new transactions. The implementation in turn invokes the notify_transaction of each
-/// plugin enabled with transaction notification managed by the GeyserPluginManager.
+/// plugin enabled with transaction notification managed by the GeyserPluginHost.
 pub(crate) struct TransactionNotifierImpl {
-    plugin_manager: Arc<ArcSwap<GeyserPluginManager>>,
+    plugin_manager: Arc<ArcSwap<GeyserPluginHost>>,
 }
 
 impl TransactionNotifier for TransactionNotifierImpl {
@@ -46,8 +47,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
         // Nothing below is worth doing unless some loaded plugin asked for
         // transaction notifications.
         if !plugin_manager
-            .plugins
-            .iter()
+            .plugins()
             .any(|plugin| plugin.transaction_notifications_enabled())
         {
             return;
@@ -163,14 +163,14 @@ impl TransactionNotifier for TransactionNotifierImpl {
             transaction_status_meta: &transaction_status_meta,
         };
 
-        for plugin in plugin_manager.plugins.iter() {
+        for plugin in plugin_manager.plugins() {
             if !plugin.transaction_notifications_enabled() {
                 continue;
             }
             match plugin.notify_transaction_for_bank(
                 ReplicaTransactionInfoVersions::V0_0_4(&transaction_log_info),
                 slot,
-                bank_id,
+                bank_id.into(),
             ) {
                 Err(err) => {
                     error!(
@@ -191,7 +191,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
 }
 
 impl TransactionNotifierImpl {
-    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginManager>>) -> Self {
+    pub fn new(plugin_manager: Arc<ArcSwap<GeyserPluginHost>>) -> Self {
         Self { plugin_manager }
     }
 }
@@ -258,7 +258,7 @@ fn convert_reward(reward: &Reward) -> mirror::Reward<'_> {
 mod tests {
     use {
         super::*,
-        crate::geyser_plugin_manager::{GeyserPluginManager, LoadedGeyserPlugin},
+        agave_geyser_plugin_host::{GeyserPluginHost, LoadedGeyserPlugin},
         agave_geyser_plugin_interface::geyser_plugin_interface::{GeyserPlugin, Result},
         libloading::Library,
         solana_message::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses},
@@ -348,7 +348,7 @@ mod tests {
             &self,
             transaction_info: ReplicaTransactionInfoVersions,
             slot: Slot,
-            bank_id: BankId,
+            bank_id: u64,
         ) -> Result<()> {
             let ReplicaTransactionInfoVersions::V0_0_4(info) = transaction_info;
             self.captured.lock().unwrap().push(format!(
@@ -370,19 +370,16 @@ mod tests {
         let library = libloading::os::unix::Library::this();
         #[cfg(windows)]
         let library = libloading::os::windows::Library::this().unwrap();
-        Arc::new(LoadedGeyserPlugin::new(
-            Library::from(library),
-            Box::new(plugin),
-            None,
-        ))
+        // SAFETY: This plugin is defined in the current executable and starts no background work.
+        Arc::new(unsafe { LoadedGeyserPlugin::new(Library::from(library), Box::new(plugin), None) })
     }
 
     #[test]
     fn test_notify_transaction_end_to_end() {
         let captured = Arc::new(Mutex::new(Vec::new()));
         let ignored = Arc::new(Mutex::new(Vec::new()));
-        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginManager {
-            plugins: vec![
+        let plugin_manager = Arc::new(ArcSwap::from(Arc::new(GeyserPluginHost::from_plugins(
+            vec![
                 loaded_tx_plugin(TxCapturePlugin {
                     enabled: true,
                     captured: captured.clone(),
@@ -392,7 +389,7 @@ mod tests {
                     captured: ignored.clone(),
                 }),
             ],
-        })));
+        ))));
         let notifier = TransactionNotifierImpl::new(plugin_manager);
 
         let instruction = CompiledInstruction {
@@ -450,7 +447,7 @@ mod tests {
 
         notifier.notify_transaction(
             42,
-            9,
+            BankId::new(9),
             3,
             &Signature::default(),
             &Hash::default(),
@@ -539,7 +536,7 @@ mod tests {
         };
         notifier.notify_transaction(
             43,
-            9,
+            BankId::new(9),
             0,
             &Signature::default(),
             &Hash::default(),

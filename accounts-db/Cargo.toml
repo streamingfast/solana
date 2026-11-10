@@ -35,19 +35,21 @@ dev-context-only-utils = [
     "solana-runtime-transaction/dev-context-only-utils",
     "solana-transaction/dev-context-only-utils",
 ]
-frozen-abi = [
+stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-fee-calculator/frozen-abi",
-    "solana-hash/frozen-abi",
+    "solana-fee-calculator/stable-abi",
+    "solana-hash/stable-abi",
 ]
 
 [dependencies]
 agave-fs = { workspace = true }
+agave-memory = { workspace = true }
 ahash = { workspace = true }
 blake3 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
+hashbrown = { workspace = true, features = ["allocator-api2", "inline-more"] }
 itertools = { workspace = true }
 log = { workspace = true }
 modular-bitfield = { workspace = true }
@@ -57,16 +59,15 @@ rand = { workspace = true }
 rayon = { workspace = true }
 semver = { workspace = true }
 seqlock = { workspace = true }
-serde = { workspace = true, features = ["rc"] }
 smallvec = { workspace = true, features = ["const_generics"] }
 solana-account = { workspace = true, features = ["serde"] }
-solana-address-lookup-table-interface = { workspace = true, features = ["bincode", "bytemuck"] }
+solana-address-lookup-table-interface = { workspace = true, features = ["bytemuck", "wincode"] }
 solana-bucket-map = { workspace = true }
 solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true, features = ["serde", "wincode"] }
-solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
 solana-hash = { workspace = true, features = ["serde", "wincode", "rand"] }
 solana-keypair = { workspace = true, optional = true }
 solana-lattice-hash = { workspace = true }
@@ -76,7 +77,6 @@ solana-metrics = { workspace = true }
 solana-nohash-hasher = { workspace = true }
 solana-nonce = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true, optional = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
 solana-runtime-transaction = { workspace = true }
@@ -99,12 +99,9 @@ wincode = { workspace = true }
 [dev-dependencies]
 agave-logger = { path = "../logger", features = ["agave-unstable-api"] }
 agave-reserved-account-keys = { path = "../reserved-account-keys", features = ["agave-unstable-api"] }
-assert_matches = { workspace = true }
-bincode = { workspace = true }
 criterion = { workspace = true }
-memoffset = { workspace = true }
 rand_chacha = { workspace = true }
-serde_bytes = { workspace = true }
+solana-account = { workspace = true, features = ["wincode"] }
 solana-accounts-db = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-instruction = { workspace = true }
 solana-loader-v3-interface = { workspace = true }

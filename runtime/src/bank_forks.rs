@@ -2,17 +2,17 @@
 
 use {
     crate::{
-        bank::{Bank, SquashTiming, bank_hash_details},
+        bank::{Bank, BankId, SquashTiming, bank_hash_details},
         installed_scheduler_pool::{
             BankWithScheduler, InstalledSchedulerPoolArc, SchedulingContext,
         },
         snapshot_controller::SnapshotController,
     },
     agave_feature_set,
-    agave_votor_messages::migration::MigrationStatus,
+    agave_votor_messages::{consensus_message::BlockId, migration::MigrationStatus},
     arc_swap::ArcSwap,
     log::*,
-    solana_clock::{BankId, Slot},
+    solana_clock::Slot,
     solana_hash::Hash,
     solana_measure::measure::Measure,
     solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph},
@@ -270,7 +270,7 @@ impl BankForks {
         self.get(slot).map(|bank| bank.hash())
     }
 
-    pub fn block_id(&self, slot: Slot) -> Option<Hash> {
+    pub fn block_id(&self, slot: Slot) -> Option<BlockId> {
         self.get(slot).and_then(|bank| bank.block_id())
     }
 
@@ -438,7 +438,7 @@ impl BankForks {
 
         let root_bank = self.root_bank();
 
-        root_bank.remove_unrooted_slots(&slots_to_purge);
+        root_bank.mark_banks_removed(&slots_to_purge);
         drop(removed_banks);
 
         for (slot, _) in slots_to_purge {
@@ -540,9 +540,9 @@ impl BankForks {
         )
     }
 
-    pub fn prune_program_cache(&self, root: Slot) {
+    pub fn root_program_cache(&self, root: Slot) {
         if let Some(root_bank) = self.banks.get(&root) {
-            root_bank.prune_program_cache(self);
+            root_bank.root_program_cache(self);
         }
     }
 
@@ -775,6 +775,7 @@ mod tests {
             block_component_processor::vote_reward::epoch_inflation_account_state::EpochInflationAccountState,
             genesis_utils::{
                 GenesisConfigInfo, create_genesis_config, create_genesis_config_with_leader,
+                create_genesis_config_with_tower_leader,
             },
             installed_scheduler_pool::{
                 InstalledScheduler, ResultWithTimings, ScheduleResult, SchedulerId,
@@ -789,7 +790,6 @@ mod tests {
             migration::{GENESIS_CERTIFICATE_ACCOUNT, MIGRATION_SLOT_OFFSET},
             wire::{WireBlockCertMessage, WireCertSignature},
         },
-        assert_matches::assert_matches,
         crossbeam_channel::{Receiver, Sender, bounded},
         solana_account::{Account, AccountSharedData},
         solana_bls_signatures::{BLS_SIGNATURE_AFFINE_SIZE, Signature as BLSSignature},
@@ -797,6 +797,7 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_keypair::Keypair,
         solana_leader_schedule::SlotLeader,
+        solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk_ids::system_program,
@@ -804,7 +805,7 @@ mod tests {
         solana_transaction_error::TransactionError,
         solana_unified_scheduler_logic::OrderedTaskId,
         solana_vote_program::vote_state::BlockTimestamp,
-        std::{fmt::Debug, thread, time::Duration},
+        std::{assert_matches, fmt::Debug, thread, time::Duration},
     };
 
     struct BlockingScheduler {
@@ -977,7 +978,8 @@ mod tests {
         finish_done_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
-        assert!(child_bank.get_account(&account_key).is_none());
+        // A removed bank's write cache stays until the bank drops
+        assert!(child_bank.get_account(&account_key).is_some());
     }
 
     fn make_root_bank_for_migration_status_test(
@@ -987,7 +989,7 @@ mod tests {
     ) -> Bank {
         let GenesisConfigInfo {
             mut genesis_config, ..
-        } = create_genesis_config(10_000);
+        } = create_genesis_config_with_tower_leader(10_000, &Pubkey::new_unique(), 0);
         genesis_config.epoch_schedule = EpochSchedule::new(32);
 
         if let Some(genesis_cert) = genesis_cert {
@@ -1000,8 +1002,7 @@ mod tests {
             };
             let cert_data = wincode::serialize(&cert).unwrap();
             let lamports = Rent::default().minimum_balance(cert_data.len());
-            let mut cert_account = Account::new(lamports, cert_data.len(), &system_program::ID);
-            cert_account.data = cert_data;
+            let cert_account = Account::new_with_data(lamports, cert_data, &system_program::ID);
             genesis_config
                 .accounts
                 .insert(*GENESIS_CERTIFICATE_ACCOUNT, cert_account);
@@ -1095,7 +1096,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(10_000);
+        } = create_genesis_config_with_tower_leader(10_000, &Pubkey::new_unique(), 0);
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let root_bank = bank_forks.read().unwrap().root_bank();
 

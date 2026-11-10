@@ -1,4 +1,4 @@
-mod account_map_entry;
+pub(crate) mod account_map_entry;
 mod accounts_index_storage;
 mod bucket_map_holder;
 pub(crate) mod in_mem_accounts_index;
@@ -12,12 +12,13 @@ use {
         is_zero_lamport::IsZeroLamport,
         pubkey_bins::{PubkeyBinCalculator, PubkeyBinCalculatorBuilder},
     },
-    account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry, SlotListWriteGuard},
+    account_map_entry::{
+        AccountMapEntry, LockedSlotListItem, PreAllocatedAccountMapEntry, SlotListReadGuard,
+        SlotListWriteGuard,
+    },
     accounts_index_storage::AccountsIndexStorage,
     bucket_map_holder::Age,
-    in_mem_accounts_index::{
-        ExistedLocation, InMemAccountsIndex, InsertNewEntryResults, StartupStats,
-    },
+    in_mem_accounts_index::{InMemAccountsIndex, InsertNewEntryResults, StartupStats},
     iter::AccountsIndexPubkeyIterator,
     log::*,
     rand::{Rng, rng},
@@ -89,8 +90,6 @@ pub(crate) struct InsertNewIfMissingIntoPrimaryIndexInfo {
     pub num_did_not_exist: u64,
     /// Number of accounts added to the index that already existed, and were in-mem
     pub num_existed_in_mem: u64,
-    /// Number of accounts added to the index that already existed, and were on-disk
-    pub num_existed_on_disk: u64,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -276,7 +275,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         pubkey: &Pubkey,
         ancestors: &Ancestors,
         should_add_to_in_mem_cache: bool,
-        callback: impl FnOnce(SlotListItem<T>) -> R,
+        callback: impl FnOnce(LockedSlotListItem<'_, T>) -> R,
     ) -> Option<R> {
         let max_root = ancestors.min_slot();
         self.get_and_then(pubkey, |entry| {
@@ -294,11 +293,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         entry: &AccountMapEntry<T>,
         ancestors: Option<&Ancestors>,
         max_root: Option<Slot>,
-        callback: impl FnOnce(SlotListItem<T>) -> R,
+        callback: impl FnOnce(LockedSlotListItem<'_, T>) -> R,
     ) -> Option<R> {
         let slot_list = entry.slot_list_read_lock();
         self.latest_slot(ancestors, &slot_list, max_root)
-            .map(|found_index| callback(slot_list[found_index]))
+            .map(|found_index| callback(slot_list.locked_item(found_index)))
     }
 
     /// Is `pubkey` in the index?
@@ -352,7 +351,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         mut func: F,
         mut should_abort: impl FnMut() -> bool,
     ) where
-        F: FnMut(&Pubkey, (&T, Slot)),
+        F: FnMut(&Pubkey, LockedSlotListItem<'_, T>),
     {
         for pubkeys in self.iter() {
             for pubkey in pubkeys {
@@ -362,7 +361,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         if let Some(index) =
                             self.latest_slot(Some(ancestors), list_r, Some(max_root))
                         {
-                            func(&pubkey, (&list_r[index].1, list_r[index].0));
+                            func(&pubkey, list_r.locked_item(index));
                         }
                     }
                     let add_to_in_mem_cache = false;
@@ -480,7 +479,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     ///   - the second an option of the SlotList
     pub(crate) fn scan<'a, F, I>(&self, pubkeys: I, mut callback: F, filter: ScanFilter)
     where
-        F: FnMut(&'a Pubkey, Option<&[SlotListItem<T>]>),
+        F: FnMut(&'a Pubkey, Option<&SlotListReadGuard<'_, T>>),
         I: Iterator<Item = &'a Pubkey>,
     {
         let mut lock = None;
@@ -496,7 +495,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             let mut internal_callback = |entry: Option<&AccountMapEntry<T>>| {
                 if let Some(locked_entry) = entry {
                     let slot_list = locked_entry.slot_list_read_lock();
-                    callback(pubkey, Some(slot_list.as_ref()));
+                    callback(pubkey, Some(&slot_list));
                 } else {
                     callback(pubkey, None);
                 }
@@ -678,17 +677,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         slot: Slot,
         items: &mut Vec<(Pubkey, T)>,
     ) -> InsertNewIfMissingIntoPrimaryIndexInfo {
-        let use_disk = self.storage.storage.is_disk_index_enabled();
+        if !self.storage.storage.is_disk_index_enabled() {
+            return self.insert_new_if_missing_into_in_mem_index(slot, items);
+        }
 
         let mut count = 0;
 
-        // accumulated stats after inserting pubkeys into the index
-        let mut num_did_not_exist = 0;
-        let mut num_existed_in_mem = 0;
-        let mut num_existed_on_disk = 0;
-
         // offset bin processing in the 'binned' array by a random amount.
-        // This results in calls to insert_new_entry_if_missing_with_lock from different threads starting at different bins to avoid
+        // This results in calls to startup_insert_only from different threads starting at different bins to avoid
         // lock contention.
         let bins = self.bins();
         let random_bin_offset = rng().random_range(0..bins);
@@ -699,7 +695,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 .then_with(|| pubkey_a.cmp(pubkey_b))
         });
 
-        let storage = self.storage.storage.as_ref();
         while !items.is_empty() {
             let mut start_index = items.len() - 1;
             let mut last_pubkey = &items[start_index].0;
@@ -724,51 +719,50 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             count += items.len() - start_index;
 
             let items = items.drain(start_index..);
-            if use_disk {
-                r_account_maps.startup_insert_only(slot, items);
-            } else {
-                // not using disk buckets, so just write to in-mem
-                // this is no longer the default case
-                let mut duplicates_from_in_memory = vec![];
-                items.for_each(|(pubkey, account_info)| {
-                    let new_entry =
-                        PreAllocatedAccountMapEntry::new(slot, account_info, storage, use_disk);
-                    match r_account_maps.insert_new_entry_if_missing_with_lock(pubkey, new_entry) {
-                        InsertNewEntryResults::DidNotExist => {
-                            num_did_not_exist += 1;
-                        }
-                        InsertNewEntryResults::Existed {
-                            other_slot,
-                            location,
-                        } => {
-                            if let Some(other_slot) = other_slot {
-                                duplicates_from_in_memory.push((other_slot, pubkey));
-                            }
-                            duplicates_from_in_memory.push((slot, pubkey));
-
-                            match location {
-                                ExistedLocation::InMem => {
-                                    num_existed_in_mem += 1;
-                                }
-                                ExistedLocation::OnDisk => {
-                                    num_existed_on_disk += 1;
-                                }
-                            }
-                        }
-                    }
-                });
-
-                r_account_maps
-                    .startup_update_duplicates_from_in_memory_only(duplicates_from_in_memory);
-            }
+            r_account_maps.startup_insert_only(slot, items);
         }
 
         InsertNewIfMissingIntoPrimaryIndexInfo {
             count,
-            num_did_not_exist,
-            num_existed_in_mem,
-            num_existed_on_disk,
+            ..Default::default()
         }
+    }
+
+    fn insert_new_if_missing_into_in_mem_index(
+        &self,
+        slot: Slot,
+        items: &mut Vec<(Pubkey, T)>,
+    ) -> InsertNewIfMissingIntoPrimaryIndexInfo {
+        let mut info = InsertNewIfMissingIntoPrimaryIndexInfo {
+            count: items.len(),
+            ..Default::default()
+        };
+        let bin_calc = &self.bin_calculator;
+        // Inserting in bin order probes the index faster than inserting in storage order.
+        items.sort_unstable_by_key(|(pubkey, _)| bin_calc.bin_from_pubkey(pubkey));
+        // Threads start at different bins to avoid lock contention.
+        let start_bin = rng().random_range(0..self.bins());
+        let start =
+            items.partition_point(|(pubkey, _)| bin_calc.bin_from_pubkey(pubkey) < start_bin);
+        let (before_start, from_start) = items.split_at(start);
+        let storage = self.storage.storage.as_ref();
+        for &(pubkey, account_info) in from_start.iter().chain(before_start) {
+            let r_account_maps = self.account_maps[bin_calc.bin_from_pubkey(&pubkey)].as_ref();
+            let new_entry = PreAllocatedAccountMapEntry::new(slot, account_info, storage, false);
+            match r_account_maps.insert_new_entry_if_missing_with_lock(pubkey, new_entry) {
+                InsertNewEntryResults::DidNotExist => info.num_did_not_exist += 1,
+                InsertNewEntryResults::Existed { other_slot, .. } => {
+                    let duplicates = other_slot
+                        .map(|other_slot| (other_slot, pubkey))
+                        .into_iter()
+                        .chain([(slot, pubkey)]);
+                    r_account_maps.startup_update_duplicates_from_in_memory_only(duplicates);
+                    info.num_existed_in_mem += 1;
+                }
+            }
+        }
+        items.clear();
+        info
     }
 
     /// use Vec<> because the internal vecs are already allocated per bin
@@ -1533,9 +1527,9 @@ mod tests {
 
         let ancestors = Ancestors::from(vec![0]);
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, 0);
-                assert!(account_info);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), 0);
+                assert!(slot_list_item.info());
             })
             .unwrap();
 
@@ -1625,9 +1619,9 @@ mod tests {
 
         let ancestors = Ancestors::from(vec![0]);
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, 0);
-                assert!(account_info);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), 0);
+                assert!(slot_list_item.info());
             })
             .unwrap();
     }
@@ -1641,9 +1635,9 @@ mod tests {
         index.upsert(0, 0, &key, 1, &mut gc, UPSERT_RECLAIM_TEST_DEFAULT);
         assert!(gc.is_empty());
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, 0);
-                assert_eq!(account_info, 1);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), 0);
+                assert_eq!(slot_list_item.info(), 1);
             })
             .unwrap();
 
@@ -1651,9 +1645,9 @@ mod tests {
         index.upsert(0, 0, &key, 0, &mut gc, UPSERT_RECLAIM_TEST_DEFAULT);
         assert_eq!(gc, ReclaimsSlotList::from([(0, 1)]));
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, 0);
-                assert_eq!(account_info, 0);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), 0);
+                assert_eq!(slot_list_item.info(), 0);
             })
             .unwrap();
     }
@@ -1669,16 +1663,16 @@ mod tests {
         index.upsert(1, 1, &key, false, &mut gc, UpsertReclaim::IgnoreReclaims);
         assert!(gc.is_empty());
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, 0);
-                assert!(account_info);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), 0);
+                assert!(slot_list_item.info());
             })
             .unwrap();
         let ancestors = Ancestors::from(vec![1]);
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, 1);
-                assert!(!account_info);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), 1);
+                assert!(!slot_list_item.info());
             })
             .unwrap();
     }
@@ -1701,9 +1695,9 @@ mod tests {
         assert_eq!(gc, ReclaimsSlotList::new());
         let ancestors = Ancestors::from(vec![max_root]);
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, 3);
-                assert!(account_info);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), 3);
+                assert!(slot_list_item.info());
             })
             .unwrap();
 
@@ -1715,7 +1709,7 @@ mod tests {
             |pubkey, index| {
                 if pubkey == &key {
                     found_key = true;
-                    assert_eq!(index, (&true, 3));
+                    assert_eq!((index.info(), index.slot()), (true, 3));
                 };
                 num += 1
             },
@@ -1999,18 +1993,18 @@ mod tests {
         // Verify that the item added is in in the slot list
         let ancestors = Ancestors::from(vec![reclaim_slot]);
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, reclaim_slot);
-                assert_eq!(account_info, account_value);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), reclaim_slot);
+                assert_eq!(slot_list_item.info(), account_value);
             })
             .unwrap();
 
         // Verify that the newer item remains in the slot list
         let ancestors = Ancestors::from(vec![reclaim_slot + 1]);
         index
-            .get_with_and_then(&key, &ancestors, false, |(slot, account_info)| {
-                assert_eq!(slot, reclaim_slot + 1);
-                assert_eq!(account_info, account_value + 1);
+            .get_with_and_then(&key, &ancestors, false, |slot_list_item| {
+                assert_eq!(slot_list_item.slot(), reclaim_slot + 1);
+                assert_eq!(slot_list_item.info(), account_value + 1);
             })
             .unwrap();
     }

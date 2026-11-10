@@ -33,23 +33,22 @@ dev-context-only-utils = [
     "solana-runtime-transaction/dev-context-only-utils",
     "solana-vote/dev-context-only-utils",
 ]
-frozen-abi = [
+stable-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-account/frozen-abi",
-    "solana-accounts-db/frozen-abi",
-    "solana-bls-signatures/frozen-abi",
-    "solana-epoch-schedule/frozen-abi",
-    "solana-hard-forks/frozen-abi",
-    "solana-inflation/frozen-abi",
-    "solana-instruction/frozen-abi",
-    "solana-instruction-error/frozen-abi",
-    "solana-rent/frozen-abi",
-    "solana-stake-interface/frozen-abi",
-    "solana-transaction-error/frozen-abi",
-    "solana-version/frozen-abi",
-    "solana-vote/frozen-abi",
-    "solana-vote-program/frozen-abi",
+    "agave-votor-messages/stable-abi",
+    "solana-account/stable-abi",
+    "solana-accounts-db/stable-abi",
+    "solana-epoch-schedule/stable-abi",
+    "solana-hard-forks/stable-abi",
+    "solana-inflation/stable-abi",
+    "solana-instruction-error/stable-abi",
+    "solana-rent/stable-abi",
+    "solana-stake-interface/stable-abi",
+    "solana-transaction-error/stable-abi",
+    "solana-version/stable-abi",
+    "solana-vote-program/stable-abi",
+    "solana-vote/stable-abi",
 ]
 shuttle-test = ["dep:shuttle"]
 
@@ -57,6 +56,7 @@ shuttle-test = ["dep:shuttle"]
 agave-bls-cert-verify = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-fs = { workspace = true }
+agave-math-utils = { workspace = true }
 agave-precompiles = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 agave-snapshots = { workspace = true }
@@ -65,7 +65,6 @@ agave-votor-messages = { workspace = true }
 ahash = { workspace = true }
 arc-swap = { workspace = true }
 arrayref = { workspace = true }
-assert_matches = { workspace = true }
 base64 = { workspace = true }
 bitvec = { workspace = true }
 bytemuck = { workspace = true }
@@ -116,9 +115,9 @@ solana-feature-gate-interface = { workspace = true, features = ["wincode"] }
 solana-fee = { workspace = true }
 solana-fee-calculator = { workspace = true, features = ["wincode"] }
 solana-fee-structure = { workspace = true, features = ["serde"] }
-solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
-solana-genesis-config = { workspace = true, features = ["serde"] }
+solana-frozen-abi = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = ["stable-abi"] }
+solana-genesis-config = { workspace = true, features = ["wincode"] }
 solana-hard-forks = { workspace = true, features = ["serde", "wincode"] }
 solana-hash = { workspace = true, features = ["atomic", "wincode", "rand"] }
 solana-inflation = { workspace = true, features = ["serde", "wincode"] }
@@ -135,19 +134,18 @@ solana-native-token = { workspace = true }
 solana-nonce = { workspace = true, features = ["wincode"] }
 solana-nonce-account = { workspace = true, features = ["wincode"] }
 solana-packet = { workspace = true }
+solana-perf = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-binaries = { workspace = true, optional = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true, features = ["rand", "wincode"] }
-solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true, features = ["wincode"] }
 solana-reward-info = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-secp256k1-program = { workspace = true }
 solana-seed-derivable = { workspace = true }
-solana-serde = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
@@ -167,7 +165,7 @@ solana-sysvar = { workspace = true, features = ["wincode"] }
 solana-sysvar-id = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true, features = ["verify", "wincode"] }
-solana-transaction-context = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["serde"] }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
@@ -198,10 +196,10 @@ solana-instruction-error = { workspace = true }
 solana-runtime = { path = ".", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-runtime-transaction = { path = "../runtime-transaction", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-sdk-ids = { workspace = true }
-solana-secp256k1-program = { workspace = true, features = ["bincode"] }
+solana-secp256k1-program = { workspace = true, features = ["wincode"] }
 solana-signature = { workspace = true, features = ["std"] }
 solana-signer-store = { workspace = true }
-solana-stake-interface = { workspace = true, features = ["bincode"] }
+solana-stake-interface = { workspace = true, features = ["wincode"] }
 solana-svm = { path = "../svm", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-transaction-context = { path = "../transaction-context", features = ["agave-unstable-api", "dev-context-only-utils"] }
 solana-vote-program = { path = "../programs/vote", default-features = false, features = ["agave-unstable-api", "dev-context-only-utils"] }

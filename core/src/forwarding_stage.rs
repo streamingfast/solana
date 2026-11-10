@@ -14,7 +14,7 @@ use {
     solana_keypair::Keypair,
     solana_leader_schedule::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_net_utils::{multihomed_sockets::BindIpAddrs, token_bucket::TokenBucket},
-    solana_packet as packet,
+    solana_perf::packet,
     solana_poh::poh_recorder::PohRecorder,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -22,8 +22,7 @@ use {
         bank_forks::SharableBanks,
     },
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, sanitize_config::sanitize_config,
-        transaction_meta::TransactionMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::TransactionMeta,
     },
     solana_streamer::sendmmsg::{SendPktsError, batch_send},
     solana_tls_utils::NotifyKeyUpdate,
@@ -293,7 +292,6 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         is_tpu_vote_batch: bool,
         bank: &Bank,
     ) {
-        let sanitize_config = sanitize_config();
         for packet in packet_batch
             .iter()
             .filter(|p| initial_packet_meta_filter(p.meta()))
@@ -313,19 +311,18 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
 
             // Perform basic sanitization checks and calculate priority.
             // If any steps fail, drop the packet.
-            let Some(priority) =
-                SanitizedTransactionView::try_new_sanitized(packet_data, &sanitize_config)
+            let Some(priority) = SanitizedTransactionView::try_new_sanitized(packet_data)
+                .map_err(|_| ())
+                .and_then(|transaction| {
+                    RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
+                        transaction,
+                        MessageHash::Compute,
+                        Some(packet.meta().is_simple_vote_tx()),
+                    )
                     .map_err(|_| ())
-                    .and_then(|transaction| {
-                        RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
-                            transaction,
-                            MessageHash::Compute,
-                            Some(packet.meta().is_simple_vote_tx()),
-                        )
-                        .map_err(|_| ())
-                    })
-                    .ok()
-                    .and_then(|transaction| calculate_priority(&transaction, bank))
+                })
+                .ok()
+                .and_then(|transaction| calculate_priority(&transaction, bank))
             else {
                 self.metrics.votes_dropped_on_receive += vote_count;
                 self.metrics.non_votes_dropped_on_receive += non_vote_count;
@@ -350,8 +347,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                     usize::from(!dropped_packet.meta().is_simple_vote_tx());
             }
 
-            self.packet_container
-                .insert(packet.to_bytes_packet(), priority);
+            self.packet_container.insert(packet.clone(), priority);
         }
     }
 
@@ -791,7 +787,7 @@ mod tests {
         packet::PacketFlags,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_perf::packet::{Packet, PacketBatch, RecycledPacketBatch},
+        solana_perf::packet::{BytesPacket, PacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::genesis_utils::create_genesis_config,
         solana_system_transaction as system_transaction,
@@ -831,14 +827,14 @@ mod tests {
         meta
     }
 
-    fn simple_transfer_with_flags(packet_flags: PacketFlags) -> Packet {
+    fn simple_transfer_with_flags(packet_flags: PacketFlags) -> BytesPacket {
         let transaction = system_transaction::transfer(
             &Keypair::new(),
             &Pubkey::new_unique(),
             1,
             Hash::default(),
         );
-        let mut packet = Packet::from_data(None, &transaction).unwrap();
+        let mut packet = BytesPacket::from_data(&transaction).unwrap();
         packet.meta_mut().flags = packet_flags;
         packet
     }
@@ -880,28 +876,22 @@ mod tests {
         );
 
         // Send packet batches.
-        let non_vote_packets =
-            BankingPacketBatch::new(PacketBatch::from(RecycledPacketBatch::new(vec![
-                simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE),
-                simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD),
-                simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::FORWARDED),
-            ])));
-        let vote_packets =
-            BankingPacketBatch::new(PacketBatch::from(RecycledPacketBatch::new(vec![
-                simple_transfer_with_flags(
-                    PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE,
-                ),
-                simple_transfer_with_flags(
-                    PacketFlags::SIMPLE_VOTE_TX
-                        | PacketFlags::FROM_STAKED_NODE
-                        | PacketFlags::DISCARD,
-                ),
-                simple_transfer_with_flags(
-                    PacketFlags::SIMPLE_VOTE_TX
-                        | PacketFlags::FROM_STAKED_NODE
-                        | PacketFlags::FORWARDED,
-                ),
-            ])));
+        let non_vote_packets = BankingPacketBatch::new(PacketBatch::from(vec![
+            simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE),
+            simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD),
+            simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::FORWARDED),
+        ]));
+        let vote_packets = BankingPacketBatch::new(PacketBatch::from(vec![
+            simple_transfer_with_flags(PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE),
+            simple_transfer_with_flags(
+                PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD,
+            ),
+            simple_transfer_with_flags(
+                PacketFlags::SIMPLE_VOTE_TX
+                    | PacketFlags::FROM_STAKED_NODE
+                    | PacketFlags::FORWARDED,
+            ),
+        ]));
 
         packet_batch_sender
             .send((non_vote_packets.clone(), false))

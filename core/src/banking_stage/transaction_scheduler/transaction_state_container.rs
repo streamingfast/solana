@@ -335,8 +335,7 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::Message,
-        solana_perf::packet::Packet,
-        solana_runtime_transaction::sanitize_config::sanitize_config,
+        solana_perf::packet::BytesPacket,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{
@@ -479,8 +478,7 @@ mod tests {
 
         let reserved_addresses = HashSet::default();
         let packet_parser = |data, priority, cost| {
-            let view =
-                SanitizedTransactionView::try_new_sanitized(data, &sanitize_config()).unwrap();
+            let view = SanitizedTransactionView::try_new_sanitized(data).unwrap();
             let view = RuntimeTransaction::<SanitizedTransactionView<_>>::try_new(
                 view,
                 MessageHash::Compute,
@@ -500,8 +498,10 @@ mod tests {
         // Push 2 transactions into the queue so buffer is full.
         for priority in [4, 5] {
             let (transaction, _max_age, priority, cost) = test_transaction(priority);
-            let packet = Packet::from_data(None, transaction.to_versioned_transaction()).unwrap();
-            let data = Bytes::copy_from_slice(packet.data(..).unwrap());
+            let data = BytesPacket::from_data(transaction.to_versioned_transaction())
+                .unwrap()
+                .buffer()
+                .clone();
             let priority_id = container.insert_map_only(packet_parser(data, priority, cost));
             assert_eq!(
                 container.push_ids_into_queue(std::iter::once(priority_id)),
@@ -512,8 +512,10 @@ mod tests {
         // Push 5 additional packets in. 5 should be dropped.
         for priority in [10, 11, 12, 1, 2] {
             let (transaction, _max_age, priority, cost) = test_transaction(priority);
-            let packet = Packet::from_data(None, transaction.to_versioned_transaction()).unwrap();
-            let data = Bytes::copy_from_slice(packet.data(..).unwrap());
+            let data = BytesPacket::from_data(transaction.to_versioned_transaction())
+                .unwrap()
+                .buffer()
+                .clone();
             let priority_id = container.insert_map_only(packet_parser(data, priority, cost));
             assert_eq!(
                 container.push_ids_into_queue(std::iter::once(priority_id)),
@@ -529,8 +531,10 @@ mod tests {
         // are rejected regardless of their priority.
         let priority = u64::MAX;
         let (transaction, _max_age, priority, cost) = test_transaction(priority);
-        let packet = Packet::from_data(None, transaction.to_versioned_transaction()).unwrap();
-        let data = Bytes::copy_from_slice(packet.data(..).unwrap());
+        let data = BytesPacket::from_data(transaction.to_versioned_transaction())
+            .unwrap()
+            .buffer()
+            .clone();
         let priority_id = container.insert_map_only(packet_parser(data, priority, cost));
         assert_eq!(
             container.push_ids_into_queue(std::iter::once(priority_id)),

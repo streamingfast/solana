@@ -4,23 +4,21 @@ use {
     crate::{
         bls_sigverifier::SigVerifierChannels,
         errors::SigVerifyVoteError,
+        metric_types::ConsensusMetricsEvent,
+        pubkeys::VoteAccountPubkeys,
         rewards::rewards_wants_vote,
+        sig_verified_messages::VoteAggregate,
         stats::VoteSenderStats,
         utils::{
             send_sig_verified_batch_to_pool, send_votes_to_metrics, send_votes_to_repair,
             send_votes_to_rewards,
         },
     },
-    agave_votor_messages::{
-        VoteAccountPubkeys,
-        metric_types::ConsensusMetricsEvent,
-        sig_verified_messages::{SigVerifiedBatch, VoteAggregate},
-        vote::Vote,
-    },
+    agave_votor_messages::vote::Vote,
     solana_ledger::leader_schedule_cache::LeaderScheduleCache,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    std::{collections::HashMap, sync::Arc},
+    std::sync::Arc,
 };
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -65,7 +63,7 @@ impl VerifiedBatch {
         }
         send_sig_verified_batch_to_pool(
             my_pubkey,
-            SigVerifiedBatch::Votes(self.aggregates),
+            self.aggregates,
             &channels.channel_to_pool,
             stats,
         )?;
@@ -73,8 +71,7 @@ impl VerifiedBatch {
             Vote::Notarize(_) | Vote::Finalize(_) | Vote::NotarizeFallback(_) => {
                 let pubkeys = Arc::new(self.sender_vote_account_pubkeys);
                 let vote_slot = self.vote.slot();
-                let repair_msg =
-                    HashMap::from([(vote_slot, VoteAccountPubkeys::Shared(pubkeys.clone()))]);
+                let repair_msg = (vote_slot, VoteAccountPubkeys::Shared(pubkeys.clone()));
                 send_votes_to_repair(my_pubkey, repair_msg, &channels.channel_to_repair, stats);
                 VoteAccountPubkeys::Shared(pubkeys)
             }

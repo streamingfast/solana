@@ -4,6 +4,68 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## v4.5.0-beta.0-fh3.0
+
+### Changed
+
+- Merged upstream `v4.5.0-beta.0` (previously `v4.4.1`), moving the fork from the `v4.4`
+  release line to `v4.5` and bringing in 740 upstream commits.
+
+  The `v4.4` backports reached `v4.5` as cherry-picks, so a plain merge conflicts on them
+  (64 files). The merge was resolved by taking the upstream `v4.5.0-beta.0` tree wholesale
+  and re-applying the fork delta on top, so the tree differs from upstream only by
+  `Dockerfile`, `CHANGELOG.sf.md`, the novote guard in
+  `geyser-plugin-manager/src/accounts_update_notifier.rs`, and the three workflows in
+  `.github/workflows/` (`docker-publish.yml`, `dependabot.yml`, `secret-scanning.yml`).
+  The novote guard applied unchanged.
+
+- Rust toolchain moves from `1.98.1` to `1.99.1`.
+
+### Geyser plugin interface
+
+`v4.5` breaks the plugin build. The Firehose Geyser plugin must be updated before it can load
+into this build:
+
+- Agave now pins `agave-geyser-plugin-interface = "=6.0.0"`. The only source change from
+  `5.0.0` is a new `ReplicaAccountInfoV4` (V3 plus `txn_index: Option<usize>`) and a new
+  `ReplicaAccountInfoVersions::V0_0_4` variant. Agave `v4.5.0-beta.0` still only sends
+  `V0_0_3`, but plugins matching on the enum must add the arm.
+- The interface now depends on `solana-reward-info` 9, where `RewardType` is
+  `#[non_exhaustive]` and gains `BlockRevenueSharing`. `solana-message` and
+  `solana-transaction` move to 6.
+- Plugin loading moved to a new `agave-geyser-plugin-host` crate (#14905). The config format
+  (`libpath`, optional `name`) and the `_create_plugin` entry point are unchanged.
+- `Dead` slot notifications now go through `update_bank_status` with the bank ID (#16156)
+  instead of `update_slot_status`.
+
+### Changes to block content
+
+- Block metadata rewards always have `commission: None` and the rate in `commission_bps`
+  (#16725). This was already the case on clusters where `commission_rate_in_basis_points`
+  is active, and now also applies when replaying slots from before its activation.
+- Once `block_revenue_sharing` is active (not activated on mainnet-beta or testnet as of
+  2026-11-10), epoch reward distribution adds a `BlockRevenueSharing` reward per stake
+  account next to its `Staking` reward, and the `Staking` amount no longer includes the
+  block revenue share (#16130).
+- Under Alpenglow, `getBlock` with `confirmed` commitment returns `BlockStatusNotAvailableYet`
+  until the slot is both complete and rooted (#15418).
+- `solana-test-validator` always runs Alpenglow (#15665), and `solana-genesis` no longer
+  accepts `--alpenglow` (#15666).
+
+### Feature activations
+
+- New features, none activated on mainnet-beta or testnet as of 2026-11-10:
+  `core_bpf_hash_validation`, `early_instruction_trace_overflow_detection`,
+  `increase_tx_v1_account_lock_limit`, `invoke_signed_v2`,
+  `loader_v3_allow_prefunded_programdata`, `loader_v3_remove_extend_program`,
+  `pass_input_metadata_in_vm_r3_r5`, `remove_runtime_float_ops`, `replace_ata_with_p_ata`,
+  `secp256r1_syscall_enabled`, `single_program_runtime_environment`,
+  `unbound_loader_v3_instruction_data`, `stricter_shred_validation`. They change values
+  (compute units, logs, errors, reward amounts), not the block shape.
+- `alpenglow_fast_leader_handover` and `enable_big_mod_exp_syscall` have new feature IDs.
+  `increase_tx_account_lock_limit` was removed.
+- `loaderv3_programdata_size_floor` activated on mainnet-beta at slot 466128000.
+
 ## v4.4.1-fh3.0
 
 ### Changed

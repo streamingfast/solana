@@ -1,4 +1,4 @@
-name: Conformance Dispatch
+name: Conformance
 
 on:
   pull_request:
@@ -10,6 +10,8 @@ on:
       - "**/Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/conformance-dispatch.yml"
+      - "ci/download-test-vectors.sh"
+      - "ci/test-conformance.sh"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
@@ -19,7 +21,7 @@ jobs:
   detect:
     name: detect affected fixture sets
     if: github.repository_owner == 'anza-xyz'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       entries: ${{ steps.table.outputs.entries }}
     steps:
@@ -43,18 +45,30 @@ jobs:
           echo "entries=$entries" >> "$GITHUB_OUTPUT"
 
   run:
-    name: "stub: ${{ matrix.entry.harness }}"
+    name: ${{ matrix.entry.fixtures_dir }}
     needs: detect
     if: needs.detect.outputs.entries != '[]'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
+      fail-fast: false
       matrix:
         entry: ${{ fromJSON(needs.detect.outputs.entries) }}
+    env:
+      FIXTURES_DIR: ${{ matrix.entry.fixtures_dir }}
     steps:
-      - name: Log (stub)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Fetch fixtures
+        shell: bash
+        run: ci/download-test-vectors.sh "$FIXTURES_DIR"
+
+      - name: Install dependencies
+        shell: bash
+        run: source .github/scripts/install-all-deps.sh ${{ runner.os }}
+
+      - name: Run ${{ matrix.entry.bin }}
+        shell: bash
         env:
-          HARNESS: ${{ matrix.entry.harness }}
-          FIXTURES_DIR: ${{ matrix.entry.fixtures_dir }}
-        run: |
-          echo "stub: would run harness '$HARNESS' on fixtures '$FIXTURES_DIR'"
-          echo "No fixtures downloaded or executed yet."
+          PACKAGE: ${{ matrix.entry.package }}
+          BIN: ${{ matrix.entry.bin }}
+        run: ci/test-conformance.sh "$PACKAGE" "$BIN" "fd-vectors/$FIXTURES_DIR"

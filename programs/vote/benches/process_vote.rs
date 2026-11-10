@@ -1,7 +1,7 @@
 use {
     agave_feature_set::{FeatureSet, deprecate_legacy_vote_ixs},
     criterion::{BatchSize, Criterion, criterion_group, criterion_main},
-    solana_account::{Account, AccountSharedData, WritableAccount},
+    solana_account::{Account, AccountSharedData, state_traits::StateMutWincode as _},
     solana_clock::{Clock, Slot},
     solana_hash::Hash,
     solana_instruction::AccountMeta,
@@ -26,18 +26,19 @@ use {
 
 fn create_sysvar_account<T>(value: &T) -> AccountSharedData
 where
-    T: wincode::Serialize<Src = T> + SysvarId,
+    T: wincode::SchemaWrite<solana_account::WincodeConfig, Src = T>
+        + for<'de> wincode::SchemaRead<'de, solana_account::WincodeConfig, Dst = T>
+        + SysvarId,
 {
-    let serialized_len = wincode::serialized_size(value).unwrap() as usize;
+    let serialized_len =
+        wincode::config::serialized_size(value, solana_account::WINCODE_CONFIG).unwrap() as usize;
     let canonical_data_len = match T::id() {
         sysvar::clock::ID => solana_clock::SIZE,
         sysvar::slot_hashes::ID => solana_slot_hashes::SIZE,
         id => panic!("unsupported sysvar: {id}"),
     };
     let required_data_len = canonical_data_len.max(serialized_len);
-    let mut account = AccountSharedData::new(1, required_data_len, &sysvar::id());
-    wincode::serialize_into(account.data_as_mut_slice(), value).unwrap();
-    account
+    AccountSharedData::new_data_with_space(1, value, required_data_len, &sysvar::id()).unwrap()
 }
 
 fn create_accounts() -> (
@@ -206,7 +207,7 @@ fn bench_process_vote(c: &mut Criterion) {
         (num_initial_votes..=last_vote_slot).collect(),
         last_vote_hash,
     );
-    let instruction_data = bincode::serialize(&VoteInstruction::Vote(vote)).unwrap();
+    let instruction_data = wincode::serialize(&VoteInstruction::Vote(vote)).unwrap();
 
     bench_process_deprecated_vote_instruction(
         c,
@@ -236,7 +237,7 @@ fn bench_process_vote_state_update(c: &mut Criterion) {
     vote_state_update.root = Some(num_initial_votes);
     vote_state_update.hash = last_vote_hash;
     let instruction_data =
-        bincode::serialize(&VoteInstruction::UpdateVoteState(vote_state_update)).unwrap();
+        wincode::serialize(&VoteInstruction::UpdateVoteState(vote_state_update)).unwrap();
 
     bench_process_deprecated_vote_instruction(
         c,
@@ -266,7 +267,7 @@ fn bench_process_tower_sync(c: &mut Criterion) {
     tower_sync.root = Some(num_initial_votes);
     tower_sync.hash = last_vote_hash;
     tower_sync.block_id = Hash::new_unique();
-    let instruction_data = bincode::serialize(&VoteInstruction::TowerSync(tower_sync)).unwrap();
+    let instruction_data = wincode::serialize(&VoteInstruction::TowerSync(tower_sync)).unwrap();
 
     bench_process_vote_instruction(
         c,

@@ -36,7 +36,7 @@ jobs:
         os:
           - os: macos-15
           # musl with dynamic linking
-          - os: ubuntu-24.04
+          - os: ubuntu-26.04
             container: docker.io/rust:1-alpine3.23
             rustflags: -C target-feature=-crt-static
     runs-on: ${{ matrix.os.os }}
@@ -63,6 +63,6 @@ jobs:
         run: |
           git config --global --add safe.directory "$(pwd)"
           source .github/scripts/install-all-deps.sh ${{ runner.os }}
-          source ci/rust-version.sh nightly
-          rustup component add clippy --toolchain "$rust_nightly"
-          scripts/cargo-clippy-nightly.sh
+          source ci/rust-version.sh stable
+          rustup component add clippy --toolchain "$rust_stable"
+          scripts/cargo-clippy.sh
