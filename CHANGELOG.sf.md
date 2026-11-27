@@ -4,6 +4,75 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## v4.5.0-rc.1-fh3.0
+
+### Changed
+
+- Merged upstream `v4.5.0-rc.1` (previously `v4.5.0-rc.0`), which brings in 6 upstream
+  commits. The merge was clean: no conflicts. The tree differs from upstream by the same files
+  as `v4.5.0-rc.0-fh3.0`.
+
+- The Geyser plugin interface is unchanged: Agave still pins
+  `agave-geyser-plugin-interface = "=6.0.0"`, and `geyser-plugin-manager`,
+  `geyser-plugin-host`, `transaction-status`, `rpc-client` and `rpc-client-api` are identical
+  to `v4.5.0-rc.0`. Consumers only need to re-pin versions.
+
+- Rust toolchain stays at `1.99.1`.
+
+### Changes to block content
+
+- None expected. The access violation handler no longer touches or grows an account when the
+  requested access does not fit in the allowed growth (#17083). The instruction fails with an
+  access violation as before, so only the internal account state of an already failing
+  transaction changes. This is not feature-gated.
+
+### Feature activations
+
+- No feature gates are added, removed or rekeyed: `feature-set` is identical to
+  `v4.5.0-rc.0`.
+
+### Upstream changes worth knowing about
+
+- Alpenglow votes are retransmitted 3 times (#17098), and a BLS certificate with a compressed
+  signature is rejected without banning its sender (#17109), so 4.4 relays are not banned
+  during the rollout.
+- The vendored `anza-quinn` crates move to `vendor.2` (#17132).
+
+## v4.5.0-rc.0-fh3.0
+
+### Changed
+
+- Merged upstream `v4.5.0-rc.0` (previously `v4.5.0-beta.0`), which brings in 11 upstream
+  commits. The merge was clean: no conflicts. The tree differs from upstream by the same files
+  as `v4.5.0-beta.0-fh3.0`.
+
+- The Geyser plugin interface is unchanged: Agave still pins
+  `agave-geyser-plugin-interface = "=6.0.0"`, and `geyser-plugin-manager`,
+  `geyser-plugin-host`, `transaction-status`, `rpc-client` and `rpc-client-api` are identical
+  to `v4.5.0-beta.0`. Consumers only need to re-pin versions.
+
+- Rust toolchain stays at `1.99.1`.
+
+### Changes to block content
+
+- Loader-v3 `DeployWithMaxDataLen` and `Upgrade` instructions with a read-only Program,
+  ProgramData or Spill account fail again as in `v4.4`, later in the instruction (for example
+  `ReadonlyDataModified` instead of `InvalidArgument`), with different logs and compute units
+  (#16852). This is not feature-gated.
+
+### Feature activations
+
+- No feature gates are added, removed or rekeyed: `feature-set` is identical to
+  `v4.5.0-beta.0`.
+
+### Upstream changes worth knowing about
+
+- The `SplitFile` storage format, used at startup for account storage files too large for
+  an AppendVec, moves to version `1.0.0` (#16884). A node that wrote split files with
+  `v4.5.0-beta.0` may have to start again from a snapshot.
+- The account-scan RPC methods (`getProgramAccounts`, `getTokenAccountsByOwner`, …) are
+  deprecated, and `/v0/circulating-supply` requires `--full-rpc-api` (#17061, #17000).
+
 ## v4.5.0-beta.0-fh3.0
 
 ### Changed

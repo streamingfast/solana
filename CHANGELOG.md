@@ -13,6 +13,17 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
 
 #### Breaking
 
+#### Deprecations
+
+* The `rpc_accounts_scan` RPC methods are deprecated.
+  * `getProgramAccounts`
+  * `getLargestAccounts`
+  * `getSupply`
+  * `getTokenLargestAccounts`
+  * `getTokenAccountsByOwner`
+  * `getTokenAccountsByDelegate`
+* The `/v0/circulating-supply` endpoint is deprecated.
+
 #### Changes
 
 * `getBlocksWithLimit` now enforces `minContextSlot` before falling back to BigTable: it returns
@@ -127,6 +138,14 @@ and follows a [Backwards Compatibility Policy](https://docs.anza.xyz/backwards-c
   Deduplicate locally if only field changes are needed. Keep callbacks short: a blocked callback
   can fill the shared channel and cause updates to be dropped for all subscribed plugins.
   Plugins loaded later can learn about unchanged nodes from subsequent republishes.
+
+## 4.4.2
+
+### RPC
+
+#### Breaking
+
+* The `/v0/circulating-supply` endpoint now requires `--full-rpc-api`.
 
 ## 4.4.0
 
