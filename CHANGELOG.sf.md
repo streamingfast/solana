@@ -4,6 +4,40 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## v4.5.0-rc.1-fh3.0
+
+### Changed
+
+- Merged upstream `v4.5.0-rc.1` (previously `v4.5.0-rc.0`), which brings in 6 upstream
+  commits. The merge was clean: no conflicts. The tree differs from upstream by the same files
+  as `v4.5.0-rc.0-fh3.0`.
+
+- The Geyser plugin interface is unchanged: Agave still pins
+  `agave-geyser-plugin-interface = "=6.0.0"`, and `geyser-plugin-manager`,
+  `geyser-plugin-host`, `transaction-status`, `rpc-client` and `rpc-client-api` are identical
+  to `v4.5.0-rc.0`. Consumers only need to re-pin versions.
+
+- Rust toolchain stays at `1.99.1`.
+
+### Changes to block content
+
+- None expected. The access violation handler no longer touches or grows an account when the
+  requested access does not fit in the allowed growth (#17083). The instruction fails with an
+  access violation as before, so only the internal account state of an already failing
+  transaction changes. This is not feature-gated.
+
+### Feature activations
+
+- No feature gates are added, removed or rekeyed: `feature-set` is identical to
+  `v4.5.0-rc.0`.
+
+### Upstream changes worth knowing about
+
+- Alpenglow votes are retransmitted 3 times (#17098), and a BLS certificate with a compressed
+  signature is rejected without banning its sender (#17109), so 4.4 relays are not banned
+  during the rollout.
+- The vendored `anza-quinn` crates move to `vendor.2` (#17132).
+
 ## v4.5.0-rc.0-fh3.0
 
 ### Changed
