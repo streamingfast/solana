@@ -4,6 +4,25 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## v4.4.2-fh3.0
+
+### Changed
+
+- Merged upstream `v4.4.2` (previously `v4.4.1`), which brings in 8 upstream commits. The
+  merge was clean: no conflicts. The tree differs from upstream by the same files as
+  `v4.4.1-fh3.0`. This release is built from `v4.4.1-fh3.0`, not from `v4.5.0-beta.0-fh3.0`.
+
+- Upstream changes: the vendored `anza-quinn` crates move to `agave4.4.2`, `tpu-client-next`
+  no longer enables TLS early data, and `/v0/circulating-supply` now requires
+  `--full-rpc-api`.
+
+- The Geyser plugin interface is unchanged: Agave still pins
+  `agave-geyser-plugin-interface = "=5.0.0"`, and `feature-set`, `transaction-status`,
+  `geyser-plugin-manager`, `runtime` and `ledger` are identical to `v4.4.1`. Consumers only
+  need to re-pin versions.
+
+- Rust toolchain stays at `1.98.1`.
+
 ## v4.4.1-fh3.0
 
 ### Changed
