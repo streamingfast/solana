@@ -1,9 +1,13 @@
+# StreamingFast Docker image build and push, started on the tag created by
+# sf-publish-release.yml (`workflow_dispatch` on the tag, a tag created with the
+# workflow token does not trigger `push`) or by a manually pushed `*-fh*` tag.
 name: Docker Build and Push
 
 on:
   push:
     tags:
-      - "*"
+      - "*-fh*"
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io

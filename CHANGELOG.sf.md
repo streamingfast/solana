@@ -4,6 +4,17 @@ This file tracks StreamingFast-specific changes to this fork of
 [anza-xyz/agave](https://github.com/anza-xyz/agave). Upstream changes are documented in
 [CHANGELOG.md](CHANGELOG.md).
 
+## Unreleased
+
+### Changed
+
+- Releases now go through `sfreleaser` (`.sfreleaser`, `kind: application`, `variant: chain`): a
+  pull request on a `release/*` branch that adds a section to `CHANGELOG.sf.md` gets a draft
+  release (`sf-draft-release.yml`), and merging it creates the tag and publishes the release
+  (`sf-publish-release.yml`), which then starts the Docker image build.
+  `docker-publish.yml` is renamed `sf-release.yml` and now only builds for `*-fh*` tags and
+  manual dispatch.
+
 ## v4.5.0-beta.0-fh3.0
 
 ### Changed
