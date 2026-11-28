@@ -23,6 +23,13 @@ This file tracks StreamingFast-specific changes to this fork of
 
 - Rust toolchain stays at `1.98.1`.
 
+- Releases now go through `sfreleaser` (`.sfreleaser`, `kind: application`, `variant: chain`): a
+  pull request on a `release/*` branch that adds a section to `CHANGELOG.sf.md` gets a draft
+  release (`sf-draft-release.yml`), and merging it creates the tag and publishes the release
+  (`sf-publish-release.yml`), which then starts the Docker image build.
+  `docker-publish.yml` is renamed `sf-release.yml` and now only builds for `*-fh*` tags and
+  manual dispatch.
+
 ## v4.4.1-fh3.0
 
 ### Changed

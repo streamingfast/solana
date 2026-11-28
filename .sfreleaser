@@ -1,0 +1,7 @@
+global:
+  kind: application
+  variant: chain
+
+release:
+  # The fork changelog, CHANGELOG.md is the upstream one.
+  changelog-path: CHANGELOG.sf.md
