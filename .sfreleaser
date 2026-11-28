@@ -1,4 +1,5 @@
 global:
+  language: rust
   kind: application
   variant: chain
 
