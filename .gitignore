@@ -41,3 +41,6 @@ log-*/
 
 # download-test-vectors.sh artifacts
 /fd-vectors/
+
+# sfreleaser output
+/build/
